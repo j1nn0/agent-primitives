@@ -14,7 +14,7 @@
     },
     "./package.json": "./package.json"
   },
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": ["dist", "src", "README.md", "LICENSE"],
   "engines": {
     "node": ">=22.12.0"
   },
