@@ -1,6 +1,11 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import type { ContextEvent } from '@earendil-works/pi-coding-agent';
 import type { PersistedState } from '../src/extension.js';
+import type {
+  PersistedStateV1,
+  PersistedStateV2,
+} from '../src/types.js';
 import {
   FakePiHarness,
   customEntry,
@@ -24,11 +29,26 @@ function item(
 function stateData(
   items: readonly unknown[],
   recovery: 'off' | 'critical' = 'off',
-): PersistedState {
+): PersistedStateV1 {
   return {
     schemaVersion: 1,
     recovery,
-    items: items as PersistedState['items'],
+    items: items as PersistedStateV1['items'],
+  };
+}
+
+function stateDataV2(
+  items: readonly unknown[],
+  recovery: 'off' | 'critical' = 'off',
+  extraction: 'off' | 'automatic' = 'off',
+  autoItemIds: readonly string[] = [],
+): PersistedStateV2 {
+  return {
+    schemaVersion: 2,
+    recovery,
+    extraction,
+    items: items as PersistedStateV2['items'],
+    autoItemIds,
   };
 }
 
@@ -44,6 +64,73 @@ function textMessage(text: string): CandidateMessage {
     content: text,
     timestamp: 1,
   } as CandidateMessage;
+}
+
+function inputEvent(
+  text: string,
+  source: 'interactive' | 'rpc' | 'extension' = 'interactive',
+): unknown {
+  return { type: 'input', text, source };
+}
+
+function extractorResponse(
+  text: string,
+  stopReason: string = 'stop',
+): unknown {
+  return {
+    stopReason,
+    content: [{ type: 'text', text }],
+  };
+}
+
+function extractorJson(value: unknown): string {
+  return JSON.stringify(value);
+}
+
+function latestV2State(harness: FakePiHarness): PersistedStateV2 {
+  const state = latestState(harness);
+  expect(state.schemaVersion).toBe(2);
+  return state as PersistedStateV2;
+}
+
+async function invokeInput(
+  harness: FakePiHarness,
+  text: string,
+  source: 'interactive' | 'rpc' | 'extension' = 'interactive',
+): Promise<void> {
+  await harness.invoke('input', inputEvent(text, source));
+}
+
+function modelPayload(harness: FakePiHarness): {
+  readonly userMessage: string;
+  readonly automaticItems: readonly {
+    readonly id: string;
+    readonly kind: string;
+    readonly content: string;
+  }[];
+} {
+  const call = harness.completeCalls.at(-1);
+  expect(call).toBeDefined();
+  const context = call?.context as {
+    readonly messages?: readonly { readonly content?: unknown }[];
+  } | undefined;
+  const message = context?.messages?.[0];
+  expect(typeof message?.content).toBe('string');
+  return JSON.parse(message?.content as string) as {
+    userMessage: string;
+    automaticItems: readonly {
+      id: string;
+      kind: string;
+      content: string;
+    }[];
+  };
+}
+
+function automaticId(kind: string, content: string): string {
+  return `auto:${kind}:${createHash('sha256')
+    .update(`${kind} ${content}`)
+    .digest('hex')
+    .slice(0, 12)}`;
 }
 
 function block(text: string): TextBlock {
@@ -626,6 +713,674 @@ describe('Pi context guard privacy', () => {
       warn.mockRestore();
       error.mockRestore();
       debug.mockRestore();
+    }
+  });
+});
+
+describe('Pi automatic extraction mode', () => {
+  it('is off by default, filters input sources, and makes one call per eligible message', async () => {
+    const harness = new FakePiHarness();
+    await harness.start();
+
+    await invokeInput(harness, 'Keep this instruction durable.');
+    expect(harness.completeCalls).toHaveLength(0);
+    await harness.command('extraction');
+    expect(harness.notifyMessages().at(-1)).toContain("extraction is 'off'");
+
+    await harness.command('extraction automatic');
+    expect(latestV2State(harness).extraction).toBe('automatic');
+    harness.setCompletionResponse(
+      extractorResponse(
+        extractorJson({
+          schemaVersion: 1,
+          add: [],
+          removeAutoItemIds: [],
+        }),
+      ),
+    );
+
+    await invokeInput(harness, 'An eligible interactive message.');
+    await invokeInput(harness, 'An eligible rpc message.', 'rpc');
+    expect(harness.completeCalls).toHaveLength(2);
+
+    await invokeInput(harness, '/context-guard status');
+    await invokeInput(harness, '   ');
+    await invokeInput(harness, 'An extension message.', 'extension');
+    expect(harness.completeCalls).toHaveLength(2);
+
+    harness.setModelAvailable(false);
+    await invokeInput(harness, 'There is no active model.');
+    expect(harness.completeCalls).toHaveLength(2);
+  });
+
+  it('persists and restores automatic mode', async () => {
+    const original = new FakePiHarness();
+    await original.start();
+    await original.command('extraction automatic');
+
+    const restored = new FakePiHarness(original.getBranch());
+    await restored.start();
+    await restored.command('extraction');
+    expect(restored.notifyMessages().at(-1)).toContain("extraction is 'automatic'");
+    restored.setCompletionResponse(
+      extractorResponse(
+        extractorJson({
+          schemaVersion: 1,
+          add: [],
+          removeAutoItemIds: [],
+        }),
+      ),
+    );
+    await invokeInput(restored, 'One restored eligible message.');
+    expect(restored.completeCalls).toHaveLength(1);
+  });
+
+  it('accepts every allowed kind and only persists exact source substrings', async () => {
+    const harness = new FakePiHarness();
+    await harness.start();
+    await harness.command('extraction automatic');
+
+    const message =
+      'Goal: ship safely. Constraint: do not alter the public API. Requirement: keep tests green. Decision: use JSON.';
+    const output = {
+      schemaVersion: 1,
+      add: [
+        { content: 'Goal: ship safely.', kind: 'goal', critical: true },
+        { content: 'Constraint: do not alter the public API.', kind: 'constraint' },
+        { content: 'Requirement: keep tests green.', kind: 'requirement', critical: false },
+        { content: 'Decision: use JSON.', kind: 'decision' },
+      ],
+      removeAutoItemIds: [],
+    };
+    harness.setCompletionResponse(
+      extractorResponse(`\`\`\`json\n${extractorJson(output)}\n\`\`\``),
+    );
+
+    await invokeInput(harness, message);
+
+    const state = latestV2State(harness);
+    expect(state.items.map((entry) => entry.id)).toEqual([
+      automaticId('goal', 'Goal: ship safely.'),
+      automaticId('constraint', 'Constraint: do not alter the public API.'),
+      automaticId('requirement', 'Requirement: keep tests green.'),
+      automaticId('decision', 'Decision: use JSON.'),
+    ]);
+    expect(state.items.map((entry) => entry.critical)).toEqual([
+      true,
+      false,
+      false,
+      false,
+    ]);
+    expect(state.autoItemIds).toEqual(state.items.map((entry) => entry.id));
+
+    await harness.command('list');
+    const list = harness.notifyMessages().at(-1) ?? '';
+    expect(list).toContain('[auto]');
+    expect(list).toContain('Goal: ship safely.');
+    await harness.command('status');
+    const status = harness.notifyMessages().at(-1) ?? '';
+    expect(status).toContain('0 manual');
+    expect(status).toContain('4 automatic');
+    expect(status).toContain('extraction automatic');
+    expect(status).toContain('Last extraction: added 4, retired 0.');
+  });
+
+  it('rejects invalid output atomically', async () => {
+    const cases: readonly { response: unknown; message: string }[] = [
+      {
+        response: extractorResponse(
+          extractorJson({
+            schemaVersion: 1,
+            add: [{ content: 'A fact', kind: 'fact' }],
+            removeAutoItemIds: [],
+          }),
+        ),
+        message: 'A fact',
+      },
+      {
+        response: extractorResponse(
+          extractorJson({
+            schemaVersion: 1,
+            add: [{ content: 'The API must remain unchanged.', kind: 'constraint' }],
+            removeAutoItemIds: [],
+          }),
+        ),
+        message: 'Do not alter the public API.',
+      },
+      {
+        response: extractorResponse(
+          extractorJson({
+            schemaVersion: 1,
+            add: [{ content: 'not present', kind: 'constraint' }],
+            removeAutoItemIds: [],
+          }),
+        ),
+        message: 'A valid user message.',
+      },
+      {
+        response: extractorResponse(
+          extractorJson({
+            schemaVersion: 1,
+            add: [{ content: 'unsupported', kind: 'unsupported' }],
+            removeAutoItemIds: [],
+          }),
+        ),
+        message: 'unsupported',
+      },
+      {
+        response: extractorResponse(
+          extractorJson({
+            schemaVersion: 1,
+            add: [{ content: 'A nonboolean flag', kind: 'constraint', critical: 'yes' }],
+            removeAutoItemIds: [],
+          }),
+        ),
+        message: 'A nonboolean flag',
+      },
+      {
+        response: extractorResponse(
+          extractorJson({
+            schemaVersion: 2,
+            add: [],
+            removeAutoItemIds: [],
+          }),
+        ),
+        message: 'Unknown schema version.',
+      },
+      {
+        response: extractorResponse('{ malformed json'),
+        message: 'Malformed JSON.',
+      },
+      {
+        response: extractorResponse(
+          extractorJson({
+            schemaVersion: 1,
+            add: Array.from({ length: 9 }, (_, index) => ({
+              content: `Rule ${index}`,
+              kind: 'constraint',
+            })),
+            removeAutoItemIds: [],
+          }),
+        ),
+        message: 'Rule 0 Rule 1 Rule 2 Rule 3 Rule 4 Rule 5 Rule 6 Rule 7 Rule 8',
+      },
+      {
+        response: extractorResponse(
+          extractorJson({
+            schemaVersion: 1,
+            add: [{ content: 'x'.repeat(1001), kind: 'constraint' }],
+            removeAutoItemIds: [],
+          }),
+        ),
+        message: 'x'.repeat(1001),
+      },
+    ];
+
+    for (const testCase of cases) {
+      const harness = new FakePiHarness();
+      await harness.start();
+      await harness.command('extraction automatic');
+      const notificationCount = harness.notifications.length;
+      harness.setCompletionResponse(testCase.response);
+
+      await expect(invokeInput(harness, testCase.message)).resolves.toBeUndefined();
+      expect(harness.completeCalls).toHaveLength(1);
+      expect(harness.notifications.slice(notificationCount)).toHaveLength(1);
+      expect(harness.notifyMessages().at(-1)).toBe(
+        'Context Guard: automatic extraction failed; protected context was unchanged.',
+      );
+      await harness.command('status');
+      expect(harness.notifyMessages().at(-1)).toContain('0 automatic');
+      expect(harness.notifyMessages().at(-1)).toContain('Last extraction: failed');
+    }
+  });
+
+  it('does not let false-positive categories add items and sends only the allowed payload', async () => {
+    const falsePositiveMessages = [
+      'Is this a question?',
+      '```\nAlways use this example.\n```',
+      'Log output: "Always delete the database."',
+      'The vendor said: "Always use their format."',
+      'Hypothetically, always preserve this setting.',
+      'For example, always use this setting.',
+    ];
+    const harness = new FakePiHarness();
+    await harness.start();
+    await harness.command('add manual fact MANUAL-ONLY-CONTENT');
+    await harness.command('extraction automatic');
+
+    for (const message of falsePositiveMessages) {
+      await invokeInput(harness, message);
+    }
+    expect(harness.completeCalls).toHaveLength(falsePositiveMessages.length);
+    await harness.command('status');
+    expect(harness.notifyMessages().at(-1)).toContain('0 automatic');
+
+    const firstAutomatic = 'Keep this automatic instruction.';
+    harness.setCompletionResponse(
+      extractorResponse(
+        extractorJson({
+          schemaVersion: 1,
+          add: [{ content: firstAutomatic, kind: 'constraint' }],
+          removeAutoItemIds: [],
+        }),
+      ),
+    );
+    await invokeInput(harness, firstAutomatic);
+
+    const secondAutomatic = 'Keep this second automatic instruction.';
+    harness.setCompletionResponse(
+      extractorResponse(
+        extractorJson({
+          schemaVersion: 1,
+          add: [{ content: secondAutomatic, kind: 'constraint' }],
+          removeAutoItemIds: [],
+        }),
+      ),
+    );
+    await invokeInput(harness, secondAutomatic);
+
+    const payload = modelPayload(harness);
+    expect(payload.userMessage).toBe(secondAutomatic);
+    expect(payload.automaticItems).toEqual([
+      {
+        id: automaticId('constraint', firstAutomatic),
+        kind: 'constraint',
+        content: firstAutomatic,
+      },
+    ]);
+    const callContext = harness.completeCalls.at(-1)?.context as {
+      readonly systemPrompt?: string;
+      readonly messages?: readonly unknown[];
+    };
+    expect(callContext.messages).toHaveLength(1);
+    expect(callContext.systemPrompt).toContain('exact contiguous substring');
+    expect(callContext.systemPrompt).toContain('quoted third-party');
+    expect(JSON.stringify(callContext)).not.toContain('MANUAL-ONLY-CONTENT');
+    const options = harness.completeCalls.at(-1)?.options as {
+      readonly maxTokens?: number;
+      readonly reasoningEffort?: string;
+      readonly signal?: AbortSignal;
+    };
+    expect(options.maxTokens).toBe(1024);
+    expect(options.reasoningEffort).toBe('minimal');
+    expect(options.signal).toBeInstanceOf(AbortSignal);
+  });
+});
+
+describe('Pi automatic extraction dedupe and provenance', () => {
+  it('deduplicates automatic items, manual items, repeats, and handles digest collisions', async () => {
+    const harness = new FakePiHarness();
+    await harness.start();
+    await harness.command('extraction automatic');
+    const repeated = 'Keep this durable instruction.';
+    harness.setCompletionResponse(
+      extractorResponse(
+        extractorJson({
+          schemaVersion: 1,
+          add: [
+            { content: repeated, kind: 'constraint' },
+            { content: repeated, kind: 'constraint', critical: true },
+          ],
+          removeAutoItemIds: [],
+        }),
+      ),
+    );
+    await invokeInput(harness, repeated);
+    expect(latestV2State(harness).items).toHaveLength(1);
+    expect(latestV2State(harness).autoItemIds).toEqual([
+      automaticId('constraint', repeated),
+    ]);
+    const entriesAfterFirst = harness.appendedEntries.length;
+
+    await invokeInput(harness, repeated);
+    expect(latestV2State(harness).items).toHaveLength(1);
+    expect(harness.appendedEntries).toHaveLength(entriesAfterFirst);
+
+    const manual = new FakePiHarness();
+    await manual.start();
+    await manual.command('add manual constraint Keep this manual item.');
+    await manual.command('extraction automatic');
+    manual.setCompletionResponse(
+      extractorResponse(
+        extractorJson({
+          schemaVersion: 1,
+          add: [{ content: 'Keep this manual item.', kind: 'constraint' }],
+          removeAutoItemIds: [],
+        }),
+      ),
+    );
+    await invokeInput(manual, 'Keep this manual item.');
+    expect(latestV2State(manual).items).toHaveLength(1);
+    expect(latestV2State(manual).autoItemIds).toEqual([]);
+
+    const collision = new FakePiHarness();
+    await collision.start();
+    const collisionContent = 'Collision-safe instruction.';
+    const collisionId = automaticId('constraint', collisionContent);
+    await collision.command(`add ${collisionId} fact Occupying manual item`);
+    await collision.command('extraction automatic');
+    collision.setCompletionResponse(
+      extractorResponse(
+        extractorJson({
+          schemaVersion: 1,
+          add: [{ content: collisionContent, kind: 'constraint' }],
+          removeAutoItemIds: [],
+        }),
+      ),
+    );
+    await invokeInput(collision, collisionContent);
+    expect(latestV2State(collision).items.map((entry) => entry.id)).toEqual([
+      collisionId,
+      `${collisionId}-2`,
+    ]);
+    expect(latestV2State(collision).autoItemIds).toEqual([`${collisionId}-2`]);
+  });
+
+  it('allows automatic retirement but never retires manual or unknown ids', async () => {
+    const harness = new FakePiHarness();
+    await harness.start();
+    await harness.command('extraction automatic');
+    const original = 'Keep the original API contract.';
+    harness.setCompletionResponse(
+      extractorResponse(
+        extractorJson({
+          schemaVersion: 1,
+          add: [{ content: original, kind: 'constraint' }],
+          removeAutoItemIds: [],
+        }),
+      ),
+    );
+    await invokeInput(harness, original);
+    const originalId = automaticId('constraint', original);
+    await harness.command('add manual fact Manual authority remains.');
+
+    const replacement = 'Use the replacement API contract.';
+    harness.setCompletionResponse(
+      extractorResponse(
+        extractorJson({
+          schemaVersion: 1,
+          add: [{ content: replacement, kind: 'constraint' }],
+          removeAutoItemIds: [originalId],
+        }),
+      ),
+    );
+    await invokeInput(harness, `Replace it: ${replacement}`);
+    let state = latestV2State(harness);
+    expect(state.items.map((entry) => entry.content)).toEqual([
+      'Manual authority remains.',
+      replacement,
+    ]);
+    expect(state.autoItemIds).toEqual([automaticId('constraint', replacement)]);
+
+    const manualId = 'manual';
+    harness.setCompletionResponse(
+      extractorResponse(
+        extractorJson({
+          schemaVersion: 1,
+          add: [],
+          removeAutoItemIds: [manualId],
+        }),
+      ),
+    );
+    await invokeInput(harness, 'Do not retire manual authority.');
+    expect(harness.notifyMessages().at(-1)).toContain('automatic extraction failed');
+    state = latestV2State(harness);
+    expect(state.items.map((entry) => entry.id)).toContain(manualId);
+
+    harness.setCompletionResponse(
+      extractorResponse(
+        extractorJson({
+          schemaVersion: 1,
+          add: [],
+          removeAutoItemIds: ['auto:constraint:does-not-exist'],
+        }),
+      ),
+    );
+    await invokeInput(harness, 'Unknown retirement id.');
+    expect(harness.notifyMessages().at(-1)).toContain('automatic extraction failed');
+    expect(latestV2State(harness).items).toHaveLength(2);
+
+    await harness.command(`remove ${automaticId('constraint', replacement)}`);
+    expect(latestV2State(harness).autoItemIds).toEqual([]);
+    await harness.command('list');
+    expect(harness.notifyMessages().at(-1)).toContain('[manual]');
+  });
+
+  it('rejects a malformed add without applying a valid retirement', async () => {
+    const harness = new FakePiHarness();
+    await harness.start();
+    await harness.command('extraction automatic');
+    const original = 'Keep this item until explicitly withdrawn.';
+    harness.setCompletionResponse(
+      extractorResponse(
+        extractorJson({
+          schemaVersion: 1,
+          add: [{ content: original, kind: 'constraint' }],
+          removeAutoItemIds: [],
+        }),
+      ),
+    );
+    await invokeInput(harness, original);
+    const originalId = automaticId('constraint', original);
+    const entriesBefore = harness.appendedEntries.length;
+
+    harness.setCompletionResponse(
+      extractorResponse(
+        extractorJson({
+          schemaVersion: 1,
+          add: [{ content: 'not in the user message', kind: 'constraint' }],
+          removeAutoItemIds: [originalId],
+        }),
+      ),
+    );
+    await invokeInput(harness, 'Withdraw the original item.');
+    expect(harness.appendedEntries).toHaveLength(entriesBefore);
+    expect(latestV2State(harness).items.map((entry) => entry.id)).toEqual([
+      originalId,
+    ]);
+    expect(latestV2State(harness).autoItemIds).toEqual([originalId]);
+  });
+});
+
+describe('Pi automatic extraction persistence and lifecycle', () => {
+  it('round-trips v2 mode and provenance, and drops stale provenance ids', async () => {
+    const original = new FakePiHarness();
+    await original.start();
+    await original.command('add manual fact Manual item.');
+    await original.command('extraction automatic');
+    const automatic = 'Persist this automatic item.';
+    original.setCompletionResponse(
+      extractorResponse(
+        extractorJson({
+          schemaVersion: 1,
+          add: [{ content: automatic, kind: 'decision' }],
+          removeAutoItemIds: [],
+        }),
+      ),
+    );
+    await invokeInput(original, automatic);
+    const saved = latestV2State(original);
+    expect(saved.schemaVersion).toBe(2);
+    expect(saved.extraction).toBe('automatic');
+    expect(saved.autoItemIds).toEqual([automaticId('decision', automatic)]);
+
+    const restored = new FakePiHarness(original.getBranch());
+    await restored.start();
+    await restored.command('list');
+    const list = restored.notifyMessages().at(-1) ?? '';
+    expect(list).toContain('[manual]');
+    expect(list).toContain('[auto]');
+    await restored.command('status');
+    expect(restored.notifyMessages().at(-1)).toContain('1 manual');
+    expect(restored.notifyMessages().at(-1)).toContain('1 automatic');
+    expect(restored.notifyMessages().at(-1)).toContain("extraction automatic");
+  });
+
+  it('drops stale provenance ids while loading v2', async () => {
+    const stale = new FakePiHarness([
+      customEntry(
+        STATE_CUSTOM_TYPE,
+        stateDataV2(
+          [item('auto-one', 'Persisted automatic item.', false, 'constraint')],
+          'off',
+          'automatic',
+          ['auto-one', 'stale-id'],
+        ),
+      ),
+    ]);
+    await stale.start();
+    await stale.command('list');
+    expect(stale.notifyMessages().at(-1)).toContain('[auto]');
+    expect(stale.notifyMessages().at(-1)).not.toContain('stale-id');
+  });
+
+  it('migrates v1 as manual with extraction off and degrades malformed v2 without fallback', async () => {
+    const legacy = new FakePiHarness([
+      customEntry(
+        STATE_CUSTOM_TYPE,
+        stateData([item('legacy', 'Legacy item', true, 'constraint')]),
+      ),
+    ]);
+    await legacy.start();
+    expect(legacy.notifications).toHaveLength(0);
+    await legacy.command('list');
+    expect(legacy.notifyMessages().at(-1)).toContain('[manual]');
+    await legacy.command('status');
+    expect(legacy.notifyMessages().at(-1)).toContain("extraction off");
+    expect(legacy.notifyMessages().at(-1)).toContain('degraded no');
+    await invokeInput(legacy, 'Legacy input should not extract.');
+    expect(legacy.completeCalls).toHaveLength(0);
+
+    const older = customEntry(
+      STATE_CUSTOM_TYPE,
+      stateDataV2([item('older', 'Older valid item')]),
+    );
+    const malformed = customEntry(STATE_CUSTOM_TYPE, {
+      schemaVersion: 2,
+      recovery: 'off',
+      extraction: 'automatic',
+      items: [item('bad', 'Malformed latest item')],
+      autoItemIds: 'not-an-array',
+    });
+    const broken = new FakePiHarness([older, malformed]);
+    await broken.start();
+    expect(broken.notifications).toHaveLength(1);
+    expect(broken.notifyMessages()[0]).toContain('discarded');
+    expect(broken.notifyMessages()[0]).not.toContain('Older valid item');
+    await broken.command('status');
+    expect(broken.notifyMessages().at(-1)).toContain('0 items');
+    expect(broken.notifyMessages().at(-1)).toContain('degraded yes');
+
+    const unknown = new FakePiHarness([
+      customEntry(STATE_CUSTOM_TYPE, {
+        schemaVersion: 99,
+        recovery: 'off',
+        items: [],
+      }),
+    ]);
+    await unknown.start();
+    expect(unknown.notifications).toHaveLength(1);
+    expect(unknown.notifyMessages()[0]).toContain('discarded');
+  });
+
+  it('clears the pending snapshot after an automatic mutation and captures a fresh one next time', async () => {
+    const harness = new FakePiHarness();
+    await harness.start();
+    await harness.command('add existing fact Existing snapshot item.');
+    await harness.command('extraction automatic');
+    await harness.invoke('session_before_compact');
+
+    const automatic = 'Automatic snapshot item.';
+    harness.setCompletionResponse(
+      extractorResponse(
+        extractorJson({
+          schemaVersion: 1,
+          add: [{ content: automatic, kind: 'constraint' }],
+          removeAutoItemIds: [],
+        }),
+      ),
+    );
+    await invokeInput(harness, automatic);
+    await harness.invoke('session_compact', compactEvent('invalidated'));
+    await harness.invoke('context', contextEvent([textMessage('')]));
+    expect(harness.notifyMessages().at(-1)).toContain('no pre-compaction snapshot');
+    expect(verificationMessages(harness)).toHaveLength(0);
+
+    await harness.invoke('session_before_compact');
+    await harness.invoke('session_compact', compactEvent('fresh'));
+    await harness.invoke(
+      'context',
+      contextEvent([textMessage('Existing snapshot item.'), textMessage(automatic)]),
+    );
+    expect(verificationMessages(harness).at(-1)).toContain('2 preserved');
+  });
+});
+
+describe('Pi automatic extraction failures', () => {
+  it('keeps the turn alive, leaves the registry unchanged, and emits one concise warning', async () => {
+    const cases: readonly {
+      readonly configure: (harness: FakePiHarness) => void;
+      readonly expectedInput?: string;
+    }[] = [
+      {
+        configure: (harness): void => {
+          harness.setCompletionError(new Error('provider secret must not leak'));
+        },
+        expectedInput: 'PRIVATE-USER-MESSAGE',
+      },
+      {
+        configure: (harness): void => {
+          harness.setCompletionResponse(extractorResponse('{"schemaVersion":1}'));
+        },
+      },
+      {
+        configure: (harness): void => {
+          harness.setCompletionResponse({
+            stopReason: 'aborted',
+            content: [{ type: 'text', text: '{}' }],
+          });
+        },
+      },
+      {
+        configure: (harness): void => {
+          harness.setCompletionResponse({ stopReason: 'stop', content: [] });
+        },
+      },
+      {
+        configure: (harness): void => {
+          harness.setCompletionResponse({
+            stopReason: 'stop',
+            content: [{ type: 'thinking', thinking: 'not text' }],
+          });
+        },
+      },
+    ];
+
+    for (const testCase of cases) {
+      const harness = new FakePiHarness();
+      await harness.start();
+      await harness.command('add manual fact Manual item survives.');
+      await harness.command('extraction automatic');
+      const notificationCount = harness.notifications.length;
+      testCase.configure(harness);
+
+      await expect(invokeInput(harness, testCase.expectedInput ?? 'Failure input.'))
+        .resolves.toBeUndefined();
+      expect(harness.completeCalls).toHaveLength(1);
+      expect(harness.notifications.slice(notificationCount)).toHaveLength(1);
+      expect(harness.notifyMessages().at(-1)).toBe(
+        'Context Guard: automatic extraction failed; protected context was unchanged.',
+      );
+      expect(harness.notifyMessages().at(-1)).not.toContain('provider secret');
+      expect(harness.notifyMessages().at(-1)).not.toContain('PRIVATE-USER-MESSAGE');
+      await harness.command('status');
+      expect(harness.notifyMessages().at(-1)).toContain('1 manual');
+      expect(harness.notifyMessages().at(-1)).toContain('0 automatic');
+      expect(harness.notifyMessages().at(-1)).toContain('Last extraction: failed');
+      await expect(
+        harness.invoke('context', contextEvent([textMessage('still alive')])),
+      ).resolves.toBeUndefined();
     }
   });
 });

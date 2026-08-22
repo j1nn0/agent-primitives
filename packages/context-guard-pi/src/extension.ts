@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { registerContextGuardCommand } from './command.js';
+import { createExtractionController } from './extraction.js';
 import { createLifecycle } from './lifecycle.js';
 import {
   createEmptyState,
@@ -8,7 +9,7 @@ import {
 } from './state.js';
 import type { RecoveryMode, RuntimeState } from './types.js';
 
-export type { PersistedState, RecoveryMode } from './types.js';
+export type { ExtractionMode, PersistedState, RecoveryMode } from './types.js';
 
 export default function registerContextGuardExtension(pi: ExtensionAPI): void {
   let state: RuntimeState = createEmptyState();
@@ -17,11 +18,21 @@ export default function registerContextGuardExtension(pi: ExtensionAPI): void {
     getGuard: (): RuntimeState['guard'] => state.guard,
     getRecoveryMode: (): RecoveryMode => state.recovery,
   });
+  const extraction = createExtractionController({
+    getState: (): RuntimeState => state,
+    clearPendingSnapshot: lifecycle.clearPendingSnapshot,
+    persist: (): void => {
+      saveState(pi, state);
+    },
+  });
 
   registerContextGuardCommand(pi, {
     getState: (): RuntimeState => state,
     setRecoveryMode: (mode: RecoveryMode): void => {
       state.recovery = mode;
+    },
+    setExtractionMode: (mode): void => {
+      state.extraction = mode;
     },
     clearPendingSnapshot: lifecycle.clearPendingSnapshot,
     persist: (): void => {
@@ -54,4 +65,8 @@ export default function registerContextGuardExtension(pi: ExtensionAPI): void {
   });
 
   pi.on('context', async (event, ctx) => lifecycle.handleContext(event, ctx));
+
+  pi.on('input', async (event, ctx): Promise<void> => {
+    await extraction.handleInput(event, ctx);
+  });
 }

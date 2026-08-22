@@ -26,6 +26,12 @@ export interface SentMessage {
   readonly options: unknown;
 }
 
+export interface ModelCompleteCall {
+  readonly model: unknown;
+  readonly context: unknown;
+  readonly options: unknown;
+}
+
 type EventHandler = (event: unknown, ctx: ExtensionContext) => unknown;
 type CommandHandler = (
   args: string,
@@ -39,9 +45,39 @@ export class FakePiHarness {
   readonly statuses: StatusUpdate[] = [];
   readonly appendedEntries: AppendedEntry[] = [];
   readonly sentMessages: SentMessage[] = [];
-  readonly context: ExtensionContext;
+  readonly completeCalls: ModelCompleteCall[] = [];
+  context: ExtensionContext;
   private branch: SessionEntry[];
   private systemPrompt = '';
+  private modelValue: unknown = {
+    id: 'fake-model',
+    api: 'openai-responses',
+    reasoning: true,
+  };
+  private completionResponse: unknown = {
+    stopReason: 'stop',
+    content: [
+      {
+        type: 'text',
+        text: '{"schemaVersion":1,"add":[],"removeAutoItemIds":[]}',
+      },
+    ],
+  };
+  private completionError: unknown;
+
+  readonly modelRegistry = {
+    complete: async (
+      model: unknown,
+      context: unknown,
+      options?: unknown,
+    ): Promise<unknown> => {
+      this.completeCalls.push({ model, context, options });
+      if (this.completionError !== undefined) {
+        throw this.completionError;
+      }
+      return this.completionResponse;
+    },
+  };
 
   readonly api: ExtensionAPI;
 
@@ -76,6 +112,22 @@ export class FakePiHarness {
 
   setSystemPrompt(prompt: string): void {
     this.systemPrompt = prompt;
+  }
+
+  setModelAvailable(available: boolean): void {
+    this.modelValue = available
+      ? { id: 'fake-model', api: 'openai-responses', reasoning: true }
+      : undefined;
+    this.context = this.createContext();
+  }
+
+  setCompletionResponse(response: unknown): void {
+    this.completionError = undefined;
+    this.completionResponse = response;
+  }
+
+  setCompletionError(error: unknown): void {
+    this.completionError = error;
   }
 
   setBranch(entries: readonly SessionEntry[]): void {
@@ -129,6 +181,8 @@ export class FakePiHarness {
       sessionManager: {
         getBranch: (): SessionEntry[] => this.branch,
       },
+      model: this.modelValue,
+      modelRegistry: this.modelRegistry,
       getSystemPrompt: (): string => this.systemPrompt,
     } as unknown as ExtensionContext;
   }

@@ -4,7 +4,13 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from '@earendil-works/pi-coding-agent';
-import type { PersistedState, RecoveryMode, RuntimeState } from './types.js';
+import type {
+  PersistedState,
+  PersistedStateV1,
+  PersistedStateV2,
+  RecoveryMode,
+  RuntimeState,
+} from './types.js';
 
 export const STATE_CUSTOM_TYPE = 'agent-context-guard-state';
 
@@ -19,11 +25,15 @@ function isRecoveryMode(value: unknown): value is RecoveryMode {
   return value === 'off' || value === 'critical';
 }
 
-function isPersistedStateShape(value: unknown): value is {
-  schemaVersion: 1;
-  recovery: RecoveryMode;
-  items: unknown[];
-} {
+function isExtractionMode(value: unknown): value is RuntimeState['extraction'] {
+  return value === 'off' || value === 'automatic';
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+}
+
+function isPersistedStateV1Shape(value: unknown): value is PersistedStateV1 {
   return (
     isRecord(value) &&
     value.schemaVersion === 1 &&
@@ -32,11 +42,25 @@ function isPersistedStateShape(value: unknown): value is {
   );
 }
 
+function isPersistedStateV2Shape(value: unknown): value is PersistedStateV2 {
+  return (
+    isRecord(value) &&
+    value.schemaVersion === 2 &&
+    isRecoveryMode(value.recovery) &&
+    isExtractionMode(value.extraction) &&
+    Array.isArray(value.items) &&
+    isStringArray(value.autoItemIds)
+  );
+}
+
 export function createEmptyState(): RuntimeState {
   return {
     guard: createContextGuard(),
     recovery: 'off',
+    extraction: 'off',
+    autoItemIds: new Set<string>(),
     degraded: false,
+    lastExtraction: undefined,
   };
 }
 
@@ -56,18 +80,38 @@ export function loadState(
   }
 
   try {
-    if (!isPersistedStateShape(latestStateEntry.data)) {
-      throw new Error('Invalid persisted state shape.');
+    const data = latestStateEntry.data;
+    if (isPersistedStateV2Shape(data)) {
+      const guard = createContextGuard(
+        data.items as readonly ContextItemInput[],
+      );
+      return {
+        guard,
+        recovery: data.recovery,
+        extraction: data.extraction,
+        autoItemIds: new Set<string>(
+          data.autoItemIds.filter((id) => guard.has(id)),
+        ),
+        degraded: false,
+        lastExtraction: undefined,
+      };
     }
 
-    const guard = createContextGuard(
-      latestStateEntry.data.items as readonly ContextItemInput[],
-    );
-    return {
-      guard,
-      recovery: latestStateEntry.data.recovery,
-      degraded: false,
-    };
+    if (isPersistedStateV1Shape(data)) {
+      const guard = createContextGuard(
+        data.items as readonly ContextItemInput[],
+      );
+      return {
+        guard,
+        recovery: data.recovery,
+        extraction: 'off',
+        autoItemIds: new Set<string>(),
+        degraded: false,
+        lastExtraction: undefined,
+      };
+    }
+
+    throw new Error('Invalid persisted state shape.');
   } catch {
     ctx.ui.notify(INVALID_STATE_WARNING, 'warning');
     return {
@@ -82,9 +126,11 @@ export function saveState(
   state: RuntimeState,
 ): void {
   const payload: PersistedState = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     recovery: state.recovery,
+    extraction: state.extraction,
     items: state.guard.list(),
+    autoItemIds: Array.from(state.autoItemIds).filter((id) => state.guard.has(id)),
   };
   pi.appendEntry(STATE_CUSTOM_TYPE, payload);
   state.degraded = false;

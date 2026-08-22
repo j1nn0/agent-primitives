@@ -7,16 +7,39 @@ import type {
 /** Controls whether lost critical items are injected after verification. */
 export type RecoveryMode = 'off' | 'critical';
 
-export interface PersistedState {
+/** Controls whether protected items are extracted from user messages. */
+export type ExtractionMode = 'off' | 'automatic';
+
+export interface PersistedStateV1 {
   readonly schemaVersion: 1;
   readonly recovery: RecoveryMode;
   readonly items: readonly ContextItem[];
 }
 
+export interface PersistedStateV2 {
+  readonly schemaVersion: 2;
+  readonly recovery: RecoveryMode;
+  readonly extraction: ExtractionMode;
+  readonly items: readonly ContextItem[];
+  readonly autoItemIds: readonly string[];
+}
+
+/** New persisted state. The loader also accepts PersistedStateV1. */
+export type PersistedState = PersistedStateV2;
+
+export interface LastExtraction {
+  readonly status: 'success' | 'failed';
+  readonly added: number;
+  readonly retired: number;
+}
+
 export interface RuntimeState {
   guard: ContextGuard;
   recovery: RecoveryMode;
+  extraction: ExtractionMode;
+  autoItemIds: Set<string>;
   degraded: boolean;
+  lastExtraction: LastExtraction | undefined;
 }
 
 export interface LastVerification {

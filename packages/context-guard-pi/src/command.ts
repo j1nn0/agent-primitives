@@ -1,20 +1,18 @@
 import { ContextGuardError } from '@j1nn0/agent-context-guard';
-import type {
-  ContextGuard,
-  ContextItemKind,
-} from '@j1nn0/agent-context-guard';
+import type { ContextItemKind } from '@j1nn0/agent-context-guard';
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
 } from '@earendil-works/pi-coding-agent';
 import type {
+  ExtractionMode,
   LastVerification,
   RecoveryMode,
   RuntimeState,
 } from './types.js';
 
 const USAGE =
-  'Usage: /context-guard add <id> <kind> [--critical] <content...> | list | remove <id> | clear [--yes] | status | recovery [off|critical]';
+  'Usage: /context-guard add <id> <kind> [--critical] <content...> | list | remove <id> | clear [--yes] | status | recovery [off|critical] | extraction [off|automatic]';
 const KINDS: readonly ContextItemKind[] = [
   'goal',
   'constraint',
@@ -26,6 +24,7 @@ const KINDS: readonly ContextItemKind[] = [
 interface CommandController {
   readonly getState: () => RuntimeState;
   readonly setRecoveryMode: (mode: RecoveryMode) => void;
+  readonly setExtractionMode: (mode: ExtractionMode) => void;
   readonly clearPendingSnapshot: () => void;
   readonly persist: () => void;
   readonly getLastVerification: () => LastVerification | undefined;
@@ -104,8 +103,11 @@ function verificationSummary(
   ].join('; ');
 }
 
-function listItems(ctx: ExtensionCommandContext, guard: ContextGuard): void {
-  const items = guard.list();
+function listItems(
+  ctx: ExtensionCommandContext,
+  state: RuntimeState,
+): void {
+  const items = state.guard.list();
   if (items.length === 0) {
     notify(ctx, 'Context Guard: no protected items.');
     return;
@@ -113,9 +115,20 @@ function listItems(ctx: ExtensionCommandContext, guard: ContextGuard): void {
 
   const lines = items.map((item) => {
     const critical = item.critical ? ', critical' : '';
-    return `${item.id} [${item.kind}${critical}]: ${item.content}`;
+    const provenance = state.autoItemIds.has(item.id) ? 'auto' : 'manual';
+    return `${item.id} [${provenance}] [${item.kind}${critical}]: ${item.content}`;
   });
   notify(ctx, lines.join('\n'));
+}
+
+function extractionSummary(state: RuntimeState): string {
+  if (state.lastExtraction === undefined) {
+    return 'Last extraction: none.';
+  }
+  if (state.lastExtraction.status === 'failed') {
+    return 'Last extraction: failed; protected context was unchanged.';
+  }
+  return `Last extraction: added ${state.lastExtraction.added}, retired ${state.lastExtraction.retired}.`;
 }
 
 function showStatus(
@@ -123,9 +136,13 @@ function showStatus(
   controller: CommandController,
 ): void {
   const state = controller.getState();
-  const criticalCount = state.guard.list().filter((item) => item.critical).length;
+  const items = state.guard.list();
+  const criticalCount = items.filter((item) => item.critical).length;
+  const automaticCount = items.filter((item) => state.autoItemIds.has(item.id)).length;
+  const manualCount = items.length - automaticCount;
   const status = [
-    `Context Guard: ${state.guard.size()} items, ${criticalCount} critical, recovery ${state.recovery}, degraded ${state.degraded ? 'yes' : 'no'}.`,
+    `Context Guard: ${items.length} items, ${criticalCount} critical, ${manualCount} manual, ${automaticCount} automatic, recovery ${state.recovery}, extraction ${state.extraction}, degraded ${state.degraded ? 'yes' : 'no'}.`,
+    extractionSummary(state),
     verificationSummary(
       controller.getLastVerification(),
       controller.getLastUnverifiableCompactionId(),
@@ -175,10 +192,12 @@ function removeItem(
     return;
   }
 
-  if (!controller.getState().guard.remove(id)) {
+  const state = controller.getState();
+  if (!state.guard.remove(id)) {
     notify(ctx, `Context Guard: item '${id}' was not found.`, 'warning');
     return;
   }
+  state.autoItemIds.delete(id);
 
   controller.clearPendingSnapshot();
   controller.persist();
@@ -203,6 +222,7 @@ function clearItems(
 
   controller.clearPendingSnapshot();
   state.guard.clear();
+  state.autoItemIds.clear();
   controller.persist();
   notify(ctx, `Context Guard: cleared ${count} protected item${count === 1 ? '' : 's'}.`);
 }
@@ -230,6 +250,29 @@ function changeRecovery(
   notify(ctx, `Context Guard: recovery set to '${mode}'.`);
 }
 
+function changeExtraction(
+  ctx: ExtensionCommandContext,
+  controller: CommandController,
+  value: string,
+): void {
+  const mode = value.trim();
+  if (mode !== 'off' && mode !== 'automatic') {
+    notify(ctx, 'Usage: /context-guard extraction [off|automatic]', 'warning');
+    return;
+  }
+
+  const state = controller.getState();
+  if (state.extraction === mode) {
+    notify(ctx, `Context Guard: extraction is already '${mode}'.`);
+    return;
+  }
+
+  controller.clearPendingSnapshot();
+  controller.setExtractionMode(mode);
+  controller.persist();
+  notify(ctx, `Context Guard: extraction set to '${mode}'.`);
+}
+
 async function handleCommand(
   args: string,
   ctx: ExtensionCommandContext,
@@ -253,7 +296,7 @@ async function handleCommand(
         notify(ctx, 'Usage: /context-guard list', 'warning');
         return;
       }
-      listItems(ctx, controller.getState().guard);
+      listItems(ctx, controller.getState());
       return;
     case 'remove':
       removeItem(ctx, controller, value);
@@ -270,6 +313,13 @@ async function handleCommand(
       return;
     case 'recovery':
       changeRecovery(ctx, controller, value);
+      return;
+    case 'extraction':
+      if (value.trim().length === 0) {
+        notify(ctx, `Context Guard: extraction is '${controller.getState().extraction}'.`);
+        return;
+      }
+      changeExtraction(ctx, controller, value);
       return;
     default:
       notify(ctx, USAGE, 'warning');
