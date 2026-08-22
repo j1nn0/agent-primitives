@@ -100,6 +100,8 @@ console.log(decoded.schemaVersion, decoded.items[0].critical);
 
 Use `caseSensitive: true` to keep case significant or `normalizeWhitespace: false` to require the original whitespace. A match is `preserved`; a non-match is `lost`.
 
+Under the defaults a match is not a verbatim match: `KEEP    BACKUPS` matches `keep backups`. The reason strings therefore say "after the configured normalization", and how strict that comparison is depends on the two options above.
+
 ```ts
 import {
   createContextGuard,
@@ -177,6 +179,8 @@ The report contains one finding per snapshot item, in snapshot order, plus ID bu
 `ok` is true **only when** `changed`, `lost`, `unknown`, and `issues` are all empty. A non-critical loss therefore still makes `ok` false. `criticalFailures` contains critical item IDs whose final status is not `preserved`.
 
 Verifier output is fail-safe. A thrown or rejected verifier, a missing finding, a malformed finding, an unknown item ID, an unsupported status, or conflicting findings cannot silently preserve an item. Unverifiable items become `unknown`, never `preserved`, and structural problems in verifier output are recorded in `issues`.
+
+A structurally invalid finding taints the item it names: if the verifier returns both a valid finding and an invalid one for the same item, that item ends up `unknown` rather than keeping the valid status. Per-item output that is partly broken is not trustworthy per item, and a caller deciding what to recover reads `criticalFailures`, so a tainted critical item has to appear there. A finding naming an ID that is not in the snapshot taints nothing — it is discarded and recorded in `issues`. A non-string `reason` is dropped on its own; the finding's status still counts.
 
 ## Critical items
 

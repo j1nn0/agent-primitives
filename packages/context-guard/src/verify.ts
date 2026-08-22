@@ -23,10 +23,12 @@ const VERIFIER_FAILED_REASON =
 const MISSING_FINDING_REASON = 'The verifier returned no finding for this item.';
 const CONFLICTING_FINDING_REASON =
   'The verifier returned conflicting findings for this item.';
+const INVALID_FINDING_REASON =
+  'The verifier returned a structurally invalid finding for this item.';
 const LITERAL_PRESERVED_REASON =
-  'The item content appears verbatim in the candidate context.';
+  'The item content appears in the candidate context after the configured normalization.';
 const LITERAL_LOST_REASON =
-  'The item content does not appear verbatim in the candidate context.';
+  'The item content does not appear in the candidate context after the configured normalization.';
 
 interface NormalizedFinding {
   readonly itemId: string;
@@ -206,10 +208,13 @@ function normalizeResult(
 
   const snapshotIds = new Set(items.map((item) => item.id));
   const findingsByItemId = new Map<string, NormalizedFinding[]>();
+  const taintedItemIds = new Set<string>();
   const issues: string[] = [];
   const entries = result as readonly unknown[];
 
   for (let index = 0; index < entries.length; index += 1) {
+    let knownItemId: string | undefined;
+
     try {
       const entry = entries[index];
       if (!isObject(entry)) {
@@ -224,14 +229,17 @@ function normalizeResult(
         continue;
       }
 
-      const status = candidate.status;
-      if (!isVerificationStatus(status)) {
-        issues.push(`unsupported status for item "${itemId}"`);
+      if (!snapshotIds.has(itemId)) {
+        issues.push(`finding for unknown item id "${itemId}"`);
         continue;
       }
 
-      if (!snapshotIds.has(itemId)) {
-        issues.push(`finding for unknown item id "${itemId}"`);
+      knownItemId = itemId;
+
+      const status = candidate.status;
+      if (!isVerificationStatus(status)) {
+        issues.push(`unsupported status for item "${itemId}"`);
+        taintedItemIds.add(itemId);
         continue;
       }
 
@@ -255,11 +263,22 @@ function normalizeResult(
       }
     } catch {
       issues.push(`malformed finding at index ${index}`);
+      if (knownItemId !== undefined) {
+        taintedItemIds.add(knownItemId);
+      }
     }
   }
 
   const findings: VerificationFinding[] = [];
   for (const item of items) {
+    // A structurally invalid finding for a known item taints that item, even
+    // when another finding for it looked valid: the verifier's output cannot be
+    // trusted per item, so the item must not stay preserved.
+    if (taintedItemIds.has(item.id)) {
+      findings.push(finding(item.id, 'unknown', INVALID_FINDING_REASON));
+      continue;
+    }
+
     const matches = findingsByItemId.get(item.id);
     if (matches === undefined || matches.length === 0) {
       issues.push(`missing finding for item "${item.id}"`);

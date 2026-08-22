@@ -35,7 +35,8 @@ describe('literal verifier', () => {
       {
         itemId: 'item',
         status: 'preserved',
-        reason: 'The item content appears verbatim in the candidate context.',
+        reason:
+          'The item content appears in the candidate context after the configured normalization.',
       },
     ]);
     expect(report.ok).toBe(true);
@@ -48,7 +49,7 @@ describe('literal verifier', () => {
     expect(missing.lost).toEqual(['item']);
     expect(empty.lost).toEqual(['item']);
     expect(missing.findings[0]?.reason).toBe(
-      'The item content does not appear verbatim in the candidate context.',
+      'The item content does not appear in the candidate context after the configured normalization.',
     );
   });
 

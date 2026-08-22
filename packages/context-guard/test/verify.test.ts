@@ -202,6 +202,68 @@ describe('custom verification and report normalization', () => {
     expect(malformedEntries.issues).toContain('malformed finding at index 0');
   });
 
+  it('taints a known item when any finding for it is structurally invalid', async () => {
+    const report = await verifyContext({
+      snapshot: snapshotOf([item('baseline', 'Do not use a baseline.', true), item('other')]),
+      context: 'candidate',
+      verifier: verifierReturning([
+        { itemId: 'baseline', status: 'preserved' },
+        { itemId: 'baseline', status: 'INVALID' },
+        { itemId: 'other', status: 'preserved' },
+      ]),
+    });
+
+    expect(report.findings).toEqual([
+      {
+        itemId: 'baseline',
+        status: 'unknown',
+        reason: 'The verifier returned a structurally invalid finding for this item.',
+      },
+      { itemId: 'other', status: 'preserved' },
+    ]);
+    expect(report.unknown).toEqual(['baseline']);
+    expect(report.preserved).toEqual(['other']);
+    expect(report.criticalFailures).toEqual(['baseline']);
+    expect(report.issues).toContain('unsupported status for item "baseline"');
+    expect(report.ok).toBe(false);
+  });
+
+  it('taints a known item when reading its finding throws', async () => {
+    const hostile = { itemId: 'item' };
+    Object.defineProperty(hostile, 'status', {
+      get() {
+        throw new Error('hostile getter');
+      },
+      enumerable: true,
+    });
+
+    const report = await verifyContext({
+      snapshot: snapshotOf([item('item', 'content-item', true)]),
+      context: 'candidate',
+      verifier: verifierReturning([{ itemId: 'item', status: 'preserved' }, hostile]),
+    });
+
+    expect(report.unknown).toEqual(['item']);
+    expect(report.criticalFailures).toEqual(['item']);
+    expect(report.issues).toContain('malformed finding at index 1');
+    expect(report.ok).toBe(false);
+  });
+
+  it('does not taint items when a finding names an unknown item id', async () => {
+    const report = await verifyContext({
+      snapshot: snapshotOf(),
+      context: 'candidate',
+      verifier: verifierReturning([
+        { itemId: 'item', status: 'preserved' },
+        { itemId: 'ghost', status: 'INVALID' },
+      ]),
+    });
+
+    expect(report.preserved).toEqual(['item']);
+    expect(report.issues).toEqual(['finding for unknown item id "ghost"']);
+    expect(report.ok).toBe(false);
+  });
+
   it('drops non-string reasons while honoring the finding status', async () => {
     const report = await verifyContext({
       snapshot: snapshotOf(),
