@@ -43,16 +43,23 @@ moment, and that is the adapter's job.
 
 ## Implemented primitives
 
-### `@j1nn0/agent-context-guard`
+### Core primitives
+
+#### `@j1nn0/agent-context-guard`
 
 **Shipped.** The context guard records goals, constraints, requirements, decisions, and facts; creates deterministic snapshots; and verifies a candidate context with a literal or injected verifier. See [`packages/context-guard/README.md`](packages/context-guard/README.md) for the package documentation.
 
+### Harness adapters
+
+#### `@j1nn0/agent-context-guard-pi`
+
+**Shipped.** The Pi extension observes compaction boundaries, verifies protected context after compaction, persists its registry in the local Pi session, and can recover critical failures when explicitly enabled. See [`packages/context-guard-pi/README.md`](packages/context-guard-pi/README.md) for the package documentation.
+
 ## Direction
 
-The next step is a harness adapter, not another core primitive: a Pi integration
-that hooks real compaction boundaries and uses the context guard to decide, so the
-core API gets feedback from an actual agent lifecycle before more primitives are
-built on top of it. Adapters for other harnesses follow from what that one teaches.
+The first harness adapter is now available for Pi. Future work can use that
+integration's real lifecycle feedback before more primitives are built on top of
+it; adapters for other harnesses follow from what it teaches.
 
 ### Possible future primitives
 
@@ -67,7 +74,7 @@ The following are **not implemented**. They describe a direction, not an API pro
 - **Tool policy** — allow, deny, and require-approval rules for tool invocation.
 - **MCP adapter** — exposing primitives to MCP-based agents, without the core packages depending on an MCP SDK.
 
-Only the context guard is shipped today.
+The context guard core and Pi harness adapter are shipped today.
 
 ## Development
 

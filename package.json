@@ -12,7 +12,7 @@
     "typecheck": "pnpm -r run typecheck",
     "test": "pnpm -r run test",
     "lint": "eslint .",
-    "check:package": "pnpm --filter @j1nn0/agent-context-guard run check:package",
+    "check:package": "pnpm -r --if-present run check:package",
     "example": "node examples/context-guard/basic.ts"
   },
   "devDependencies": {
