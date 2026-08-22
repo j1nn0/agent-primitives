@@ -13,7 +13,7 @@ import type {
   RuntimeState,
 } from './types.js';
 
-const EXTRACTION_TIMEOUT_MS = 20_000;
+export const EXTRACTION_TIMEOUT_MS = 20_000;
 const MAX_ADDED_ITEMS = 8;
 const MAX_CONTENT_CODE_POINTS = 1_000;
 
@@ -49,13 +49,19 @@ type ExtractorResponse = {
   readonly stopReason?: unknown;
 };
 
-interface ExtractedItem {
+export interface ExtractionAutomaticItem {
+  readonly id: string;
+  readonly kind: ContextItemKind;
+  readonly content: string;
+}
+
+export interface ExtractedItem {
   readonly content: string;
   readonly kind: ContextItemKind;
   readonly critical: boolean;
 }
 
-interface ExtractionOutput {
+export interface ExtractionOutput {
   readonly add: readonly ExtractedItem[];
   readonly removeAutoItemIds: readonly string[];
 }
@@ -122,6 +128,20 @@ type AssistantTextResult =
       readonly failureKind: 'aborted' | 'provider' | 'invalid-response';
     };
 
+export type ExtractionParseResult =
+  | {
+      readonly ok: true;
+      readonly output: ExtractionOutput;
+    }
+  | {
+      readonly ok: false;
+      readonly failureKind:
+        | 'aborted'
+        | 'provider'
+        | 'invalid-response'
+        | 'invalid-output';
+    };
+
 function assistantText(response: unknown): AssistantTextResult {
   if (!isPlainObject(response)) {
     return { ok: false, failureKind: 'invalid-response' };
@@ -152,7 +172,7 @@ function assistantText(response: unknown): AssistantTextResult {
 function parseOutput(
   text: string,
   userMessage: string,
-  state: RuntimeState,
+  existingAutomaticItems: readonly ExtractionAutomaticItem[],
 ): ExtractionOutput | undefined {
   let parsed: unknown;
   try {
@@ -202,19 +222,38 @@ function parseOutput(
     });
   }
 
+  const automaticItemIds = new Set(
+    existingAutomaticItems.map((item) => item.id),
+  );
   const removeAutoItemIds: string[] = [];
   for (const value of parsed.removeAutoItemIds) {
-    if (
-      typeof value !== 'string' ||
-      !state.autoItemIds.has(value) ||
-      !state.guard.has(value)
-    ) {
+    if (typeof value !== 'string' || !automaticItemIds.has(value)) {
       return undefined;
     }
     removeAutoItemIds.push(value);
   }
 
   return { add, removeAutoItemIds };
+}
+
+export function parseExtractionResponse(
+  response: unknown,
+  userMessage: string,
+  existingAutomaticItems: readonly ExtractionAutomaticItem[],
+): ExtractionParseResult {
+  const responseText = assistantText(response);
+  if (!responseText.ok) {
+    return responseText;
+  }
+
+  const output = parseOutput(
+    responseText.text,
+    userMessage,
+    existingAutomaticItems,
+  );
+  return output === undefined
+    ? { ok: false, failureKind: 'invalid-output' }
+    : { ok: true, output };
 }
 
 function digestId(kind: ContextItemKind, content: string): string {
@@ -327,14 +366,26 @@ function mutationNotification(mutation: PlannedMutation): string {
   return `Context Guard: automatically retired ${retired} protected ${itemLabel}.`;
 }
 
-function extractionPayload(state: RuntimeState, text: string): string {
-  const automaticItems = state.guard
+function automaticItemsForState(
+  state: RuntimeState,
+): readonly ExtractionAutomaticItem[] {
+  return state.guard
     .list()
     .filter((item) => state.autoItemIds.has(item.id))
     .map(({ id, kind, content }) => ({ id, kind, content }));
+}
+
+export function createExtractionPayload(
+  text: string,
+  automaticItems: readonly ExtractionAutomaticItem[],
+): string {
   return JSON.stringify({
     userMessage: text,
-    automaticItems,
+    automaticItems: automaticItems.map(({ id, kind, content }) => ({
+      id,
+      kind,
+      content,
+    })),
   });
 }
 
@@ -411,6 +462,7 @@ export function createExtractionController(
     }
 
     const model = ctx.model;
+    const automaticItemsAtStart = automaticItemsForState(stateAtStart);
     const controller = new AbortController();
     activeControllers.add(controller);
     const timeout = setTimeout(() => {
@@ -453,7 +505,7 @@ export function createExtractionController(
           messages: [
             {
               role: 'user',
-              content: extractionPayload(stateAtStart, event.text),
+              content: createExtractionPayload(event.text, automaticItemsAtStart),
               timestamp: Date.now(),
             },
           ],
@@ -477,19 +529,18 @@ export function createExtractionController(
         return;
       }
 
-      const responseText = assistantText(response);
-      if (!responseText.ok) {
-        stateAtStart.lastExtraction = failedLastExtraction(responseText.failureKind);
+      const parseResult = parseExtractionResponse(
+        response,
+        event.text,
+        automaticItemsForState(state),
+      );
+      if (!parseResult.ok) {
+        state.lastExtraction = failedLastExtraction(parseResult.failureKind);
         notifyFailure();
         return;
       }
 
-      const output = parseOutput(responseText.text, event.text, state);
-      if (output === undefined) {
-        state.lastExtraction = failedLastExtraction('invalid-output');
-        notifyFailure();
-        return;
-      }
+      const output = parseResult.output;
 
       // Keep this post-await block free of awaits: JavaScript's single-threaded execution makes planning, applying, persisting, and notifying atomic.
       const mutation = planMutation(output, state);
