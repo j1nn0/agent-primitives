@@ -132,6 +132,10 @@ async function runBenchmark(ctx: ExtensionCommandContext): Promise<void> {
   if (resultsPath === undefined || resultsPath.length === 0) {
     throw new Error(`Set ${RESULTS_PATH_ENV} to the JSON output path.`);
   }
+  const activeModel = ctx.model;
+  if (activeModel === undefined) {
+    throw new Error('The benchmark requires an active model.');
+  }
 
   const outputs: ParsedExtractionOutput[] = [];
   const records: CaseRecord[] = [];
@@ -152,19 +156,35 @@ async function runBenchmark(ctx: ExtensionCommandContext): Promise<void> {
 
   const evaluation = evaluateBenchmark(BENCHMARK_CORPUS, outputs);
   const results = {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    model: {
+      id: activeModel.id,
+      provider: activeModel.provider,
+    },
     qualityCaseCount: evaluation.qualityCaseCount,
     providerFailures: evaluation.providerFailures,
-    item: evaluation.item,
-    retirements: evaluation.retirements,
+    strictItem: evaluation.strictItem,
+    detection: evaluation.detection,
+    spanRates: evaluation.spanRates,
     kindAccuracy: evaluation.kindAccuracy,
+    kindConfusionMatrix: evaluation.kindConfusionMatrix,
+    critical: evaluation.critical,
     criticalAccuracy: evaluation.criticalAccuracy,
+    negativeRejection: evaluation.negativeRejection,
+    retirements: evaluation.retirements,
+    supersession: evaluation.supersession,
     falsePositiveCount: evaluation.falsePositives.length,
     falseNegativeCount: evaluation.falseNegatives.length,
     // Ids and kinds only: enough to name a miss in a report without copying
     // corpus text into the artifact.
-    falsePositiveCases: evaluation.falsePositives.map(({ caseId, kind }) => ({ caseId, kind })),
-    falseNegativeCases: evaluation.falseNegatives.map(({ caseId, kind }) => ({ caseId, kind })),
+    falsePositiveCases: evaluation.falsePositives.map(({ caseId, item }) => ({
+      caseId,
+      kind: item.kind,
+    })),
+    falseNegativeCases: evaluation.falseNegatives.map(({ caseId, item }) => ({
+      caseId,
+      kind: item.kind,
+    })),
     cases: records,
   };
   await writeFile(resultsPath, `${JSON.stringify(results, null, 2)}\n`, 'utf8');
