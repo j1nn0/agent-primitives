@@ -6,6 +6,32 @@
 
 This repository is not an agent framework. It does not choose a model, provider, orchestration runtime, memory backend, prompt format, or deployment architecture. The primitives are deliberately composable rather than prescriptive.
 
+## Layers
+
+Each layer has one job, and the core packages stay on the first line:
+
+| Layer | Responsibility |
+| --- | --- |
+| **Core primitive** | Decide. Given explicit inputs, return a verdict as plain data. |
+| **Harness adapter** | Observe the lifecycle of a specific agent runtime and enforce or recover. |
+| **MCP adapter** | Expose primitives as capabilities to MCP-based agents. |
+
+Concretely, for the primitive shipped today:
+
+```text
+@j1nn0/agent-context-guard is a decision engine.
+
+It does not automatically observe agent lifecycle events,
+capture compaction boundaries, or reinject lost context.
+
+Automatic enforcement belongs to harness-specific integrations
+such as Pi extensions, OpenCode plugins, and lifecycle hooks.
+```
+
+Installing a core package does not, by itself, protect a running agent. A core
+package answers a question the caller asks; something has to ask it at the right
+moment, and that is the adapter's job.
+
 ## Design principles
 
 - **Small contracts:** expose the minimum useful state and behavior.
@@ -21,7 +47,14 @@ This repository is not an agent framework. It does not choose a model, provider,
 
 **Shipped.** The context guard records goals, constraints, requirements, decisions, and facts; creates deterministic snapshots; and verifies a candidate context with a literal or injected verifier. See [`packages/context-guard/README.md`](packages/context-guard/README.md) for the package documentation.
 
-## Possible future primitives
+## Direction
+
+The next step is a harness adapter, not another core primitive: a Pi integration
+that hooks real compaction boundaries and uses the context guard to decide, so the
+core API gets feedback from an actual agent lifecycle before more primitives are
+built on top of it. Adapters for other harnesses follow from what that one teaches.
+
+### Possible future primitives
 
 The following are **not implemented**. They describe a direction, not an API promise:
 

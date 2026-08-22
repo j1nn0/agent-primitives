@@ -6,6 +6,8 @@
 
 The package does not own a model, provider, storage system, or framework integration. It provides a small boundary between the context an application considers important and the context available after compaction, summarization, or handoff.
 
+This package is a **decision engine**. It does not observe agent lifecycle events, capture compaction boundaries, or reinject lost context, and installing it does not by itself protect a running agent. Something must call it at the right moment; automatic enforcement belongs to harness-specific integrations such as Pi extensions, OpenCode plugins, and lifecycle hooks.
+
 ## Why
 
 A candidate context can look plausible while silently dropping a constraint, requirement, decision, or fact. A guard lets an application register those items before a context transformation, carry a deterministic snapshot across a process or language boundary, and inspect a verification report afterward.
