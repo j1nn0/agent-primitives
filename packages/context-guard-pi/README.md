@@ -161,6 +161,14 @@ On an eligible message, the provider receives the fixed extractor system prompt 
 
 The adapter never sends manual item content as registry data, the session transcript, tool results, candidate effective context, files, or compaction summaries to the extractor. The extractor call is a single completion request; it does not create a session entry or hidden agent turn.
 
+### When extraction does not finish
+
+The extraction request is given 20 seconds. If it has not answered by then it is abandoned and the registry is left alone.
+
+A request can also outlive the session that started it, because Pi neither waits for nor cancels an extension handler when a session is replaced. The adapter aborts an in-flight extraction when the session ends, and — because a provider is free to ignore that — it also checks before applying anything that the answer still belongs to the session and registry that asked for it. A result that arrives too late is discarded silently: the session it was for no longer exists, so there is nothing to report.
+
+Every other failure — a timeout, a provider error, an unusable response, or output that breaks the extraction contract — leaves the registry untouched, keeps the agent turn running, and shows one short warning. The provider's error text is never displayed. `/context-guard status` names the category of the last failure, for example `Last extraction: failed (provider).`, and nothing else about it.
+
 ### Worked example
 
 For example:
