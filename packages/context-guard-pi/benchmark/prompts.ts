@@ -40,6 +40,10 @@ function augmentAtAnchor(
     );
   }
 
+  if (productionPrompt.includes(addition)) {
+    return productionPrompt;
+  }
+
   const insertion = `${PROMPT_ANCHOR}\n${addition}`;
   return `${productionPrompt.slice(0, anchorIndex)}${insertion}${productionPrompt.slice(anchorIndex + PROMPT_ANCHOR.length)}`;
 }
@@ -52,8 +56,8 @@ export function deriveBenchmarkPrompts(
     span: augmentAtAnchor(productionPrompt, SPAN_PROMPT_ADDITION),
     kind: augmentAtAnchor(productionPrompt, KIND_PROMPT_ADDITION),
     'span-kind': augmentAtAnchor(
-      productionPrompt,
-      `${SPAN_PROMPT_ADDITION}\n${KIND_PROMPT_ADDITION}`,
+      augmentAtAnchor(productionPrompt, SPAN_PROMPT_ADDITION),
+      KIND_PROMPT_ADDITION,
     ),
   };
 }

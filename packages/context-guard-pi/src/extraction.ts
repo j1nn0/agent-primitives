@@ -20,6 +20,7 @@ const MAX_CONTENT_CODE_POINTS = 1_000;
 export const EXTRACTOR_SYSTEM_PROMPT = [
   'Extract durable protected context from the current user message.',
   'Extract only instructions that must stay true in later turns.',
+  'For each new item, choose the shortest contiguous substring that still expresses the complete durable instruction on its own; exclude politeness, discourse markers, reasons, explanations, and surrounding context unless needed to preserve meaning.',
   'Allowed kinds are exactly goal, constraint, requirement, and decision; never fact.',
   'For every new item, content MUST be an exact contiguous substring of the user message, copied character for character. Never paraphrase, translate, reformat, or merge.',
   'Do not extract questions, greetings, one-off requests, formatting preferences, text inside code blocks or logs, quoted third-party or example instructions, hypothetical instructions, or instructions the user has not adopted as their own.',
