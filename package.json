@@ -17,6 +17,7 @@
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",
+    "@earendil-works/pi-coding-agent": "0.84.2",
     "@eslint/js": "^10.0.1",
     "@types/node": "^24",
     "eslint": "^10.9.0",
