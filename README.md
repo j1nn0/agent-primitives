@@ -53,7 +53,7 @@ moment, and that is the adapter's job.
 
 #### `@j1nn0/agent-context-guard-pi`
 
-**Shipped.** The Pi extension observes compaction boundaries, verifies protected context after compaction, persists its registry in the local Pi session, and can recover critical failures when explicitly enabled. It also offers optional automatic extraction of protected context from user messages, off by default. See [`packages/context-guard-pi/README.md`](packages/context-guard-pi/README.md) for the package documentation.
+**Shipped.** The Pi extension observes compaction boundaries, verifies protected context after compaction, persists its registry in the local Pi session, and can recover critical failures when explicitly enabled. It also offers optional automatic extraction of protected context from user messages, off by default, and can capture evidence-backed facts learned from tool output, also off by default. See [`packages/context-guard-pi/README.md`](packages/context-guard-pi/README.md) for the package documentation.
 
 ## Direction
 
