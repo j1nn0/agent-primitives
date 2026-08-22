@@ -1,0 +1,40 @@
+{
+  "name": "@j1nn0/agent-context-guard",
+  "version": "0.1.0",
+  "description": "Verify that critical agent context survives compaction, summarization and handoff.",
+  "license": "MIT",
+  "author": "j1nn0",
+  "type": "module",
+  "sideEffects": false,
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/j1nn0/agent-primitives.git",
+    "directory": "packages/context-guard"
+  },
+  "homepage": "https://github.com/j1nn0/agent-primitives/tree/main/packages/context-guard#readme",
+  "bugs": {
+    "url": "https://github.com/j1nn0/agent-primitives/issues"
+  },
+  "keywords": ["ai", "agent", "context", "verification", "reliability", "llm"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "check:package": "publint && attw --pack . --profile esm-only"
+  }
+}
