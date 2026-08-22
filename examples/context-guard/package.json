@@ -1,0 +1,8 @@
+{
+  "name": "@examples/context-guard",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@j1nn0/agent-context-guard": "workspace:*"
+  }
+}

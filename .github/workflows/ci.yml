@@ -26,3 +26,5 @@ jobs:
       - run: pnpm build
       - if: matrix.node == '24.x'
         run: pnpm check:package
+      - if: matrix.node == '24.x'
+        run: pnpm example
