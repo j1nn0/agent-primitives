@@ -113,13 +113,10 @@ function assistantText(response: unknown): string {
   }
 
   const typedResponse = response as ExtractorResponse;
-  if (typedResponse.stopReason === 'aborted') {
-    throw new Error('Extractor request was aborted.');
+  if (typedResponse.stopReason !== 'stop') {
+    throw new Error('Extractor completion was not successful.');
   }
-  if (
-    typeof typedResponse.stopReason !== 'string' ||
-    !Array.isArray(typedResponse.content)
-  ) {
+  if (!Array.isArray(typedResponse.content)) {
     throw new Error('Invalid extractor response.');
   }
 
@@ -319,37 +316,6 @@ function extractionPayload(state: RuntimeState, text: string): string {
   });
 }
 
-function completionOptions(
-  model: NonNullable<ExtensionContext['model']>,
-  signal: AbortSignal,
-): object {
-  const common = { signal, maxTokens: 1024 };
-  if (!model.reasoning) {
-    return common;
-  }
-
-  switch (model.api) {
-    case 'openai-completions':
-    case 'openai-responses':
-    case 'azure-openai-responses':
-    case 'openai-codex-responses':
-      return { ...common, reasoningEffort: 'minimal' };
-    case 'anthropic-messages':
-      return { ...common, effort: 'low' };
-    case 'bedrock-converse-stream':
-      return { ...common, reasoning: 'minimal' };
-    case 'google-generative-ai':
-    case 'google-vertex':
-      return { ...common, thinking: { enabled: false } };
-    case 'mistral-conversations':
-      return { ...common, reasoningEffort: 'none' };
-    case 'pi-messages':
-      return { ...common, reasoning: 'minimal' };
-    default:
-      return common;
-  }
-}
-
 export function createExtractionController(
   dependencies: ExtractionDependencies,
 ): ExtractionController {
@@ -388,7 +354,10 @@ export function createExtractionController(
             },
           ],
         },
-        completionOptions(model, controller.signal),
+        {
+          signal: controller.signal,
+          maxTokens: 1024,
+        },
       );
 
       const state = dependencies.getState();

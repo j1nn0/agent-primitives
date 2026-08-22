@@ -998,13 +998,15 @@ describe('Pi automatic extraction mode', () => {
     expect(callContext.systemPrompt).toContain('quoted third-party');
     expect(JSON.stringify(callContext)).not.toContain('MANUAL-ONLY-CONTENT');
     const options = harness.completeCalls.at(-1)?.options as {
+      readonly [key: string]: unknown;
       readonly maxTokens?: number;
-      readonly reasoningEffort?: string;
       readonly signal?: AbortSignal;
     };
     expect(options.maxTokens).toBe(1024);
-    expect(options.reasoningEffort).toBe('minimal');
     expect(options.signal).toBeInstanceOf(AbortSignal);
+    for (const key of ['reasoningEffort', 'effort', 'reasoning', 'thinking']) {
+      expect(options).not.toHaveProperty(key);
+    }
   });
 });
 
@@ -1381,6 +1383,33 @@ describe('Pi automatic extraction failures', () => {
       await expect(
         harness.invoke('context', contextEvent([textMessage('still alive')])),
       ).resolves.toBeUndefined();
+    }
+  });
+
+  it('treats error and aborted completions as failures without throwing', async () => {
+    for (const stopReason of ['error', 'aborted'] as const) {
+      const harness = new FakePiHarness();
+      await harness.start();
+      await harness.command('add manual fact Manual item survives.');
+      await harness.command('extraction automatic');
+      const notificationCount = harness.notifications.length;
+      harness.setCompletionResponse({
+        stopReason,
+        content: [],
+      });
+
+      await expect(invokeInput(harness, `A ${stopReason} response.`))
+        .resolves.toBeUndefined();
+      expect(harness.completeCalls).toHaveLength(1);
+      expect(harness.notifications.slice(notificationCount)).toHaveLength(1);
+      expect(harness.notifyMessages().at(-1)).toBe(
+        'Context Guard: automatic extraction failed; protected context was unchanged.',
+      );
+      const state = latestV2State(harness);
+      expect(state.items).toEqual([
+        item('manual', 'Manual item survives.'),
+      ]);
+      expect(state.autoItemIds).toEqual([]);
     }
   });
 });
