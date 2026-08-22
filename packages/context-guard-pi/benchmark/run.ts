@@ -5,7 +5,6 @@ import type {
 } from '@earendil-works/pi-coding-agent';
 import {
   createExtractionPayload,
-  EXTRACTOR_SYSTEM_PROMPT,
   EXTRACTION_TIMEOUT_MS,
   parseExtractionResponse,
 } from '../dist/extraction.js';
@@ -19,6 +18,11 @@ import {
   type BenchmarkOutcome,
   type ParsedExtractionOutput,
 } from './evaluate.js';
+import {
+  getBenchmarkPrompt,
+  parseBenchmarkPromptVariant,
+  type BenchmarkPromptVariant,
+} from './prompts.js';
 
 const RESULTS_PATH_ENV = 'CONTEXT_GUARD_BENCHMARK_RESULTS_PATH';
 
@@ -60,6 +64,7 @@ function signalFailureKind(
 async function extractCase(
   testCase: BenchmarkCase,
   ctx: ExtensionCommandContext,
+  promptVariant: BenchmarkPromptVariant,
 ): Promise<ParsedExtractionOutput> {
   if (ctx.model === undefined) {
     throw new Error('The benchmark requires an active model.');
@@ -74,7 +79,7 @@ async function extractCase(
     const response = await ctx.modelRegistry.complete(
       ctx.model,
       {
-        systemPrompt: EXTRACTOR_SYSTEM_PROMPT,
+        systemPrompt: getBenchmarkPrompt(promptVariant),
         messages: [
           {
             role: 'user',
@@ -127,7 +132,10 @@ async function extractCase(
   }
 }
 
-async function runBenchmark(ctx: ExtensionCommandContext): Promise<void> {
+async function runBenchmark(
+  ctx: ExtensionCommandContext,
+  promptVariant: BenchmarkPromptVariant,
+): Promise<void> {
   const resultsPath = process.env[RESULTS_PATH_ENV];
   if (resultsPath === undefined || resultsPath.length === 0) {
     throw new Error(`Set ${RESULTS_PATH_ENV} to the JSON output path.`);
@@ -141,7 +149,7 @@ async function runBenchmark(ctx: ExtensionCommandContext): Promise<void> {
   const records: CaseRecord[] = [];
   for (const testCase of BENCHMARK_CORPUS) {
     const startedAt = Date.now();
-    const parsed = await extractCase(testCase, ctx);
+    const parsed = await extractCase(testCase, ctx, promptVariant);
     const record: CaseRecord = {
       caseId: parsed.caseId,
       outcome: parsed.outcome,
@@ -161,6 +169,7 @@ async function runBenchmark(ctx: ExtensionCommandContext): Promise<void> {
       id: activeModel.id,
       provider: activeModel.provider,
     },
+    variant: promptVariant,
     qualityCaseCount: evaluation.qualityCaseCount,
     providerFailures: evaluation.providerFailures,
     strictItem: evaluation.strictItem,
@@ -193,8 +202,9 @@ async function runBenchmark(ctx: ExtensionCommandContext): Promise<void> {
 export default function registerBenchmarkExtension(pi: ExtensionAPI): void {
   pi.registerCommand('context-guard-benchmark', {
     description: 'Run the offline-scored context extraction benchmark.',
-    handler: async (_args, ctx): Promise<void> => {
-      await runBenchmark(ctx);
+    handler: async (args, ctx): Promise<void> => {
+      const promptVariant = parseBenchmarkPromptVariant(args);
+      await runBenchmark(ctx, promptVariant);
     },
   });
 }
