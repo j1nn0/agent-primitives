@@ -1,5 +1,10 @@
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import type {
+  ExtensionAPI,
+  ToolResultEvent,
+  TurnEndEvent,
+} from '@earendil-works/pi-coding-agent';
 import { registerContextGuardCommand } from './command.js';
+import { createDiscoveryController } from './discovery.js';
 import { createExtractionController } from './extraction.js';
 import { createLifecycle } from './lifecycle.js';
 import {
@@ -7,13 +12,24 @@ import {
   loadState,
   saveState,
 } from './state.js';
-import type { RecoveryMode, RuntimeState } from './types.js';
+import { createRequestTracker } from './request.js';
+import type {
+  DiscoveryMode,
+  RecoveryMode,
+  RuntimeState,
+} from './types.js';
 
-export type { ExtractionMode, PersistedState, RecoveryMode } from './types.js';
+export type {
+  DiscoveryMode,
+  ExtractionMode,
+  PersistedState,
+  RecoveryMode,
+} from './types.js';
 
 export default function registerContextGuardExtension(pi: ExtensionAPI): void {
   let state: RuntimeState = createEmptyState();
   let sessionEpoch = 0;
+  const requestTracker = createRequestTracker();
   const lifecycle = createLifecycle({
     pi,
     getGuard: (): RuntimeState['guard'] => state.guard,
@@ -26,6 +42,16 @@ export default function registerContextGuardExtension(pi: ExtensionAPI): void {
     persist: (): void => {
       saveState(pi, state);
     },
+    requestTracker,
+  });
+  const discovery = createDiscoveryController({
+    getEpoch: (): number => sessionEpoch,
+    getState: (): RuntimeState => state,
+    clearPendingSnapshot: lifecycle.clearPendingSnapshot,
+    persist: (): void => {
+      saveState(pi, state);
+    },
+    requestTracker,
   });
 
   registerContextGuardCommand(pi, {
@@ -35,6 +61,9 @@ export default function registerContextGuardExtension(pi: ExtensionAPI): void {
     },
     setExtractionMode: (mode): void => {
       state.extraction = mode;
+    },
+    setDiscoveryMode: (mode: DiscoveryMode): void => {
+      state.discovery = mode;
     },
     clearPendingSnapshot: lifecycle.clearPendingSnapshot,
     persist: (): void => {
@@ -47,14 +76,16 @@ export default function registerContextGuardExtension(pi: ExtensionAPI): void {
 
   pi.on('session_start', (_event, ctx): void => {
     sessionEpoch += 1;
-    extraction.abortActive();
+    requestTracker.abortActive();
+    discovery.resetForSession();
     lifecycle.resetForSession();
     state = loadState(ctx);
   });
 
   pi.on('session_shutdown', (): void => {
     sessionEpoch += 1;
-    extraction.abortActive();
+    requestTracker.abortActive();
+    discovery.resetForSession();
     lifecycle.resetForSession();
   });
 
@@ -68,6 +99,18 @@ export default function registerContextGuardExtension(pi: ExtensionAPI): void {
 
   pi.on('session_compact', (event, ctx): void => {
     lifecycle.handleCompaction(event, ctx);
+  });
+
+  pi.on('turn_start', (): void => {
+    discovery.beginTurn();
+  });
+
+  pi.on('tool_result', (event): void => {
+    discovery.handleToolResult(event as ToolResultEvent);
+  });
+
+  pi.on('turn_end', async (event, ctx): Promise<void> => {
+    await discovery.handleTurnEnd(event as TurnEndEvent, ctx);
   });
 
   pi.on('context', async (event, ctx) => lifecycle.handleContext(event, ctx));

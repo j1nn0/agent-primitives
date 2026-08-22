@@ -5,6 +5,7 @@ import type {
   ExtensionCommandContext,
 } from '@earendil-works/pi-coding-agent';
 import type {
+  DiscoveryMode,
   ExtractionMode,
   LastVerification,
   RecoveryMode,
@@ -12,7 +13,7 @@ import type {
 } from './types.js';
 
 const USAGE =
-  'Usage: /context-guard add <id> <kind> [--critical] <content...> | list | remove <id> | clear [--yes] | status | recovery [off|critical] | extraction [off|automatic]';
+  'Usage: /context-guard add <id> <kind> [--critical] <content...> | list | remove <id> | clear [--yes] | status | recovery [off|critical] | extraction [off|automatic] | discovery [off|automatic]';
 const KINDS: readonly ContextItemKind[] = [
   'goal',
   'constraint',
@@ -25,6 +26,7 @@ interface CommandController {
   readonly getState: () => RuntimeState;
   readonly setRecoveryMode: (mode: RecoveryMode) => void;
   readonly setExtractionMode: (mode: ExtractionMode) => void;
+  readonly setDiscoveryMode: (mode: DiscoveryMode) => void;
   readonly clearPendingSnapshot: () => void;
   readonly persist: () => void;
   readonly getLastVerification: () => LastVerification | undefined;
@@ -115,8 +117,19 @@ function listItems(
 
   const lines = items.map((item) => {
     const critical = item.critical ? ', critical' : '';
-    const provenance = state.autoItemIds.has(item.id) ? 'auto' : 'manual';
-    return `${item.id} [${provenance}] [${item.kind}${critical}]: ${item.content}`;
+    const provenance = state.discoveryItemIds.has(item.id)
+      ? 'discovery'
+      : state.autoItemIds.has(item.id)
+        ? 'auto'
+        : 'manual';
+    const references = state.discoveryItemIds.has(item.id)
+      ? state.discoveryProvenance.get(item.id) ?? []
+      : [];
+    const referenceSummary =
+      references.length === 0
+        ? ''
+        : ` (${references.length} evidence reference${references.length === 1 ? '' : 's'}: ${Array.from(new Set(references.map((reference) => reference.toolName))).join(', ')})`;
+    return `${item.id} [${provenance}] [${item.kind}${critical}]: ${item.content}${referenceSummary}`;
   });
   notify(ctx, lines.join('\n'));
 }
@@ -131,6 +144,16 @@ function extractionSummary(state: RuntimeState): string {
   return `Last extraction: added ${state.lastExtraction.added}, retired ${state.lastExtraction.retired}.`;
 }
 
+function discoverySummary(state: RuntimeState): string {
+  if (state.lastDiscovery === undefined) {
+    return 'Last discovery: none.';
+  }
+  if (state.lastDiscovery.status === 'failed') {
+    return `Last discovery: failed (${state.lastDiscovery.failureKind}).`;
+  }
+  return `Last discovery: success (added ${state.lastDiscovery.added}).`;
+}
+
 function showStatus(
   ctx: ExtensionCommandContext,
   controller: CommandController,
@@ -138,11 +161,19 @@ function showStatus(
   const state = controller.getState();
   const items = state.guard.list();
   const criticalCount = items.filter((item) => item.critical).length;
-  const automaticCount = items.filter((item) => state.autoItemIds.has(item.id)).length;
-  const manualCount = items.length - automaticCount;
+  const discoveryCount = items.filter((item) =>
+    state.discoveryItemIds.has(item.id),
+  ).length;
+  const automaticCount = items.filter(
+    (item) =>
+      state.autoItemIds.has(item.id) && !state.discoveryItemIds.has(item.id),
+  ).length;
+  const manualCount = items.length - automaticCount - discoveryCount;
+  const discoveryLabel = discoveryCount === 1 ? 'discovery' : 'discoveries';
   const status = [
-    `Context Guard: ${items.length} items, ${criticalCount} critical, ${manualCount} manual, ${automaticCount} automatic, recovery ${state.recovery}, extraction ${state.extraction}, degraded ${state.degraded ? 'yes' : 'no'}.`,
+    `Context Guard: ${items.length} items, ${criticalCount} critical, ${manualCount} manual, ${automaticCount} automatic, ${discoveryCount} ${discoveryLabel}, recovery ${state.recovery}, extraction ${state.extraction}, discovery ${state.discovery}, degraded ${state.degraded ? 'yes' : 'no'}.`,
     extractionSummary(state),
+    discoverySummary(state),
     verificationSummary(
       controller.getLastVerification(),
       controller.getLastUnverifiableCompactionId(),
@@ -198,6 +229,8 @@ function removeItem(
     return;
   }
   state.autoItemIds.delete(id);
+  state.discoveryItemIds.delete(id);
+  state.discoveryProvenance.delete(id);
 
   controller.clearPendingSnapshot();
   controller.persist();
@@ -223,6 +256,8 @@ function clearItems(
   controller.clearPendingSnapshot();
   state.guard.clear();
   state.autoItemIds.clear();
+  state.discoveryItemIds.clear();
+  state.discoveryProvenance.clear();
   controller.persist();
   notify(ctx, `Context Guard: cleared ${count} protected item${count === 1 ? '' : 's'}.`);
 }
@@ -273,6 +308,29 @@ function changeExtraction(
   notify(ctx, `Context Guard: extraction set to '${mode}'.`);
 }
 
+function changeDiscovery(
+  ctx: ExtensionCommandContext,
+  controller: CommandController,
+  value: string,
+): void {
+  const mode = value.trim();
+  if (mode !== 'off' && mode !== 'automatic') {
+    notify(ctx, 'Usage: /context-guard discovery [off|automatic]', 'warning');
+    return;
+  }
+
+  const state = controller.getState();
+  if (state.discovery === mode) {
+    notify(ctx, `Context Guard: discovery is already '${mode}'.`);
+    return;
+  }
+
+  controller.clearPendingSnapshot();
+  controller.setDiscoveryMode(mode);
+  controller.persist();
+  notify(ctx, `Context Guard: discovery set to '${mode}'.`);
+}
+
 async function handleCommand(
   args: string,
   ctx: ExtensionCommandContext,
@@ -320,6 +378,13 @@ async function handleCommand(
         return;
       }
       changeExtraction(ctx, controller, value);
+      return;
+    case 'discovery':
+      if (value.trim().length === 0) {
+        notify(ctx, `Context Guard: discovery is '${controller.getState().discovery}'.`);
+        return;
+      }
+      changeDiscovery(ctx, controller, value);
       return;
     default:
       notify(ctx, USAGE, 'warning');

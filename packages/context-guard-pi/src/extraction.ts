@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import type {
   ContextItemInput,
   ContextItemKind,
@@ -7,13 +6,24 @@ import type {
   ExtensionContext,
   InputEvent,
 } from '@earendil-works/pi-coding-agent';
+import {
+  automaticItemId,
+  probeId,
+} from './identifiers.js';
+import {
+  currentRequestState,
+  readSessionId,
+  REQUEST_TIMEOUT_MS,
+  signalFailureKind,
+  type RequestTracker,
+} from './request.js';
 import type {
   ExtractionFailureKind,
   LastExtraction,
   RuntimeState,
 } from './types.js';
 
-export const EXTRACTION_TIMEOUT_MS = 20_000;
+export const EXTRACTION_TIMEOUT_MS = REQUEST_TIMEOUT_MS;
 const MAX_ADDED_ITEMS = 8;
 const MAX_CONTENT_CODE_POINTS = 1_000;
 
@@ -77,6 +87,7 @@ interface ExtractionDependencies {
   readonly getState: () => RuntimeState;
   readonly clearPendingSnapshot: () => void;
   readonly persist: () => void;
+  readonly requestTracker: RequestTracker;
 }
 
 export interface ExtractionController {
@@ -84,7 +95,7 @@ export interface ExtractionController {
   abortActive(): void;
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
+export function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return false;
   }
@@ -101,7 +112,7 @@ function hasOwn(value: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
 }
 
-function isTextBlock(value: unknown): value is TextBlock {
+export function isTextBlock(value: unknown): value is TextBlock {
   if (!isPlainObject(value)) {
     return false;
   }
@@ -119,7 +130,7 @@ function stripSingleFence(text: string): string {
   return match?.[1]?.trim() ?? trimmed;
 }
 
-type AssistantTextResult =
+export type AssistantTextResult =
   | {
       readonly ok: true;
       readonly text: string;
@@ -143,7 +154,7 @@ export type ExtractionParseResult =
         | 'invalid-output';
     };
 
-function assistantText(response: unknown): AssistantTextResult {
+export function parseAssistantText(response: unknown): AssistantTextResult {
   if (!isPlainObject(response)) {
     return { ok: false, failureKind: 'invalid-response' };
   }
@@ -242,7 +253,7 @@ export function parseExtractionResponse(
   userMessage: string,
   existingAutomaticItems: readonly ExtractionAutomaticItem[],
 ): ExtractionParseResult {
-  const responseText = assistantText(response);
+  const responseText = parseAssistantText(response);
   if (!responseText.ok) {
     return responseText;
   }
@@ -255,14 +266,6 @@ export function parseExtractionResponse(
   return output === undefined
     ? { ok: false, failureKind: 'invalid-output' }
     : { ok: true, output };
-}
-
-function digestId(kind: ContextItemKind, content: string): string {
-  const digest = createHash('sha256')
-    .update(`${kind} ${content}`)
-    .digest('hex')
-    .slice(0, 12);
-  return `auto:${kind}:${digest}`;
 }
 
 function pairKey(kind: ContextItemKind, content: string): string {
@@ -287,13 +290,10 @@ function planMutation(
       continue;
     }
 
-    const baseId = digestId(candidate.kind, candidate.content);
-    let id = baseId;
-    let probe = 2;
-    while (occupiedIds.has(id)) {
-      id = `${baseId}-${probe}`;
-      probe += 1;
-    }
+    const id = probeId(
+      automaticItemId(candidate.kind, candidate.content),
+      occupiedIds,
+    );
 
     occupiedIds.add(id);
     plannedPairs.add(pair);
@@ -390,33 +390,6 @@ export function createExtractionPayload(
   });
 }
 
-type SessionIdRead =
-  | { readonly ok: true; readonly id: string }
-  | { readonly ok: false };
-
-function readSessionId(ctx: ExtensionContext): SessionIdRead {
-  try {
-    return { ok: true, id: ctx.sessionManager.getSessionId() };
-  } catch {
-    return { ok: false };
-  }
-}
-
-function signalFailureKind(
-  signal: AbortSignal,
-): 'timeout' | 'aborted' | undefined {
-  if (!signal.aborted) {
-    return undefined;
-  }
-  if (signal.reason === 'timeout') {
-    return 'timeout';
-  }
-  if (signal.reason === 'aborted') {
-    return 'aborted';
-  }
-  return undefined;
-}
-
 function failedLastExtraction(
   failureKind: ExtractionFailureKind,
 ): LastExtraction {
@@ -431,13 +404,8 @@ function failedLastExtraction(
 export function createExtractionController(
   dependencies: ExtractionDependencies,
 ): ExtractionController {
-  const activeControllers = new Set<AbortController>();
-
   function abortActive(): void {
-    for (const controller of activeControllers) {
-      controller.abort('aborted');
-    }
-    activeControllers.clear();
+    dependencies.requestTracker.abortActive();
   }
 
   async function handleInput(
@@ -465,30 +433,19 @@ export function createExtractionController(
     const model = ctx.model;
     const automaticItemsAtStart = automaticItemsForState(stateAtStart);
     const controller = new AbortController();
-    activeControllers.add(controller);
+    dependencies.requestTracker.track(controller);
     const timeout = setTimeout(() => {
       controller.abort('timeout');
     }, EXTRACTION_TIMEOUT_MS);
 
-    const currentState = (): RuntimeState | undefined => {
-      const currentEpoch = dependencies.getEpoch();
-      let state: RuntimeState | undefined;
-      try {
-        state = dependencies.getState();
-      } catch {
-        state = undefined;
-      }
-      const currentSessionId = readSessionId(ctx);
-      if (
-        currentEpoch === epochAtStart &&
-        state === stateAtStart &&
-        currentSessionId.ok &&
-        currentSessionId.id === sessionIdAtStart.id
-      ) {
-        return state;
-      }
-      return undefined;
-    };
+    const currentState = (): RuntimeState | undefined =>
+      currentRequestState(
+        dependencies,
+        ctx,
+        epochAtStart,
+        stateAtStart,
+        sessionIdAtStart,
+      );
 
     const notifyFailure = (): void => {
       try {
@@ -570,7 +527,7 @@ export function createExtractionController(
       stateAtStart.lastExtraction = failedLastExtraction(signalKind ?? 'provider');
       notifyFailure();
     } finally {
-      activeControllers.delete(controller);
+      dependencies.requestTracker.untrack(controller);
       clearTimeout(timeout);
     }
   }

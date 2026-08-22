@@ -3,8 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ContextEvent } from '@earendil-works/pi-coding-agent';
 import type { PersistedState } from '../src/extension.js';
 import type {
+  DiscoveryProvenance,
   PersistedStateV1,
   PersistedStateV2,
+  PersistedStateV3,
 } from '../src/types.js';
 import {
   FakePiHarness,
@@ -52,6 +54,27 @@ function stateDataV2(
   };
 }
 
+function stateDataV3(
+  items: readonly unknown[],
+  recovery: 'off' | 'critical' = 'off',
+  extraction: 'off' | 'automatic' = 'off',
+  discovery: 'off' | 'automatic' = 'off',
+  autoItemIds: readonly string[] = [],
+  discoveryItemIds: readonly string[] = [],
+  discoveryProvenance: Readonly<Record<string, readonly DiscoveryProvenance[]>> = {},
+): PersistedStateV3 {
+  return {
+    schemaVersion: 3,
+    recovery,
+    extraction,
+    discovery,
+    items: items as PersistedStateV3['items'],
+    autoItemIds,
+    discoveryItemIds,
+    discoveryProvenance,
+  };
+}
+
 function latestState(harness: FakePiHarness): PersistedState {
   const entry = harness.appendedEntries.at(-1);
   expect(entry?.customType).toBe(STATE_CUSTOM_TYPE);
@@ -87,10 +110,48 @@ function extractorJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function latestV2State(harness: FakePiHarness): PersistedStateV2 {
+function discoveryId(content: string): string {
+  return `discovery:fact:${createHash('sha256')
+    .update(`fact ${content}`)
+    .digest('hex')
+    .slice(0, 12)}`;
+}
+
+function quoteHash(quote: string): string {
+  return createHash('sha256').update(quote).digest('hex').slice(0, 12);
+}
+
+function discoveryResponse(value: unknown): unknown {
+  return extractorResponse(extractorJson(value));
+}
+
+function discoveryPayload(harness: FakePiHarness): {
+  readonly evidence: readonly {
+    readonly id: string;
+    readonly toolName: string;
+    readonly text: string;
+  }[];
+} {
+  const call = harness.completeCalls.at(-1);
+  expect(call).toBeDefined();
+  const context = call?.context as {
+    readonly messages?: readonly { readonly content?: unknown }[];
+  } | undefined;
+  const message = context?.messages?.[0];
+  expect(typeof message?.content).toBe('string');
+  return JSON.parse(message?.content as string) as {
+    evidence: readonly {
+      id: string;
+      toolName: string;
+      text: string;
+    }[];
+  };
+}
+
+function latestV2State(harness: FakePiHarness): PersistedStateV3 {
   const state = latestState(harness);
-  expect(state.schemaVersion).toBe(2);
-  return state as PersistedStateV2;
+  expect(state.schemaVersion).toBe(3);
+  return state as PersistedStateV3;
 }
 
 async function invokeInput(
@@ -1203,7 +1264,7 @@ describe('Pi automatic extraction persistence and lifecycle', () => {
     );
     await invokeInput(original, automatic);
     const saved = latestV2State(original);
-    expect(saved.schemaVersion).toBe(2);
+    expect(saved.schemaVersion).toBe(3);
     expect(saved.extraction).toBe('automatic');
     expect(saved.autoItemIds).toEqual([automaticId('decision', automatic)]);
 
@@ -1668,5 +1729,631 @@ describe('Pi automatic extraction failure taxonomy', () => {
       'Last extraction: failed (stale).',
     );
     expect(harness.notifyMessages().join('\n')).not.toContain('Stale taxonomy input.');
+  });
+});
+
+describe('Pi agent discovery capture', () => {
+  async function discoveryTurn(
+    harness: FakePiHarness,
+    records: readonly { id: string; toolName: string; content: readonly unknown[] }[],
+  ): Promise<void> {
+    await harness.startTurn();
+    for (const record of records) {
+      await harness.toolResult(record.id, record.toolName, record.content);
+    }
+    await harness.endTurn();
+  }
+
+  it('captures validated facts with bounded evidence provenance', async () => {
+    const harness = new FakePiHarness();
+    await harness.start();
+    await harness.command('discovery automatic');
+    const evidence = 'The read command returned version 1.2.';
+    harness.setCompletionResponse(
+      discoveryResponse({
+        schemaVersion: 1,
+        discoveries: [
+          {
+            kind: 'fact',
+            content: 'The read command returned version 1.2.',
+            evidence: [{ id: 'e1', quote: 'version 1.2.' }],
+          },
+        ],
+      }),
+    );
+
+    await discoveryTurn(harness, [
+      {
+        id: 'call-1',
+        toolName: 'read',
+        content: [block(evidence), image('PRIVATE-IMAGE-TEXT')],
+      },
+    ]);
+
+    const state = latestState(harness);
+    const id = discoveryId('The read command returned version 1.2.');
+    expect(state.schemaVersion).toBe(3);
+    expect(state.discovery).toBe('automatic');
+    expect(state.discoveryItemIds).toEqual([id]);
+    expect(state.items).toEqual([
+      item(id, 'The read command returned version 1.2.', true),
+    ]);
+    expect(state.discoveryProvenance).toEqual({
+      [id]: [
+        {
+          toolCallId: 'call-1',
+          toolName: 'read',
+          quoteHash: quoteHash('version 1.2.'),
+        },
+      ],
+    });
+    expect(harness.notifyMessages().at(-1)).toBe(
+      'Context Guard: captured 1 discovery from tool evidence.',
+    );
+    expect(discoveryPayload(harness)).toEqual({
+      evidence: [{ id: 'e1', toolName: 'read', text: evidence }],
+    });
+    const callContext = harness.completeCalls.at(-1)?.context as {
+      readonly systemPrompt?: string;
+    };
+    expect(callContext.systemPrompt).toContain('only allowed kind is fact');
+
+    await harness.command('list');
+    const list = harness.notifyMessages().at(-1) ?? '';
+    expect(list).toContain(`[discovery]`);
+    expect(list).toContain('1 evidence reference');
+    expect(list).toContain('read');
+    expect(list).not.toContain('PRIVATE-IMAGE-TEXT');
+  });
+
+  it('rejects every invalid candidate atomically', async () => {
+    const cases: readonly unknown[] = [
+      {
+        schemaVersion: 1,
+        discoveries: [
+          {
+            kind: 'fact',
+            content: 'A valid fact.',
+            evidence: [{ id: 'unknown', quote: 'evidence' }],
+          },
+        ],
+      },
+      {
+        schemaVersion: 1,
+        discoveries: [
+          {
+            kind: 'fact',
+            content: 'A valid fact.',
+            evidence: [{ id: 'e1', quote: 'not present' }],
+          },
+        ],
+      },
+      {
+        schemaVersion: 1,
+        discoveries: [
+          {
+            kind: 'fact',
+            content: 'A valid fact.',
+            evidence: [{ id: 'e1', quote: '   ' }],
+          },
+        ],
+      },
+      {
+        schemaVersion: 1,
+        discoveries: [
+          {
+            kind: 'fact',
+            content: '',
+            evidence: [{ id: 'e1', quote: 'evidence' }],
+          },
+        ],
+      },
+      {
+        schemaVersion: 1,
+        discoveries: [
+          {
+            kind: 'fact',
+            content: 'x'.repeat(501),
+            evidence: [{ id: 'e1', quote: 'evidence' }],
+          },
+        ],
+      },
+      {
+        schemaVersion: 1,
+        discoveries: [
+          {
+            kind: 'constraint',
+            content: 'A non-fact.',
+            evidence: [{ id: 'e1', quote: 'evidence' }],
+          },
+        ],
+      },
+      {
+        schemaVersion: 1,
+        discoveries: Array.from({ length: 5 }, (_, index) => ({
+          kind: 'fact',
+          content: `Fact ${index}.`,
+          evidence: [{ id: 'e1', quote: 'evidence' }],
+        })),
+      },
+      {
+        schemaVersion: 1,
+        discoveries: [
+          {
+            kind: 'fact',
+            content: 'Valid first fact.',
+            evidence: [{ id: 'e1', quote: 'evidence' }],
+          },
+          {
+            kind: 'constraint',
+            content: 'Bad second candidate.',
+            evidence: [{ id: 'e1', quote: 'evidence' }],
+          },
+        ],
+      },
+    ];
+
+    for (const response of cases) {
+      const harness = new FakePiHarness();
+      await harness.start();
+      await harness.command('discovery automatic');
+      const notificationCount = harness.notifications.length;
+      harness.setCompletionResponse(discoveryResponse(response));
+      await discoveryTurn(harness, [
+        {
+          id: 'call-1',
+          toolName: 'bash',
+          content: [block('evidence')],
+        },
+      ]);
+      expect(harness.completeCalls).toHaveLength(1);
+      expect(harness.notifications.slice(notificationCount)).toHaveLength(1);
+      expect(harness.notifyMessages().at(-1)).toBe(
+        'Context Guard: automatic discovery failed; protected context was unchanged.',
+      );
+      expect(latestState(harness).items).toEqual([]);
+      await harness.command('status');
+      expect(harness.notifyMessages().at(-1)).toContain('Last discovery: failed');
+    }
+
+    const malformed = new FakePiHarness();
+    await malformed.start();
+    await malformed.command('discovery automatic');
+    malformed.setCompletionResponse(extractorResponse('{ malformed json'));
+    await discoveryTurn(malformed, [
+      { id: 'call-1', toolName: 'bash', content: [block('evidence')] },
+    ]);
+    expect(malformed.notifyMessages().at(-1)).toContain('automatic discovery failed');
+  });
+
+  it('accepts multiple evidence references and rejects duplicate references', async () => {
+    const harness = new FakePiHarness();
+    await harness.start();
+    await harness.command('discovery automatic');
+    harness.setCompletionResponse(
+      discoveryResponse({
+        schemaVersion: 1,
+        discoveries: [
+          {
+            kind: 'fact',
+            content: 'Two tools showed the same state.',
+            evidence: [
+              { id: 'e1', quote: 'first observation' },
+              { id: 'e2', quote: 'second observation' },
+            ],
+          },
+        ],
+      }),
+    );
+    await discoveryTurn(harness, [
+      { id: 'call-1', toolName: 'read', content: [block('first observation')] },
+      { id: 'call-2', toolName: 'grep', content: [block('second observation')] },
+    ]);
+    const id = discoveryId('Two tools showed the same state.');
+    expect(latestState(harness).discoveryProvenance[id]).toHaveLength(2);
+
+    const duplicate = new FakePiHarness();
+    await duplicate.start();
+    await duplicate.command('discovery automatic');
+    duplicate.setCompletionResponse(
+      discoveryResponse({
+        schemaVersion: 1,
+        discoveries: [
+          {
+            kind: 'fact',
+            content: 'Duplicate reference must fail.',
+            evidence: [
+              { id: 'e1', quote: 'evidence' },
+              { id: 'e1', quote: 'evidence' },
+            ],
+          },
+        ],
+      }),
+    );
+    await discoveryTurn(duplicate, [
+      { id: 'call-1', toolName: 'read', content: [block('evidence')] },
+    ]);
+    expect(latestState(duplicate).items).toEqual([]);
+    expect(duplicate.notifyMessages().at(-1)).toContain('automatic discovery failed');
+  });
+
+  it('keeps discovery off the message and content boundaries', async () => {
+    const harness = new FakePiHarness();
+    await harness.start();
+    const response = discoveryResponse({
+      schemaVersion: 1,
+      discoveries: [
+        {
+          kind: 'fact',
+          content: 'This should not be captured while off.',
+          evidence: [{ id: 'e1', quote: 'tool evidence' }],
+        },
+      ],
+    });
+    harness.setCompletionResponse(response);
+
+    await harness.startTurn();
+    await harness.endTurn();
+    expect(harness.completeCalls).toHaveLength(0);
+
+    await harness.command('discovery automatic');
+    await harness.startTurn();
+    await harness.invoke('turn_end', {
+      type: 'turn_end',
+      turnIndex: 1,
+      message: assistantMessage([block('assistant text')]),
+      toolResults: [
+        {
+          toolCallId: 'not-dispatched',
+          toolName: 'read',
+          content: [block('tool evidence')],
+          isError: false,
+        },
+      ],
+    });
+    expect(harness.completeCalls).toHaveLength(0);
+
+    await harness.startTurn();
+    await harness.toolResult('image-only', 'read', [image('binary evidence')]);
+    await harness.endTurn();
+    expect(harness.completeCalls).toHaveLength(0);
+
+    await harness.startTurn();
+    await harness.toolResult('oversized', 'read', [block('x'.repeat(4001))]);
+    await harness.endTurn();
+    expect(harness.completeCalls).toHaveLength(0);
+
+    await harness.startTurn();
+    await harness.toolResult('eligible', 'read', [block('tool evidence')]);
+    await harness.endTurn();
+    expect(harness.completeCalls).toHaveLength(1);
+    expect(discoveryPayload(harness).evidence).toEqual([
+      { id: 'e1', toolName: 'read', text: 'tool evidence' },
+    ]);
+  });
+
+  it('batches one call per turn, resets evidence, and does not recurse', async () => {
+    const harness = new FakePiHarness();
+    await harness.start();
+    await harness.command('discovery automatic');
+    harness.setCompletionResponse(
+      discoveryResponse({ schemaVersion: 1, discoveries: [] }),
+    );
+
+    await harness.startTurn();
+    await harness.toolResult('call-1', 'read', [block('first')]);
+    await harness.toolResult('call-2', 'grep', [block('second')]);
+    await harness.endTurn();
+    expect(harness.completeCalls).toHaveLength(1);
+    expect(discoveryPayload(harness).evidence).toEqual([
+      { id: 'e1', toolName: 'read', text: 'first' },
+      { id: 'e2', toolName: 'grep', text: 'second' },
+    ]);
+    await harness.endTurn();
+    expect(harness.completeCalls).toHaveLength(1);
+
+    await harness.startTurn();
+    await harness.endTurn();
+    expect(harness.completeCalls).toHaveLength(1);
+  });
+
+  it('caps evidence records and total evidence text before calling the model', async () => {
+    const records = new FakePiHarness();
+    await records.start();
+    await records.command('discovery automatic');
+    records.setCompletionResponse(
+      discoveryResponse({ schemaVersion: 1, discoveries: [] }),
+    );
+    await records.startTurn();
+    for (let index = 0; index < 10; index += 1) {
+      await records.toolResult(`call-${index}`, 'read', [block(`evidence-${index}`)]);
+    }
+    await records.endTurn();
+    expect(records.completeCalls).toHaveLength(1);
+    expect(discoveryPayload(records).evidence).toHaveLength(8);
+    expect(discoveryPayload(records).evidence.at(-1)).toEqual({
+      id: 'e8',
+      toolName: 'read',
+      text: 'evidence-7',
+    });
+
+    const total = new FakePiHarness();
+    await total.start();
+    await total.command('discovery automatic');
+    total.setCompletionResponse(
+      discoveryResponse({ schemaVersion: 1, discoveries: [] }),
+    );
+    await total.startTurn();
+    for (let index = 0; index < 7; index += 1) {
+      await total.toolResult(`call-${index}`, 'read', [block('x'.repeat(4_000))]);
+    }
+    await total.endTurn();
+    expect(total.completeCalls).toHaveLength(1);
+    expect(discoveryPayload(total).evidence).toHaveLength(6);
+    expect(discoveryPayload(total).evidence.at(-1)?.text).toHaveLength(4_000);
+  });
+
+  it('only adds discoveries and leaves manual and automatic authority untouched', async () => {
+    const manual = new FakePiHarness();
+    await manual.start();
+    await manual.command('add manual fact Manual authority.');
+    await manual.command('discovery automatic');
+    manual.setCompletionResponse(
+      discoveryResponse({
+        schemaVersion: 1,
+        discoveries: [
+          {
+            kind: 'fact',
+            content: 'Manual authority.',
+            evidence: [{ id: 'e1', quote: 'evidence' }],
+          },
+        ],
+      }),
+    );
+    await discoveryTurn(manual, [
+      { id: 'call-1', toolName: 'read', content: [block('evidence')] },
+    ]);
+    expect(latestState(manual).items).toEqual([
+      item('manual', 'Manual authority.'),
+    ]);
+    expect(latestState(manual).discoveryItemIds).toEqual([]);
+
+    const automatic = new FakePiHarness();
+    await automatic.start();
+    await automatic.command('extraction automatic');
+    const automaticContent = 'User automatic authority.';
+    automatic.setCompletionResponse(
+      extractorResponse(
+        extractorJson({
+          schemaVersion: 1,
+          add: [{ content: automaticContent, kind: 'constraint' }],
+          removeAutoItemIds: [],
+        }),
+      ),
+    );
+    await invokeInput(automatic, automaticContent);
+    const autoId = automaticId('constraint', automaticContent);
+    await automatic.command('discovery automatic');
+    const discoveredContent = 'Observed alongside automatic authority.';
+    automatic.setCompletionResponse(
+      discoveryResponse({
+        schemaVersion: 1,
+        discoveries: [
+          {
+            kind: 'fact',
+            content: discoveredContent,
+            evidence: [{ id: 'e1', quote: 'evidence' }],
+          },
+        ],
+      }),
+    );
+    await discoveryTurn(automatic, [
+      { id: 'call-1', toolName: 'read', content: [block('evidence')] },
+    ]);
+    const discoveredId = discoveryId(discoveredContent);
+    expect(latestState(automatic).items.map((entry) => entry.id)).toEqual([
+      autoId,
+      discoveredId,
+    ]);
+    expect(latestState(automatic).autoItemIds).toEqual([autoId]);
+    expect(latestState(automatic).discoveryItemIds).toEqual([discoveredId]);
+  });
+
+  it('cleans discovery metadata on remove and clear and loads v3 safely', async () => {
+    const harness = new FakePiHarness();
+    await harness.start();
+    await harness.command('discovery automatic');
+    const content = 'Persisted discovery fact.';
+    harness.setCompletionResponse(
+      discoveryResponse({
+        schemaVersion: 1,
+        discoveries: [
+          {
+            kind: 'fact',
+            content,
+            evidence: [{ id: 'e1', quote: 'evidence' }],
+          },
+        ],
+      }),
+    );
+    await discoveryTurn(harness, [
+      { id: 'call-1', toolName: 'read', content: [block('evidence')] },
+    ]);
+    const id = discoveryId(content);
+    await harness.command(`remove ${id}`);
+    expect(latestState(harness).discoveryItemIds).toEqual([]);
+    expect(latestState(harness).discoveryProvenance).toEqual({});
+
+    harness.setCompletionResponse(
+      discoveryResponse({
+        schemaVersion: 1,
+        discoveries: [
+          {
+            kind: 'fact',
+            content: 'Another discovery fact.',
+            evidence: [{ id: 'e1', quote: 'evidence' }],
+          },
+        ],
+      }),
+    );
+    await discoveryTurn(harness, [
+      { id: 'call-2', toolName: 'read', content: [block('evidence')] },
+    ]);
+    await harness.command('clear --yes');
+    expect(latestState(harness).items).toEqual([]);
+    expect(latestState(harness).discoveryItemIds).toEqual([]);
+    expect(latestState(harness).discoveryProvenance).toEqual({});
+  });
+
+  it('loads v3 provenance and degrades malformed state without fallback', async () => {
+    const loadedId = discoveryId('Loaded discovery fact.');
+    const loaded = new FakePiHarness([
+      customEntry(
+        STATE_CUSTOM_TYPE,
+        stateDataV3(
+          [item(loadedId, 'Loaded discovery fact.', true)],
+          'off',
+          'off',
+          'automatic',
+          [],
+          [loadedId, 'stale-id'],
+          {
+            [loadedId]: [
+              {
+                toolCallId: 'call-loaded',
+                toolName: 'read',
+                quoteHash: quoteHash('loaded quote'),
+              },
+            ],
+            'stale-id': [
+              {
+                toolCallId: 'private-call',
+                toolName: 'private-tool',
+                quoteHash: quoteHash('private quote'),
+              },
+            ],
+          },
+        ),
+      ),
+    ]);
+    await loaded.start();
+    expect(loaded.notifications).toHaveLength(0);
+    await loaded.command('list');
+    expect(loaded.notifyMessages().at(-1)).toContain('[discovery]');
+    expect(loaded.notifyMessages().at(-1)).toContain('read');
+    expect(loaded.notifyMessages().at(-1)).not.toContain('private-tool');
+    await loaded.command('status');
+    expect(loaded.notifyMessages().at(-1)).toContain('discovery automatic');
+
+    const older = customEntry(
+      STATE_CUSTOM_TYPE,
+      stateDataV3([item('older', 'Older state')]),
+    );
+    const malformed = customEntry(STATE_CUSTOM_TYPE, {
+      schemaVersion: 3,
+      recovery: 'off',
+      extraction: 'off',
+      discovery: 'automatic',
+      items: [item('bad', 'Malformed latest state')],
+      autoItemIds: [],
+      discoveryItemIds: [],
+      discoveryProvenance: 'not-an-object',
+    });
+    const broken = new FakePiHarness([older, malformed]);
+    await broken.start();
+    expect(broken.notifications).toHaveLength(1);
+    expect(broken.notifyMessages()[0]).toContain('discarded');
+    await broken.command('status');
+    expect(broken.notifyMessages().at(-1)).toContain('0 items');
+    expect(broken.notifyMessages().at(-1)).toContain('degraded yes');
+  });
+
+  it('keeps failures quiet for the turn and discards stale shutdown results', async () => {
+    const failed = new FakePiHarness();
+    await failed.start();
+    await failed.command('discovery automatic');
+    failed.setCompletionError(new Error('PRIVATE-DISCOVERY-PROVIDER'));
+    const before = failed.notifications.length;
+    await discoveryTurn(failed, [
+      { id: 'call-1', toolName: 'read', content: [block('evidence')] },
+    ]);
+    expect(failed.notifications.length).toBe(before + 1);
+    expect(failed.notifyMessages().at(-1)).toBe(
+      'Context Guard: automatic discovery failed; protected context was unchanged.',
+    );
+    expect(failed.notifyMessages().join('\n')).not.toContain('PRIVATE-DISCOVERY-PROVIDER');
+    await failed.command('status');
+    expect(failed.notifyMessages().at(-1)).toContain('Last discovery: failed (provider).');
+    await expect(failed.invoke('context', contextEvent([]))).resolves.toBeUndefined();
+  });
+
+  it('discards a stale discovery result after shutdown', async () => {
+    const stale = new FakePiHarness();
+    await stale.start();
+    await stale.command('discovery automatic');
+    const deferred = stale.setCompletionDeferred();
+    const notificationCount = stale.notifications.length;
+    await stale.startTurn();
+    await stale.toolResult('call-1', 'read', [block('late evidence')]);
+    const turn = stale.endTurn();
+    const signal = (stale.completeCalls.at(-1)?.options as {
+      readonly signal?: AbortSignal;
+    }).signal;
+    await stale.invoke('session_shutdown');
+    expect(signal?.aborted).toBe(true);
+    expect(signal?.reason).toBe('aborted');
+    deferred.resolve(
+      discoveryResponse({
+        schemaVersion: 1,
+        discoveries: [
+          {
+            kind: 'fact',
+            content: 'Late fact.',
+            evidence: [{ id: 'e1', quote: 'late evidence' }],
+          },
+        ],
+      }),
+    );
+    await expect(turn).resolves.toBeUndefined();
+    expect(stale.notifications).toHaveLength(notificationCount);
+    expect(stale.appendedEntries).toHaveLength(1);
+  });
+
+  it('recovers a critical discovery after compaction when recovery is enabled', async () => {
+    const harness = new FakePiHarness();
+    await harness.start();
+    await harness.command('discovery automatic');
+    const content = 'The tool observed a durable fact.';
+    harness.setCompletionResponse(
+      discoveryResponse({
+        schemaVersion: 1,
+        discoveries: [
+          {
+            kind: 'fact',
+            content,
+            evidence: [{ id: 'e1', quote: 'durable fact' }],
+          },
+        ],
+      }),
+    );
+    await discoveryTurn(harness, [
+      { id: 'call-1', toolName: 'read', content: [block('The tool observed a durable fact.')] },
+    ]);
+    const id = discoveryId(content);
+    await harness.command('recovery critical');
+    await harness.invoke('session_before_compact');
+    await harness.invoke('session_compact', compactEvent('discovery-recovery'));
+    await harness.command(`remove ${id}`);
+
+    const result = await harness.invoke(
+      'context',
+      contextEvent([textMessage('nothing from the tool is present')]),
+    );
+    await Promise.resolve();
+    const returnedMessages = (result as { messages?: CandidateMessage[] } | undefined)?.messages;
+    expect(returnedMessages).toHaveLength(2);
+    const returnedRecovery = returnedMessages?.at(-1) as RecoveryMessage | undefined;
+    expect(returnedRecovery?.content).toContain(content);
+    expect(harness.sentMessages).toHaveLength(1);
   });
 });

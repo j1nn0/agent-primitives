@@ -5,9 +5,12 @@ import type {
   ExtensionContext,
 } from '@earendil-works/pi-coding-agent';
 import type {
+  DiscoveryMode,
+  DiscoveryProvenance,
   PersistedState,
   PersistedStateV1,
   PersistedStateV2,
+  PersistedStateV3,
   RecoveryMode,
   RuntimeState,
 } from './types.js';
@@ -29,8 +32,36 @@ function isExtractionMode(value: unknown): value is RuntimeState['extraction'] {
   return value === 'off' || value === 'automatic';
 }
 
+function isDiscoveryMode(value: unknown): value is DiscoveryMode {
+  return value === 'off' || value === 'automatic';
+}
+
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+}
+
+function isDiscoveryProvenanceReference(
+  value: unknown,
+): value is DiscoveryProvenance {
+  return (
+    isRecord(value) &&
+    typeof value.toolCallId === 'string' &&
+    typeof value.toolName === 'string' &&
+    typeof value.quoteHash === 'string'
+  );
+}
+
+function isDiscoveryProvenance(
+  value: unknown,
+): value is Readonly<Record<string, readonly DiscoveryProvenance[]>> {
+  return (
+    isRecord(value) &&
+    Object.values(value).every(
+      (references) =>
+        Array.isArray(references) &&
+        references.every(isDiscoveryProvenanceReference),
+    )
+  );
 }
 
 function isPersistedStateV1Shape(value: unknown): value is PersistedStateV1 {
@@ -53,14 +84,55 @@ function isPersistedStateV2Shape(value: unknown): value is PersistedStateV2 {
   );
 }
 
+function isPersistedStateV3Shape(value: unknown): value is PersistedStateV3 {
+  return (
+    isRecord(value) &&
+    value.schemaVersion === 3 &&
+    isRecoveryMode(value.recovery) &&
+    isExtractionMode(value.extraction) &&
+    isDiscoveryMode(value.discovery) &&
+    Array.isArray(value.items) &&
+    isStringArray(value.autoItemIds) &&
+    isStringArray(value.discoveryItemIds) &&
+    isDiscoveryProvenance(value.discoveryProvenance)
+  );
+}
+
+function emptyDiscoveryProvenance(): Map<
+  string,
+  readonly DiscoveryProvenance[]
+> {
+  return new Map<string, readonly DiscoveryProvenance[]>();
+}
+
+function discoveryProvenanceForState(
+  data: PersistedStateV3,
+  guard: RuntimeState['guard'],
+): Map<string, readonly DiscoveryProvenance[]> {
+  const provenance = emptyDiscoveryProvenance();
+  for (const [id, references] of Object.entries(data.discoveryProvenance)) {
+    if (guard.has(id)) {
+      provenance.set(
+        id,
+        references.map((reference) => ({ ...reference })),
+      );
+    }
+  }
+  return provenance;
+}
+
 export function createEmptyState(): RuntimeState {
   return {
     guard: createContextGuard(),
     recovery: 'off',
     extraction: 'off',
+    discovery: 'off',
     autoItemIds: new Set<string>(),
+    discoveryItemIds: new Set<string>(),
+    discoveryProvenance: emptyDiscoveryProvenance(),
     degraded: false,
     lastExtraction: undefined,
+    lastDiscovery: undefined,
   };
 }
 
@@ -81,6 +153,29 @@ export function loadState(
 
   try {
     const data = latestStateEntry.data;
+    if (isPersistedStateV3Shape(data)) {
+      const guard = createContextGuard(
+        data.items as readonly ContextItemInput[],
+      );
+      const autoItemIds = new Set<string>(
+        data.autoItemIds.filter((id) => guard.has(id)),
+      );
+      return {
+        guard,
+        recovery: data.recovery,
+        extraction: data.extraction,
+        discovery: data.discovery,
+        autoItemIds,
+        discoveryItemIds: new Set<string>(
+          data.discoveryItemIds.filter((id) => guard.has(id)),
+        ),
+        discoveryProvenance: discoveryProvenanceForState(data, guard),
+        degraded: false,
+        lastExtraction: undefined,
+        lastDiscovery: undefined,
+      };
+    }
+
     if (isPersistedStateV2Shape(data)) {
       const guard = createContextGuard(
         data.items as readonly ContextItemInput[],
@@ -89,11 +184,15 @@ export function loadState(
         guard,
         recovery: data.recovery,
         extraction: data.extraction,
+        discovery: 'off',
         autoItemIds: new Set<string>(
           data.autoItemIds.filter((id) => guard.has(id)),
         ),
+        discoveryItemIds: new Set<string>(),
+        discoveryProvenance: emptyDiscoveryProvenance(),
         degraded: false,
         lastExtraction: undefined,
+        lastDiscovery: undefined,
       };
     }
 
@@ -105,9 +204,13 @@ export function loadState(
         guard,
         recovery: data.recovery,
         extraction: 'off',
+        discovery: 'off',
         autoItemIds: new Set<string>(),
+        discoveryItemIds: new Set<string>(),
+        discoveryProvenance: emptyDiscoveryProvenance(),
         degraded: false,
         lastExtraction: undefined,
+        lastDiscovery: undefined,
       };
     }
 
@@ -125,12 +228,31 @@ export function saveState(
   pi: Pick<ExtensionAPI, 'appendEntry'>,
   state: RuntimeState,
 ): void {
+  const discoveryItemIds = Array.from(state.discoveryItemIds).filter((id) =>
+    state.guard.has(id),
+  );
+  const discoveryProvenance: Record<
+    string,
+    readonly DiscoveryProvenance[]
+  > = {};
+  for (const id of discoveryItemIds) {
+    const references = state.discoveryProvenance.get(id);
+    if (references !== undefined) {
+      discoveryProvenance[id] = references.map((reference) => ({
+        ...reference,
+      }));
+    }
+  }
+
   const payload: PersistedState = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     recovery: state.recovery,
     extraction: state.extraction,
+    discovery: state.discovery,
     items: state.guard.list(),
     autoItemIds: Array.from(state.autoItemIds).filter((id) => state.guard.has(id)),
+    discoveryItemIds,
+    discoveryProvenance,
   };
   pi.appendEntry(STATE_CUSTOM_TYPE, payload);
   state.degraded = false;

@@ -190,6 +190,42 @@ export class FakePiHarness {
     return await handler(payload, this.context);
   }
 
+  async startTurn(turnIndex = 0): Promise<void> {
+    await this.invoke('turn_start', {
+      type: 'turn_start',
+      turnIndex,
+      timestamp: 1,
+    });
+  }
+
+  async toolResult(
+    toolCallId: string,
+    toolName: string,
+    content: readonly unknown[],
+  ): Promise<void> {
+    await this.invoke('tool_result', {
+      type: 'tool_result',
+      toolCallId,
+      toolName,
+      input: {},
+      content,
+      isError: false,
+    });
+  }
+
+  async endTurn(turnIndex = 0): Promise<void> {
+    await this.invoke('turn_end', {
+      type: 'turn_end',
+      turnIndex,
+      message: {
+        role: 'assistant',
+        content: [],
+        timestamp: 2,
+      },
+      toolResults: [],
+    });
+  }
+
   notifyMessages(): readonly string[] {
     return this.notifications.map((entry) => entry.message);
   }
