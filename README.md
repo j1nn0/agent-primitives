@@ -82,13 +82,17 @@ Install workspace dependencies, then run the checks from the repository root:
 
 ```sh
 pnpm install
+pnpm build
 pnpm lint
 pnpm typecheck
 pnpm test
-pnpm build
 pnpm check:package
 pnpm example
 ```
+
+`pnpm build` comes first: the Pi adapter and the example resolve
+`@j1nn0/agent-context-guard` through its built `dist`, so typecheck, test and
+the example need the workspace built at least once.
 
 The example is a private workspace package and runs after the context-guard package has been built.
 

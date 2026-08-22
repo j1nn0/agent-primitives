@@ -21,9 +21,11 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
+      # The Pi adapter resolves @j1nn0/agent-context-guard through its built
+      # dist, so the workspace has to be built before typecheck and test.
+      - run: pnpm build
       - run: pnpm typecheck
       - run: pnpm test
-      - run: pnpm build
       - if: matrix.node == '24.x'
         run: pnpm check:package
       - if: matrix.node == '24.x'
