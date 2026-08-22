@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { clearTimeout, setTimeout } from 'node:timers';
 import type {
   ContextItemInput,
   ContextItemKind,
@@ -8,7 +7,11 @@ import type {
   ExtensionContext,
   InputEvent,
 } from '@earendil-works/pi-coding-agent';
-import type { LastExtraction, RuntimeState } from './types.js';
+import type {
+  ExtractionFailureKind,
+  LastExtraction,
+  RuntimeState,
+} from './types.js';
 
 const EXTRACTION_TIMEOUT_MS = 20_000;
 const MAX_ADDED_ITEMS = 8;
@@ -63,6 +66,7 @@ interface PlannedMutation {
 }
 
 interface ExtractionDependencies {
+  readonly getEpoch: () => number;
   readonly getState: () => RuntimeState;
   readonly clearPendingSnapshot: () => void;
   readonly persist: () => void;
@@ -70,6 +74,7 @@ interface ExtractionDependencies {
 
 export interface ExtractionController {
   handleInput(event: InputEvent, ctx: ExtensionContext): Promise<void>;
+  abortActive(): void;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -107,17 +112,30 @@ function stripSingleFence(text: string): string {
   return match?.[1]?.trim() ?? trimmed;
 }
 
-function assistantText(response: unknown): string {
+type AssistantTextResult =
+  | {
+      readonly ok: true;
+      readonly text: string;
+    }
+  | {
+      readonly ok: false;
+      readonly failureKind: 'aborted' | 'provider' | 'invalid-response';
+    };
+
+function assistantText(response: unknown): AssistantTextResult {
   if (!isPlainObject(response)) {
-    throw new Error('Invalid extractor response.');
+    return { ok: false, failureKind: 'invalid-response' };
   }
 
   const typedResponse = response as ExtractorResponse;
+  if (typedResponse.stopReason === 'aborted') {
+    return { ok: false, failureKind: 'aborted' };
+  }
   if (typedResponse.stopReason !== 'stop') {
-    throw new Error('Extractor completion was not successful.');
+    return { ok: false, failureKind: 'provider' };
   }
   if (!Array.isArray(typedResponse.content)) {
-    throw new Error('Invalid extractor response.');
+    return { ok: false, failureKind: 'invalid-response' };
   }
 
   const text = typedResponse.content
@@ -125,52 +143,56 @@ function assistantText(response: unknown): string {
     .map((block) => block.text)
     .join('');
   if (text.trim().length === 0) {
-    throw new Error('Extractor response was not text.');
+    return { ok: false, failureKind: 'invalid-response' };
   }
 
-  return stripSingleFence(text);
+  return { ok: true, text: stripSingleFence(text) };
 }
 
-function parseOutput(text: string, userMessage: string, state: RuntimeState): ExtractionOutput {
+function parseOutput(
+  text: string,
+  userMessage: string,
+  state: RuntimeState,
+): ExtractionOutput | undefined {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    throw new Error('Extractor output was not valid JSON.');
+    return undefined;
   }
   if (!isPlainObject(parsed) || parsed.schemaVersion !== 1) {
-    throw new Error('Invalid extractor output schema.');
+    return undefined;
   }
 
   if (!Array.isArray(parsed.add) || !Array.isArray(parsed.removeAutoItemIds)) {
-    throw new Error('Invalid extractor output arrays.');
+    return undefined;
   }
   if (parsed.add.length > MAX_ADDED_ITEMS) {
-    throw new Error('Too many extracted items.');
+    return undefined;
   }
 
   const add: ExtractedItem[] = [];
   for (const candidate of parsed.add) {
     if (!isPlainObject(candidate) || !isAllowedKind(candidate.kind)) {
-      throw new Error('Invalid extracted item.');
+      return undefined;
     }
 
     if (typeof candidate.content !== 'string') {
-      throw new Error('Invalid extracted content.');
+      return undefined;
     }
     if (
       candidate.content.trim().length === 0 ||
       Array.from(candidate.content).length > MAX_CONTENT_CODE_POINTS ||
       !userMessage.includes(candidate.content)
     ) {
-      throw new Error('Extracted content was not an exact user-message substring.');
+      return undefined;
     }
 
     const critical = hasOwn(candidate, 'critical')
       ? candidate.critical
       : false;
     if (typeof critical !== 'boolean') {
-      throw new Error('Invalid extracted critical flag.');
+      return undefined;
     }
 
     add.push({
@@ -187,7 +209,7 @@ function parseOutput(text: string, userMessage: string, state: RuntimeState): Ex
       !state.autoItemIds.has(value) ||
       !state.guard.has(value)
     ) {
-      throw new Error('Invalid automatic item id.');
+      return undefined;
     }
     removeAutoItemIds.push(value);
   }
@@ -316,14 +338,63 @@ function extractionPayload(state: RuntimeState, text: string): string {
   });
 }
 
+type SessionIdRead =
+  | { readonly ok: true; readonly id: string }
+  | { readonly ok: false };
+
+function readSessionId(ctx: ExtensionContext): SessionIdRead {
+  try {
+    return { ok: true, id: ctx.sessionManager.getSessionId() };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function signalFailureKind(
+  signal: AbortSignal,
+): 'timeout' | 'aborted' | undefined {
+  if (!signal.aborted) {
+    return undefined;
+  }
+  if (signal.reason === 'timeout') {
+    return 'timeout';
+  }
+  if (signal.reason === 'aborted') {
+    return 'aborted';
+  }
+  return undefined;
+}
+
+function failedLastExtraction(
+  failureKind: ExtractionFailureKind,
+): LastExtraction {
+  return {
+    status: 'failed',
+    added: 0,
+    retired: 0,
+    failureKind,
+  };
+}
+
 export function createExtractionController(
   dependencies: ExtractionDependencies,
 ): ExtractionController {
+  const activeControllers = new Set<AbortController>();
+
+  function abortActive(): void {
+    for (const controller of activeControllers) {
+      controller.abort('aborted');
+    }
+    activeControllers.clear();
+  }
+
   async function handleInput(
     event: InputEvent,
     ctx: ExtensionContext,
   ): Promise<void> {
     const stateAtStart = dependencies.getState();
+    const epochAtStart = dependencies.getEpoch();
+    const sessionIdAtStart = readSessionId(ctx);
     const trimmed = event.text.trim();
     if (
       stateAtStart.extraction !== 'automatic' ||
@@ -334,12 +405,45 @@ export function createExtractionController(
     ) {
       return;
     }
+    if (!sessionIdAtStart.ok) {
+      stateAtStart.lastExtraction = failedLastExtraction('stale');
+      return;
+    }
 
     const model = ctx.model;
     const controller = new AbortController();
+    activeControllers.add(controller);
     const timeout = setTimeout(() => {
-      controller.abort();
+      controller.abort('timeout');
     }, EXTRACTION_TIMEOUT_MS);
+
+    const currentState = (): RuntimeState | undefined => {
+      const currentEpoch = dependencies.getEpoch();
+      let state: RuntimeState | undefined;
+      try {
+        state = dependencies.getState();
+      } catch {
+        state = undefined;
+      }
+      const currentSessionId = readSessionId(ctx);
+      if (
+        currentEpoch === epochAtStart &&
+        state === stateAtStart &&
+        currentSessionId.ok &&
+        currentSessionId.id === sessionIdAtStart.id
+      ) {
+        return state;
+      }
+      return undefined;
+    };
+
+    const notifyFailure = (): void => {
+      try {
+        ctx.ui.notify(EXTRACTION_FAILURE_WARNING, 'warning');
+      } catch {
+        // A UI failure must not turn an extractor failure into an agent failure.
+      }
+    };
 
     try {
       const response = await ctx.modelRegistry.complete(
@@ -360,8 +464,34 @@ export function createExtractionController(
         },
       );
 
-      const state = dependencies.getState();
-      const output = parseOutput(assistantText(response), event.text, state);
+      const state = currentState();
+      if (state === undefined) {
+        stateAtStart.lastExtraction = failedLastExtraction('stale');
+        return;
+      }
+
+      const signalKind = signalFailureKind(controller.signal);
+      if (signalKind !== undefined) {
+        stateAtStart.lastExtraction = failedLastExtraction(signalKind);
+        notifyFailure();
+        return;
+      }
+
+      const responseText = assistantText(response);
+      if (!responseText.ok) {
+        stateAtStart.lastExtraction = failedLastExtraction(responseText.failureKind);
+        notifyFailure();
+        return;
+      }
+
+      const output = parseOutput(responseText.text, event.text, state);
+      if (output === undefined) {
+        state.lastExtraction = failedLastExtraction('invalid-output');
+        notifyFailure();
+        return;
+      }
+
+      // Keep this post-await block free of awaits: JavaScript's single-threaded execution makes planning, applying, persisting, and notifying atomic.
       const mutation = planMutation(output, state);
       if (mutation.adds.length === 0 && mutation.removeAutoItemIds.length === 0) {
         state.lastExtraction = {
@@ -379,21 +509,19 @@ export function createExtractionController(
         // A notification failure must not turn a successful mutation into a failed turn.
       }
     } catch {
-      const state = dependencies.getState();
-      state.lastExtraction = {
-        status: 'failed',
-        added: 0,
-        retired: 0,
-      } satisfies LastExtraction;
-      try {
-        ctx.ui.notify(EXTRACTION_FAILURE_WARNING, 'warning');
-      } catch {
-        // A UI failure must not turn an extractor failure into an agent failure.
+      if (currentState() === undefined) {
+        stateAtStart.lastExtraction = failedLastExtraction('stale');
+        return;
       }
+
+      const signalKind = signalFailureKind(controller.signal);
+      stateAtStart.lastExtraction = failedLastExtraction(signalKind ?? 'provider');
+      notifyFailure();
     } finally {
+      activeControllers.delete(controller);
       clearTimeout(timeout);
     }
   }
 
-  return { handleInput };
+  return { handleInput, abortActive };
 }

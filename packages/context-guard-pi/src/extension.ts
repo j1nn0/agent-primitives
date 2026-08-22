@@ -13,12 +13,14 @@ export type { ExtractionMode, PersistedState, RecoveryMode } from './types.js';
 
 export default function registerContextGuardExtension(pi: ExtensionAPI): void {
   let state: RuntimeState = createEmptyState();
+  let sessionEpoch = 0;
   const lifecycle = createLifecycle({
     pi,
     getGuard: (): RuntimeState['guard'] => state.guard,
     getRecoveryMode: (): RecoveryMode => state.recovery,
   });
   const extraction = createExtractionController({
+    getEpoch: (): number => sessionEpoch,
     getState: (): RuntimeState => state,
     clearPendingSnapshot: lifecycle.clearPendingSnapshot,
     persist: (): void => {
@@ -44,11 +46,15 @@ export default function registerContextGuardExtension(pi: ExtensionAPI): void {
   });
 
   pi.on('session_start', (_event, ctx): void => {
+    sessionEpoch += 1;
+    extraction.abortActive();
     lifecycle.resetForSession();
     state = loadState(ctx);
   });
 
   pi.on('session_shutdown', (): void => {
+    sessionEpoch += 1;
+    extraction.abortActive();
     lifecycle.resetForSession();
   });
 

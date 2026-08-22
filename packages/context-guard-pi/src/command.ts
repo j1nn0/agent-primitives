@@ -126,7 +126,7 @@ function extractionSummary(state: RuntimeState): string {
     return 'Last extraction: none.';
   }
   if (state.lastExtraction.status === 'failed') {
-    return 'Last extraction: failed; protected context was unchanged.';
+    return `Last extraction: failed (${state.lastExtraction.failureKind}).`;
   }
   return `Last extraction: added ${state.lastExtraction.added}, retired ${state.lastExtraction.retired}.`;
 }

@@ -1413,3 +1413,260 @@ describe('Pi automatic extraction failures', () => {
     }
   });
 });
+
+describe('Pi automatic extraction stale and cancellation safety', () => {
+  function addResponse(content: string): unknown {
+    return extractorResponse(
+      extractorJson({
+        schemaVersion: 1,
+        add: [{ content, kind: 'constraint' }],
+        removeAutoItemIds: [],
+      }),
+    );
+  }
+
+  async function automaticHarness(): Promise<FakePiHarness> {
+    const harness = new FakePiHarness();
+    await harness.start();
+    await harness.command('extraction automatic');
+    return harness;
+  }
+
+  it('discards a late result after session replacement without persistence or notification', async () => {
+    const harness = await automaticHarness();
+    const deferred = harness.setCompletionDeferred();
+    const notificationCount = harness.notifications.length;
+    const entryCount = harness.appendedEntries.length;
+    const input = invokeInput(harness, 'Late replacement instruction.');
+    const signal = (harness.completeCalls.at(-1)?.options as {
+      readonly signal?: AbortSignal;
+    }).signal;
+
+    await harness.invoke('session_start', {
+      type: 'session_start',
+      reason: 'new',
+    });
+    expect(signal?.aborted).toBe(true);
+    expect(signal?.reason).toBe('aborted');
+
+    deferred.resolve(addResponse('Late replacement instruction.'));
+    await expect(input).resolves.toBeUndefined();
+
+    expect(harness.appendedEntries).toHaveLength(entryCount);
+    expect(harness.notifications).toHaveLength(notificationCount);
+    expect(latestV2State(harness).items).toEqual([]);
+  });
+
+  it('discards a late result after session shutdown without notification', async () => {
+    const harness = await automaticHarness();
+    const deferred = harness.setCompletionDeferred();
+    const notificationCount = harness.notifications.length;
+    const entryCount = harness.appendedEntries.length;
+    const input = invokeInput(harness, 'Late shutdown instruction.');
+    const signal = (harness.completeCalls.at(-1)?.options as {
+      readonly signal?: AbortSignal;
+    }).signal;
+
+    await harness.invoke('session_shutdown');
+    expect(signal?.aborted).toBe(true);
+    expect(signal?.reason).toBe('aborted');
+
+    deferred.resolve(addResponse('Late shutdown instruction.'));
+    await expect(input).resolves.toBeUndefined();
+
+    expect(harness.appendedEntries).toHaveLength(entryCount);
+    expect(harness.notifications).toHaveLength(notificationCount);
+    expect(latestV2State(harness).items).toEqual([]);
+    await harness.command('status');
+    expect(harness.notifyMessages().at(-1)).toContain('failed (stale)');
+  });
+
+  it('rejects a late result after an identity read throws', async () => {
+    const harness = await automaticHarness();
+    const deferred = harness.setCompletionDeferred();
+    const notificationCount = harness.notifications.length;
+    const input = invokeInput(harness, 'Late identity instruction.');
+
+    harness.setSessionIdFailure(true);
+    deferred.resolve(addResponse('Late identity instruction.'));
+    await expect(input).resolves.toBeUndefined();
+
+    expect(harness.notifications).toHaveLength(notificationCount);
+    expect(latestV2State(harness).items).toEqual([]);
+  });
+
+  it('applies two overlapping extractions without losing either result', async () => {
+    const harness = await automaticHarness();
+    const first = harness.setCompletionDeferred();
+    const firstInput = invokeInput(harness, 'First overlapping instruction.');
+    const second = harness.setCompletionDeferred();
+    const secondInput = invokeInput(harness, 'Second overlapping instruction.');
+
+    first.resolve(addResponse('First overlapping instruction.'));
+    await firstInput;
+    second.resolve(addResponse('Second overlapping instruction.'));
+    await secondInput;
+
+    expect(harness.completeCalls).toHaveLength(2);
+    expect(latestV2State(harness).items.map((entry) => entry.content)).toEqual([
+      'First overlapping instruction.',
+      'Second overlapping instruction.',
+    ]);
+  });
+
+  it('removes controllers after successful and failed completions', async () => {
+    const successful = await automaticHarness();
+    successful.setCompletionResponse(
+      extractorResponse(
+        extractorJson({
+          schemaVersion: 1,
+          add: [],
+          removeAutoItemIds: [],
+        }),
+      ),
+    );
+    await invokeInput(successful, 'Successful controller cleanup.');
+    const successfulSignal = (successful.completeCalls.at(-1)?.options as {
+      readonly signal?: AbortSignal;
+    }).signal;
+    await successful.invoke('session_start', {
+      type: 'session_start',
+      reason: 'reload',
+    });
+    expect(successfulSignal?.aborted).toBe(false);
+
+    const failed = await automaticHarness();
+    failed.setCompletionError(new Error('private provider failure'));
+    await invokeInput(failed, 'Failed controller cleanup.');
+    const failedSignal = (failed.completeCalls.at(-1)?.options as {
+      readonly signal?: AbortSignal;
+    }).signal;
+    await failed.invoke('session_start', {
+      type: 'session_start',
+      reason: 'reload',
+    });
+    expect(failedSignal?.aborted).toBe(false);
+  });
+});
+
+describe('Pi automatic extraction failure taxonomy', () => {
+  function addResponse(content: string): unknown {
+    return extractorResponse(
+      extractorJson({
+        schemaVersion: 1,
+        add: [{ content, kind: 'constraint' }],
+        removeAutoItemIds: [],
+      }),
+    );
+  }
+
+  async function failureHarness(): Promise<FakePiHarness> {
+    const harness = new FakePiHarness();
+    await harness.start();
+    await harness.command('add manual fact Existing manual item.');
+    await harness.command('extraction automatic');
+    return harness;
+  }
+
+  async function expectFailure(
+    harness: FakePiHarness,
+    expectedKind: string,
+    input = 'Failure taxonomy input.',
+  ): Promise<void> {
+    const notificationCount = harness.notifications.length;
+    const entryCount = harness.appendedEntries.length;
+    await expect(invokeInput(harness, input)).resolves.toBeUndefined();
+    expect(harness.completeCalls).toHaveLength(1);
+    expect(harness.notifications.slice(notificationCount)).toHaveLength(1);
+    expect(harness.notifyMessages().at(-1)).toBe(
+      'Context Guard: automatic extraction failed; protected context was unchanged.',
+    );
+    expect(harness.appendedEntries).toHaveLength(entryCount);
+    expect(latestV2State(harness).items).toEqual([
+      item('manual', 'Existing manual item.'),
+    ]);
+    await harness.command('status');
+    const status = harness.notifyMessages().at(-1) ?? '';
+    expect(status).toContain(`Last extraction: failed (${expectedKind}).`);
+    expect(status).not.toContain('private provider failure');
+    expect(status).not.toContain('PRIVATE-PROVIDER-TEXT');
+  }
+
+  it('records timeout without applying a late completion', async () => {
+    vi.useFakeTimers();
+    try {
+      const harness = await failureHarness();
+      const deferred = harness.setCompletionDeferred();
+      const input = invokeInput(harness, 'Timeout taxonomy input.');
+      await vi.advanceTimersByTimeAsync(20_000);
+      const signal = (harness.completeCalls.at(-1)?.options as {
+        readonly signal?: AbortSignal;
+      }).signal;
+      expect(signal?.aborted).toBe(true);
+      expect(signal?.reason).toBe('timeout');
+      deferred.resolve(addResponse('Timeout taxonomy input.'));
+      await expect(input).resolves.toBeUndefined();
+      expect(harness.completeCalls).toHaveLength(1);
+      expect(harness.notifyMessages().at(-1)).toBe(
+        'Context Guard: automatic extraction failed; protected context was unchanged.',
+      );
+      expect(latestV2State(harness).items).toEqual([
+        item('manual', 'Existing manual item.'),
+      ]);
+      await harness.command('status');
+      expect(harness.notifyMessages().at(-1)).toContain(
+        'Last extraction: failed (timeout).',
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('records an aborted completion', async () => {
+    const harness = await failureHarness();
+    harness.setCompletionResponse({
+      stopReason: 'aborted',
+      content: [{ type: 'text', text: 'PRIVATE-PROVIDER-TEXT' }],
+    });
+    await expectFailure(harness, 'aborted', 'Aborted taxonomy input.');
+  });
+
+  it('records a provider failure without exposing its error', async () => {
+    const harness = await failureHarness();
+    harness.setCompletionError(new Error('private provider failure'));
+    await expectFailure(harness, 'provider', 'Provider taxonomy input.');
+  });
+
+  it('records an invalid response', async () => {
+    const harness = await failureHarness();
+    harness.setCompletionResponse({ stopReason: 'stop', content: [] });
+    await expectFailure(harness, 'invalid-response', 'Response taxonomy input.');
+  });
+
+  it('records invalid output', async () => {
+    const harness = await failureHarness();
+    harness.setCompletionResponse(extractorResponse('{ malformed json'));
+    await expectFailure(harness, 'invalid-output', 'Output taxonomy input.');
+  });
+
+  it('records stale and stays silent when a shutdown abort is ignored', async () => {
+    const harness = await failureHarness();
+    const deferred = harness.setCompletionDeferred();
+    const notificationCount = harness.notifications.length;
+    const input = invokeInput(harness, 'Stale taxonomy input.');
+    await harness.invoke('session_shutdown');
+    deferred.resolve(addResponse('Stale taxonomy input.'));
+    await expect(input).resolves.toBeUndefined();
+
+    expect(harness.notifications).toHaveLength(notificationCount);
+    expect(harness.appendedEntries).toHaveLength(2);
+    expect(latestV2State(harness).items).toEqual([
+      item('manual', 'Existing manual item.'),
+    ]);
+    await harness.command('status');
+    expect(harness.notifyMessages().at(-1)).toContain(
+      'Last extraction: failed (stale).',
+    );
+    expect(harness.notifyMessages().join('\n')).not.toContain('Stale taxonomy input.');
+  });
+});

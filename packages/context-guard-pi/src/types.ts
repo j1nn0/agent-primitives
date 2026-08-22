@@ -10,6 +10,14 @@ export type RecoveryMode = 'off' | 'critical';
 /** Controls whether protected items are extracted from user messages. */
 export type ExtractionMode = 'off' | 'automatic';
 
+export type ExtractionFailureKind =
+  | 'timeout'
+  | 'aborted'
+  | 'provider'
+  | 'invalid-response'
+  | 'invalid-output'
+  | 'stale';
+
 export interface PersistedStateV1 {
   readonly schemaVersion: 1;
   readonly recovery: RecoveryMode;
@@ -27,11 +35,18 @@ export interface PersistedStateV2 {
 /** New persisted state. The loader also accepts PersistedStateV1. */
 export type PersistedState = PersistedStateV2;
 
-export interface LastExtraction {
-  readonly status: 'success' | 'failed';
-  readonly added: number;
-  readonly retired: number;
-}
+export type LastExtraction =
+  | {
+      readonly status: 'success';
+      readonly added: number;
+      readonly retired: number;
+    }
+  | {
+      readonly status: 'failed';
+      readonly added: 0;
+      readonly retired: 0;
+      readonly failureKind: ExtractionFailureKind;
+    };
 
 export interface RuntimeState {
   guard: ContextGuard;

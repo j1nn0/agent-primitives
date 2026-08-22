@@ -48,6 +48,8 @@ export class FakePiHarness {
   readonly completeCalls: ModelCompleteCall[] = [];
   context: ExtensionContext;
   private branch: SessionEntry[];
+  private sessionId = 'fake-session';
+  private sessionIdFailure = false;
   private systemPrompt = '';
   private modelValue: unknown = {
     id: 'fake-model',
@@ -110,6 +112,14 @@ export class FakePiHarness {
     extension(this.api);
   }
 
+  setSessionId(sessionId: string): void {
+    this.sessionId = sessionId;
+  }
+
+  setSessionIdFailure(failure: boolean): void {
+    this.sessionIdFailure = failure;
+  }
+
   setSystemPrompt(prompt: string): void {
     this.systemPrompt = prompt;
   }
@@ -128,6 +138,25 @@ export class FakePiHarness {
 
   setCompletionError(error: unknown): void {
     this.completionError = error;
+  }
+
+  setCompletionDeferred(): {
+    readonly promise: Promise<unknown>;
+    readonly resolve: (response: unknown) => void;
+    readonly reject: (error: unknown) => void;
+  } {
+    let resolvePromise: (response: unknown) => void = () => undefined;
+    let rejectPromise: (error: unknown) => void = () => undefined;
+    const promise = new Promise<unknown>((resolve, reject) => {
+      resolvePromise = resolve;
+      rejectPromise = reject;
+    });
+    this.setCompletionResponse(promise);
+    return {
+      promise,
+      resolve: resolvePromise,
+      reject: rejectPromise,
+    };
   }
 
   setBranch(entries: readonly SessionEntry[]): void {
@@ -180,6 +209,12 @@ export class FakePiHarness {
       },
       sessionManager: {
         getBranch: (): SessionEntry[] => this.branch,
+        getSessionId: (): string => {
+          if (this.sessionIdFailure) {
+            throw new Error('stale session');
+          }
+          return this.sessionId;
+        },
       },
       model: this.modelValue,
       modelRegistry: this.modelRegistry,
