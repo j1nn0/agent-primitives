@@ -7,6 +7,7 @@ import type {
   PersistedStateV1,
   PersistedStateV2,
   PersistedStateV3,
+  PersistedStateV4,
 } from '../src/types.js';
 import {
   FakePiHarness,
@@ -148,10 +149,10 @@ function discoveryPayload(harness: FakePiHarness): {
   };
 }
 
-function latestV2State(harness: FakePiHarness): PersistedStateV3 {
+function latestV2State(harness: FakePiHarness): PersistedStateV4 {
   const state = latestState(harness);
-  expect(state.schemaVersion).toBe(3);
-  return state as PersistedStateV3;
+  expect(state.schemaVersion).toBe(4);
+  return state as PersistedStateV4;
 }
 
 async function invokeInput(
@@ -1264,7 +1265,7 @@ describe('Pi automatic extraction persistence and lifecycle', () => {
     );
     await invokeInput(original, automatic);
     const saved = latestV2State(original);
-    expect(saved.schemaVersion).toBe(3);
+    expect(saved.schemaVersion).toBe(4);
     expect(saved.extraction).toBe('automatic');
     expect(saved.autoItemIds).toEqual([automaticId('decision', automatic)]);
 
@@ -1749,6 +1750,11 @@ describe('Pi agent discovery capture', () => {
     await harness.start();
     await harness.command('discovery automatic');
     const evidence = 'The read command returned version 1.2.';
+    const quote = 'version 1.2.';
+    const span = {
+      startOffset: evidence.indexOf(quote),
+      endOffset: evidence.indexOf(quote) + quote.length,
+    };
     harness.setCompletionResponse(
       discoveryResponse({
         schemaVersion: 1,
@@ -1756,7 +1762,7 @@ describe('Pi agent discovery capture', () => {
           {
             kind: 'fact',
             content: 'The read command returned version 1.2.',
-            evidence: [{ id: 'e1', quote: 'version 1.2.' }],
+            evidence: [{ id: 'e1', quote }],
           },
         ],
       }),
@@ -1772,7 +1778,8 @@ describe('Pi agent discovery capture', () => {
 
     const state = latestState(harness);
     const id = discoveryId('The read command returned version 1.2.');
-    expect(state.schemaVersion).toBe(3);
+
+    expect(state.schemaVersion).toBe(4);
     expect(state.discovery).toBe('automatic');
     expect(state.discoveryItemIds).toEqual([id]);
     expect(state.items).toEqual([
@@ -1783,10 +1790,18 @@ describe('Pi agent discovery capture', () => {
         {
           toolCallId: 'call-1',
           toolName: 'read',
-          quoteHash: quoteHash('version 1.2.'),
+          quoteHash: quoteHash(quote),
+          span,
         },
       ],
     });
+    const reference = state.discoveryProvenance[id]?.[0];
+    expect(reference?.span).toEqual(span);
+    if (reference?.span !== undefined) {
+      expect(
+        quoteHash(evidence.slice(reference.span.startOffset, reference.span.endOffset)),
+      ).toBe(reference.quoteHash);
+    }
     expect(harness.notifyMessages().at(-1)).toBe(
       'Context Guard: captured 1 discovery from tool evidence.',
     );
@@ -1804,6 +1819,52 @@ describe('Pi agent discovery capture', () => {
     expect(list).toContain('1 evidence reference');
     expect(list).toContain('read');
     expect(list).not.toContain('PRIVATE-IMAGE-TEXT');
+
+    const restored = new FakePiHarness(harness.getBranch());
+    await restored.start();
+    await restored.command('recovery critical');
+    expect(latestState(restored).discoveryProvenance).toEqual(
+      state.discoveryProvenance,
+    );
+  });
+
+  it('records the first occurrence when a quote is repeated', async () => {
+    const harness = new FakePiHarness();
+    await harness.start();
+    await harness.command('discovery automatic');
+    const evidence = 'repeat quote, then repeat quote again';
+    const quote = 'repeat quote';
+    harness.setCompletionResponse(
+      discoveryResponse({
+        schemaVersion: 1,
+        discoveries: [
+          {
+            kind: 'fact',
+            content: 'The evidence repeats a quote.',
+            evidence: [{ id: 'e1', quote }],
+          },
+        ],
+      }),
+    );
+
+    await discoveryTurn(harness, [
+      { id: 'call-1', toolName: 'read', content: [block(evidence)] },
+    ]);
+
+    const id = discoveryId('The evidence repeats a quote.');
+    const reference = latestState(harness).discoveryProvenance[id]?.[0];
+    const firstStart = evidence.indexOf(quote);
+    expect(reference?.span).toEqual({
+      startOffset: firstStart,
+      endOffset: firstStart + quote.length,
+    });
+    expect(
+      evidence.slice(
+        reference?.span?.startOffset,
+        reference?.span?.endOffset,
+      ),
+    ).toBe(quote);
+    expect(reference?.quoteHash).toBe(quoteHash(quote));
   });
 
   it('rejects every invalid candidate atomically', async () => {
@@ -2244,6 +2305,16 @@ describe('Pi agent discovery capture', () => {
     expect(loaded.notifyMessages().at(-1)).not.toContain('private-tool');
     await loaded.command('status');
     expect(loaded.notifyMessages().at(-1)).toContain('discovery automatic');
+    await loaded.command('recovery critical');
+    expect(latestState(loaded).discoveryProvenance).toEqual({
+      [loadedId]: [
+        {
+          toolCallId: 'call-loaded',
+          toolName: 'read',
+          quoteHash: quoteHash('loaded quote'),
+        },
+      ],
+    });
 
     const older = customEntry(
       STATE_CUSTOM_TYPE,
@@ -2266,6 +2337,34 @@ describe('Pi agent discovery capture', () => {
     await broken.command('status');
     expect(broken.notifyMessages().at(-1)).toContain('0 items');
     expect(broken.notifyMessages().at(-1)).toContain('degraded yes');
+
+    const invalidSpan = new FakePiHarness([
+      customEntry(STATE_CUSTOM_TYPE, {
+        schemaVersion: 4,
+        recovery: 'off',
+        extraction: 'off',
+        discovery: 'automatic',
+        items: [item('bad-span', 'Invalid span state')],
+        autoItemIds: [],
+        discoveryItemIds: ['bad-span'],
+        discoveryProvenance: {
+          'bad-span': [
+            {
+              toolCallId: 'call-invalid',
+              toolName: 'read',
+              quoteHash: quoteHash('invalid span'),
+              span: { startOffset: -1, endOffset: 4 },
+            },
+          ],
+        },
+      }),
+    ]);
+    await invalidSpan.start();
+    expect(invalidSpan.notifications).toHaveLength(1);
+    expect(invalidSpan.notifyMessages()[0]).toContain('discarded');
+    await invalidSpan.command('status');
+    expect(invalidSpan.notifyMessages().at(-1)).toContain('0 items');
+    expect(invalidSpan.notifyMessages().at(-1)).toContain('degraded yes');
   });
 
   it('keeps failures quiet for the turn and discards stale shutdown results', async () => {

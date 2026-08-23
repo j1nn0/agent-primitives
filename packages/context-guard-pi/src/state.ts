@@ -11,6 +11,7 @@ import type {
   PersistedStateV1,
   PersistedStateV2,
   PersistedStateV3,
+  PersistedStateV4,
   RecoveryMode,
   RuntimeState,
 } from './types.js';
@@ -40,6 +41,18 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 }
 
+function isDiscoveryEvidenceSpan(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.startOffset === 'number' &&
+    typeof value.endOffset === 'number' &&
+    Number.isInteger(value.startOffset) &&
+    Number.isInteger(value.endOffset) &&
+    value.startOffset >= 0 &&
+    value.endOffset > value.startOffset
+  );
+}
+
 function isDiscoveryProvenanceReference(
   value: unknown,
 ): value is DiscoveryProvenance {
@@ -47,7 +60,9 @@ function isDiscoveryProvenanceReference(
     isRecord(value) &&
     typeof value.toolCallId === 'string' &&
     typeof value.toolName === 'string' &&
-    typeof value.quoteHash === 'string'
+    typeof value.quoteHash === 'string' &&
+    (!Object.prototype.hasOwnProperty.call(value, 'span') ||
+      isDiscoveryEvidenceSpan(value.span))
   );
 }
 
@@ -98,6 +113,20 @@ function isPersistedStateV3Shape(value: unknown): value is PersistedStateV3 {
   );
 }
 
+function isPersistedStateV4Shape(value: unknown): value is PersistedStateV4 {
+  return (
+    isRecord(value) &&
+    value.schemaVersion === 4 &&
+    isRecoveryMode(value.recovery) &&
+    isExtractionMode(value.extraction) &&
+    isDiscoveryMode(value.discovery) &&
+    Array.isArray(value.items) &&
+    isStringArray(value.autoItemIds) &&
+    isStringArray(value.discoveryItemIds) &&
+    isDiscoveryProvenance(value.discoveryProvenance)
+  );
+}
+
 function emptyDiscoveryProvenance(): Map<
   string,
   readonly DiscoveryProvenance[]
@@ -105,17 +134,32 @@ function emptyDiscoveryProvenance(): Map<
   return new Map<string, readonly DiscoveryProvenance[]>();
 }
 
+function copyDiscoveryProvenance(
+  reference: DiscoveryProvenance,
+): DiscoveryProvenance {
+  if (reference.span === undefined) {
+    return {
+      toolCallId: reference.toolCallId,
+      toolName: reference.toolName,
+      quoteHash: reference.quoteHash,
+    };
+  }
+  return {
+    toolCallId: reference.toolCallId,
+    toolName: reference.toolName,
+    quoteHash: reference.quoteHash,
+    span: { ...reference.span },
+  };
+}
+
 function discoveryProvenanceForState(
-  data: PersistedStateV3,
+  data: PersistedStateV3 | PersistedStateV4,
   guard: RuntimeState['guard'],
 ): Map<string, readonly DiscoveryProvenance[]> {
   const provenance = emptyDiscoveryProvenance();
   for (const [id, references] of Object.entries(data.discoveryProvenance)) {
     if (guard.has(id)) {
-      provenance.set(
-        id,
-        references.map((reference) => ({ ...reference })),
-      );
+      provenance.set(id, references.map(copyDiscoveryProvenance));
     }
   }
   return provenance;
@@ -153,7 +197,7 @@ export function loadState(
 
   try {
     const data = latestStateEntry.data;
-    if (isPersistedStateV3Shape(data)) {
+    if (isPersistedStateV4Shape(data) || isPersistedStateV3Shape(data)) {
       const guard = createContextGuard(
         data.items as readonly ContextItemInput[],
       );
@@ -238,14 +282,12 @@ export function saveState(
   for (const id of discoveryItemIds) {
     const references = state.discoveryProvenance.get(id);
     if (references !== undefined) {
-      discoveryProvenance[id] = references.map((reference) => ({
-        ...reference,
-      }));
+      discoveryProvenance[id] = references.map(copyDiscoveryProvenance);
     }
   }
 
   const payload: PersistedState = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     recovery: state.recovery,
     extraction: state.extraction,
     discovery: state.discovery,

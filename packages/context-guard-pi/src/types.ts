@@ -38,10 +38,23 @@ export interface PersistedStateV2 {
   readonly autoItemIds: readonly string[];
 }
 
+/**
+ * Half-open [startOffset, endOffset) in UTF-16 code units over the joined text
+ * blocks of one tool result: `event.content.filter(isTextBlock).map((block) =>
+ * block.text).join('')`. Changing the unit or normalizing the text would make
+ * persisted spans unresolvable.
+ */
+export interface DiscoveryEvidenceSpan {
+  readonly startOffset: number;
+  readonly endOffset: number;
+}
+
 export interface DiscoveryProvenance {
   readonly toolCallId: string;
   readonly toolName: string;
   readonly quoteHash: string;
+  /** Absent for provenance persisted before schema v4. */
+  readonly span?: DiscoveryEvidenceSpan;
 }
 
 export interface PersistedStateV3 {
@@ -55,8 +68,19 @@ export interface PersistedStateV3 {
   readonly discoveryProvenance: Readonly<Record<string, readonly DiscoveryProvenance[]>>;
 }
 
-/** New persisted state. The loader also accepts PersistedStateV1 and V2. */
-export type PersistedState = PersistedStateV3;
+export interface PersistedStateV4 {
+  readonly schemaVersion: 4;
+  readonly recovery: RecoveryMode;
+  readonly extraction: ExtractionMode;
+  readonly discovery: DiscoveryMode;
+  readonly items: readonly ContextItem[];
+  readonly autoItemIds: readonly string[];
+  readonly discoveryItemIds: readonly string[];
+  readonly discoveryProvenance: Readonly<Record<string, readonly DiscoveryProvenance[]>>;
+}
+
+/** New persisted state. The loader also accepts PersistedStateV1, V2, and V3. */
+export type PersistedState = PersistedStateV4;
 
 export type LastExtraction =
   | {

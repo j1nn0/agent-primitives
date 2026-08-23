@@ -11,6 +11,7 @@ import {
   isTextBlock,
   parseAssistantText,
 } from './extraction.js';
+import { concatenateEvidenceText } from './provenance.js';
 import {
   digest12,
   discoveryItemId,
@@ -249,11 +250,28 @@ function planMutation(
     for (const reference of candidate.evidence) {
       const source = evidenceById.get(reference.id);
       if (source !== undefined) {
-        references.push({
+        const baseReference: DiscoveryProvenance = {
           toolCallId: source.toolCallId,
           toolName: source.toolName,
           quoteHash: digest12(reference.quote),
-        });
+        };
+        const startOffset = source.text.indexOf(reference.quote);
+        if (startOffset === -1) {
+          // The parser's includes() gate should make this impossible. Keep
+          // the record without a bogus span if that invariant ever changes.
+          references.push(baseReference);
+        } else {
+          // Repeated quotes are ambiguous: indexOf records the first
+          // occurrence deterministically, but cannot recover which occurrence
+          // the model intended.
+          references.push({
+            ...baseReference,
+            span: {
+              startOffset,
+              endOffset: startOffset + reference.quote.length,
+            },
+          });
+        }
       }
     }
 
@@ -369,7 +387,7 @@ export function createDiscoveryController(
     if (textBlocks.length === 0) {
       return;
     }
-    const text = textBlocks.map((block) => block.text).join('');
+    const text = concatenateEvidenceText(event.content);
     if (text.length > MAX_EVIDENCE_TEXT_CODE_UNITS) {
       return;
     }

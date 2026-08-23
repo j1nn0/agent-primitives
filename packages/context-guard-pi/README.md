@@ -153,7 +153,7 @@ The `/context-guard list` output marks each line with `[manual]`, `[auto]`, or `
 
 ### Persistence and privacy
 
-Automatic extraction provenance is stored in the package's persisted state schema v3. The state stores the extraction mode and adapter-side `autoItemIds` provenance alongside the protected items and discovery metadata. A valid v1 state still loads normally, with extraction and discovery off and every loaded item treated as manual. A valid v2 state preserves extraction and automatic provenance while adding discovery off with empty discovery metadata; unknown automatic ids are ignored. A malformed latest state remains fail-safe and does not fall back to an older entry.
+Automatic extraction provenance is stored in the package's persisted state schema v4. The state stores the extraction mode and adapter-side `autoItemIds` provenance alongside the protected items and discovery metadata. A valid v1 state still loads normally, with extraction and discovery off and every loaded item treated as manual. A valid v2 state preserves extraction and automatic provenance while adding discovery off with empty discovery metadata; unknown automatic ids are ignored. A malformed latest state remains fail-safe and does not fall back to an older entry.
 
 On an eligible message, the provider receives the fixed extractor system prompt plus one user payload containing only:
 
@@ -240,13 +240,14 @@ Discovery is add-only. An existing item with the same kind and content is skippe
 
 ### Persistence and provenance
 
-Discovery uses persisted state schema v3. It stores the discovery mode, `discoveryItemIds`, and `discoveryProvenance` alongside the existing recovery, extraction, items, and `autoItemIds` fields. v1 and v2 entries still load normally rather than degraded: v1 turns both automatic modes off and treats every item as manual; v2 preserves extraction and automatic provenance while adding discovery off with empty discovery metadata. A valid v3 load drops discovery ids and provenance entries that refer to no current item; an invalid latest state still uses the existing fail-safe empty/degraded behavior without falling back to an older entry.
+Discovery uses persisted state schema v4. It stores the discovery mode, `discoveryItemIds`, and `discoveryProvenance` alongside the existing recovery, extraction, items, and `autoItemIds` fields. v1 and v2 entries still load normally rather than degraded: v1 turns both automatic modes off and treats every item as manual; v2 preserves extraction and automatic provenance while adding discovery off with empty discovery metadata. A valid v3 or v4 load drops discovery ids and provenance entries that refer to no current item. v3 provenance records remain valid without spans; v4 spans are validated. An invalid latest state still uses the existing fail-safe empty/degraded behavior without falling back to an older entry.
 
-For each registered discovery item, provenance stores only a small list of `toolCallId`, tool name, and a hash of each accepted quote. It stores **no raw evidence text and no quote text**. The session already retains the tool result, and duplicating it would increase session size and persist whatever the tool printed. Provenance is adapter-side; it is not a field on the core `ContextItem`. The Pi tool call id remains the evidence identity across resume, branch, and fork, so the provenance can still resolve to the session's tool result after a resume.
+For each registered discovery item, provenance stores only a small list of `toolCallId`, tool name, a hash of each accepted quote, and, in schema v4, a half-open UTF-16 code-unit span into the concatenated text blocks of one tool result. The raw quote is still never persisted. The recorded span is the first occurrence of the quote; when the quote occurs more than once, it does not identify which occurrence the model referenced. Resolution needs the matching tool result to be on the caller's current branch path. An unresolvable record means **cannot verify**, not **invalid**. The session already retains the tool result, and duplicating it would increase session size and persist whatever the tool printed. Provenance is adapter-side; it is not a field on the core `ContextItem`. The Pi tool call id remains the evidence identity across resume, branch, and fork, subject to the current branch containing the tool result.
 
 ### Measured smoke behavior
 
-The live smoke test measured these behaviors:
+The live smoke test measured these behaviors against schema v3, before evidence
+spans were added:
 
 - with discovery off, a turn that used tools made zero extra model calls;
 - with discovery automatic, reading one fixture file produced two evidence-backed facts, both registered critical, with provenance containing only the tool call id, tool name, and quote hash;
@@ -282,9 +283,9 @@ Pi `0.84.2` has no compaction-failure event. The extension therefore does not re
 
 ## Persistence
 
-Explicitly registered protected items, the recovery and extraction modes, the discovery mode, automatic provenance, and discovery provenance are persisted in the local Pi session as schema-v3 custom entries of type `agent-context-guard-state`. State is appended after each successful mutation and restored from the latest matching entry on `session_start`. Valid v1 and v2 entries still load normally: v1 has both automatic modes off and all items treated as manual, while v2 preserves extraction and automatic provenance and adds discovery off with empty discovery metadata. The latest matching entry is authoritative: if it is malformed, the extension starts with an empty registry, marks the state degraded, and shows a warning rather than falling back to an older valid entry.
+Explicitly registered protected items, the recovery and extraction modes, the discovery mode, automatic provenance, and discovery provenance are persisted in the local Pi session as schema-v4 custom entries of type `agent-context-guard-state`. State is appended after each successful mutation and restored from the latest matching entry on `session_start`. Valid v1 and v2 entries still load normally: v1 has both automatic modes off and all items treated as manual, while v2 preserves extraction and automatic provenance and adds discovery off with empty discovery metadata. The latest matching entry is authoritative: if it is malformed, the extension starts with an empty registry, marks the state degraded, and shows a warning rather than falling back to an older valid entry.
 
-Pending snapshots, pending verifications, the last-extraction summary, and the last-discovery summary are in-memory lifecycle state, not durable recovery records. Do not put secrets in protected items. Item content is stored in the local Pi session and may be shown by `/context-guard list` or included in an opted-in recovery message. Discovery provenance intentionally stores only tool call ids, tool names, and quote hashes; it does not duplicate evidence text.
+Pending snapshots, pending verifications, the last-extraction summary, and the last-discovery summary are in-memory lifecycle state, not durable recovery records. Do not put secrets in protected items. Item content is stored in the local Pi session and may be shown by `/context-guard list` or included in an opted-in recovery message. Discovery provenance intentionally stores only tool call ids, tool names, quote hashes, and UTF-16 spans; it does not duplicate evidence text.
 
 ## Privacy
 
@@ -305,7 +306,7 @@ The adapter has no telemetry or `console.*` output. With both automatic extracti
 
 ## Phase 1 scope
 
-Phase 1 provides a small Pi `0.84.2` extension with explicit protected-item commands, literal post-compaction verification, local schema-v3 session persistence, evidence-backed fact discovery off by default, counts-and-ids lifecycle reporting, and opt-in recovery for critical failures. It deliberately leaves semantic verification, discovery retirement, automatic recovery by default, other harness adapters, and an MCP adapter out of scope.
+Phase 1 provides a small Pi `0.84.2` extension with explicit protected-item commands, literal post-compaction verification, local schema-v4 session persistence, evidence-backed fact discovery off by default, counts-and-ids lifecycle reporting, and opt-in recovery for critical failures. It deliberately leaves semantic verification, discovery retirement, automatic recovery by default, other harness adapters, and an MCP adapter out of scope.
 
 ## Troubleshooting
 
