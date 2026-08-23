@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { FakePiHarness } from './harness.js';
+import { STATE_CUSTOM_TYPE } from '../src/state.js';
+import type { PersistedStateV5 } from '../src/types.js';
 import {
   collectDiscoveryAnchors,
   findSupersessionCandidates,
@@ -257,6 +259,59 @@ describe('discovery candidates command', () => {
     return harness;
   }
 
+  type CandidateMessage = Parameters<FakePiHarness['setBranch']>[0][number];
+
+  function persistedItem(
+    id: string,
+    content: string,
+    kind: 'fact' | 'constraint' = 'fact',
+  ): PersistedStateV5['items'][number] {
+    return { id, kind, content, critical: true };
+  }
+
+  function candidateStateEntry(data: PersistedStateV5): CandidateMessage {
+    return {
+      id: 'candidate-state',
+      type: 'custom',
+      customType: STATE_CUSTOM_TYPE,
+      data,
+    } as unknown as CandidateMessage;
+  }
+
+  async function harnessWithState(
+    items: readonly PersistedStateV5['items'][number][],
+    discoveryItemIds: readonly string[],
+    autoItemIds: readonly string[] = [],
+  ): Promise<FakePiHarness> {
+    const state: PersistedStateV5 = {
+      schemaVersion: 5,
+      recovery: 'critical',
+      extraction: 'off',
+      discovery: 'automatic',
+      items: [...items],
+      autoItemIds: [...autoItemIds],
+      discoveryItemIds: [...discoveryItemIds],
+      discoveryProvenance: Object.fromEntries(
+        discoveryItemIds.map((id) => [id, []]),
+      ),
+      discoveryLifecycle: Object.fromEntries(
+        discoveryItemIds.map((id) => [
+          id,
+          {
+            status: 'active' as const,
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+          },
+        ]),
+      ),
+    };
+    const harness = new FakePiHarness([
+      candidateStateEntry(state),
+    ] as unknown as readonly CandidateMessage[]);
+    await harness.start();
+    return harness;
+  }
+
   function lastMessage(harness: FakePiHarness): string {
     return harness.notifyMessages().at(-1) ?? '';
   }
@@ -398,5 +453,68 @@ describe('discovery candidates command', () => {
     expect(lastMessage(harness)).toBe(
       `Context Guard: discovery '${first ?? ''}' superseded by '${second ?? ''}'.`,
     );
+  });
+
+  it('lists both anchors once for a pair sharing two anchors', async () => {
+    const first =
+      'Cache marker CACHE-42-OMEGA is stored at /var/lib/novacache/index.db.';
+    const second =
+      'Cache marker CACHE-42-OMEGA was moved to /var/lib/novacache/index.db.';
+    const harness = await harnessWithFacts(first, second);
+
+    await harness.command('discovery candidates');
+    const message = lastMessage(harness);
+
+    expect(
+      message.split('\n').filter((line) => line.startsWith('Shared anchors:')),
+    ).toEqual([
+      'Shared anchors: path /var/lib/novacache/index.db, opaque-id CACHE-42-OMEGA',
+    ]);
+  });
+
+  it('excludes an extracted automatic item sharing an anchor', async () => {
+    const harness = await harnessWithState(
+      [
+        persistedItem('discovery-one', SHARD_A),
+        persistedItem('auto-one', SHARD_B, 'constraint'),
+      ],
+      ['discovery-one'],
+      ['auto-one'],
+    );
+
+    await harness.command('discovery candidates');
+
+    expect(lastMessage(harness)).toBe(
+      'Context Guard: no discovery supersession candidates.',
+    );
+  });
+
+  it('bounds output to ten groups and reports the total', async () => {
+    const items: PersistedStateV5['items'][number][] = [];
+    const discoveryItemIds: string[] = [];
+    for (let index = 0; index < 11; index += 1) {
+      const serial = String(index + 1).padStart(2, '0');
+      const anchor = `SHARD-${1000 + index}-NODE`;
+      const firstId = `candidate-${serial}-a`;
+      const secondId = `candidate-${serial}-b`;
+      items.push(
+        persistedItem(firstId, `Shard ${anchor} is assigned.`),
+        persistedItem(secondId, `Shard ${anchor} is accepted.`),
+      );
+      discoveryItemIds.push(firstId, secondId);
+    }
+    const harness = await harnessWithState(items, discoveryItemIds);
+
+    await harness.command('discovery candidates');
+    const message = lastMessage(harness);
+
+    expect(message).toContain(
+      'Context Guard: 11 discovery supersession candidate groups.',
+    );
+    expect(message).toContain('Showing 10 of 11 candidate groups.');
+    expect(
+      message.split('\n').filter((line) => line.startsWith('Shared anchors:')),
+    ).toHaveLength(10);
+    expect(message).not.toContain('SHARD-1010-NODE');
   });
 });
