@@ -91,8 +91,8 @@ The supported item kinds are `goal`, `constraint`, `requirement`, `decision`, an
 | `/context-guard recovery [off\|critical]` | Sets recovery to `off` or `critical`. One of those two arguments is required; an omitted or invalid value shows usage. |
 | `/context-guard extraction [off\|automatic]` | With no argument, prints the current extraction mode. With `off` or `automatic`, disables or enables automatic extraction. An invalid value shows usage. |
 | `/context-guard discovery [off\|automatic]` | With no argument, prints the current discovery mode. With `off` or `automatic`, disables or enables agent discovery capture. An invalid value shows usage. |
-| `/context-guard discovery retire <id>` | Marks one discovery as no longer authoritative. Nothing is deleted and the item stays verifiable; it simply stops being recovered. Rejects an unknown id, a manual or extracted item, and an already retired discovery, without changing state. |
-| `/context-guard discovery supersede <id> <supersededById>` | Records that a newer discovery replaced an older one. The older item becomes `superseded` and stops being recovered; the replacement must itself be an active discovery. Rejects an unknown id, a manual or extracted item, a discovery superseding itself, an inactive replacement, and an already superseded item, without changing state. |
+| `/context-guard discovery retire <id>` | Marks one discovery as no longer authoritative. Nothing is deleted and the item stays verifiable; it simply stops being recovered. Rejects an unknown id, a manual or extracted item, and an already retired or superseded discovery, without changing state. |
+| `/context-guard discovery supersede <id> <supersededById>` | Records that a newer discovery replaced an older one. The older item becomes `superseded` and stops being recovered; the replacement must itself be an active discovery. Rejects an unknown id, a manual or extracted item, a discovery superseding itself, an inactive replacement, and an already retired or superseded subject, without changing state. |
 
 A successful add, remove, clear, recovery-mode change, extraction-mode change, discovery-mode change, retirement, or supersession is persisted and clears the pending pre-compaction snapshot. Automatic extraction and discovery mutations are also persisted and clear that snapshot. Duplicate adds, invalid commands, and an already-selected mode do not change state. Invalid syntax or an unknown kind reports usage without mutating the registry.
 
@@ -127,12 +127,18 @@ Only active discoveries are recoverable. A discovery someone retired or supersed
 A discovery carries a lifecycle record alongside its provenance, because being backed by evidence and being currently authoritative are different properties. `CACHE_DRIVER=redis` and `CACHE_DRIVER=valkey` can both be evidence-backed observations while only the later one still holds.
 
 - **`active`** — the default for a newly captured discovery, and what every discovery restored from an older schema becomes.
-- **`superseded`** — a newer discovery replaced it. The record keeps `supersededBy` so the replacement is nameable.
-- **`retired`** — it is no longer authoritative and no replacement is claimed.
+- **`superseded`** — a newer discovery replaced it. The record keeps `supersededBy` so the replacement is nameable; this status is terminal.
+- **`retired`** — it is no longer authoritative and no replacement is claimed; this status is terminal.
 
-Each record also stores `createdAt` and `updatedAt` as ISO 8601 timestamps. The status is the only thing that changes: nothing is deleted, provenance is preserved, and the item remains in the registry and in verification.
+Each record also stores `createdAt` (when the lifecycle record was first created or materialised) and `updatedAt` (when its lifecycle status last changed). `createdAt` is not evidence observation time, fact capture time for migrated rows, truth start time, or a freshness signal. The status is the only thing that changes: nothing is deleted, provenance is preserved, and the item remains in the registry and in verification.
 
 Both transitions are explicit operations. This package does not retire a discovery because it looks old, because it resembles another one, or because a model suggested it. Age is not staleness, similarity is not identity, and neither is something to infer silently on a user's behalf.
+
+A discovery restored from schema v3 or v4 has no persisted lifecycle, so one is materialised while loading. Its `createdAt` is therefore the time of that load, not the time the fact was captured, and nothing in the schema distinguishes a materialised record from a native one. That is the concrete reason these timestamps must not be read as freshness.
+
+`supersededBy` is a recorded reference, not a guaranteed-resolvable link. `/context-guard remove <id>` deletes an item and its own lifecycle record but does not rewrite records pointing at it, so a reference can legitimately name an item that is gone. Persisted state is validated structurally only: rejecting a dangling reference at load would turn a state produced by a supported command into an empty registry, which is worse than carrying a reference that no longer resolves.
+
+Persisted lifecycle records are validated per entry. An `active` or `retired` record must not carry `supersededBy`; a `superseded` record must carry one that is a non-empty string and is not its own id. A record failing those rules makes the whole state invalid, which takes the existing fail-safe path: an empty degraded registry with a warning, never a silent repair and never a fallback to an older entry.
 
 ## Automatic extraction
 
