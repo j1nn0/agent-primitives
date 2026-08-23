@@ -224,3 +224,70 @@ The summariser preserved all four claims in meaning but rewrote every one of the
 Backtick tolerance recovers none of these, because the rewriting is not decoration. A
 formatting-normalising policy is therefore worth only as much as the next summary's
 formatting happens to match, which is not something this package can rely on.
+
+
+## Discovery granularity benchmark
+
+This benchmark is an offline, synthetic measurement harness for testing discovery
+capture-granularity hypotheses without changing the production prompt, parser, or
+schema. `discovery-granularity-corpus.ts` supplies input-side scenarios with ordered
+`evidence`, exact `expectedClaims`, and evaluation-only fragmentation metadata. It
+covers independent, related-fragmentary, duplicate, complementary, and ambiguous
+observations across directory listings, package metadata, compiler configuration, CI,
+lifecycle code, test output, API configuration, Japanese evidence, and mixed-language
+evidence.
+
+`discovery-granularity-evaluate.ts` accepts recorded turns in this shape:
+
+```ts
+type RecordedTurnFact = {
+  content: string;
+  evidenceRefs: string[];
+};
+type CapturedTurn = {
+  turnIndex: number;
+  evidenceCount: number;
+  facts: RecordedTurnFact[];
+};
+```
+
+It reports facts per turn (including mean and median over zero-fact turns), facts per
+evidence unit, evidence amplification, exact-substring claim recall, and two hypothesis
+simulations: `capTailDrop(1|2|3|4)` and `oneFactPerToolCallId`. The cap simulation keeps
+the first facts in capture order and drops the tail. The model's returned add-array
+ordering has no documented contract, so this is an explicit capture-order caveat, not a
+production ordering claim. It also does not model the production atomic rule: a response
+with more than four facts rejects the entire response and persists nothing.
+
+`corpusInvariants()` checks only the input corpus: ids, category coverage, grouping
+metadata, and exact claim presence in concatenated evidence. It does not infer a model
+output or claim coverage from evidence alone. A turn that adds zero facts leaves no
+persisted discovery trace, so an offline recorded-turn dataset cannot observe those
+turns unless the recorder retains them separately.
+
+### Recorded live capture
+
+`discovery-granularity-recorded.ts` embeds an offline replay of 18 turns reconstructed from one real Pi session against a synthetic fixture repository, with the production discovery prompt unchanged. The privacy scrub keeps fact contents and local per-turn `eN` evidence references only; provider tool-call identifiers, quotes, hashes, spans, timestamps, URLs, transcripts, and absolute paths are excluded. Claim recall is not computed because a real recording has no evaluation-only ground-truth expected-claim labels. Pinned counts make the replay tamper-evident while keeping the measurement deterministic and provider-free.
+
+## Registry growth benchmark
+
+`registry-growth-evaluate.ts` measures inactive-discovery retention cost using plain
+objects with the schema-v5 persisted payload shape emitted by `saveState`: discovery
+items, `discoveryItemIds`, provenance, and lifecycle records are all retained. `buildRegistry(size, activeShare)` creates deterministic discovery-only contents of 80--300 characters,
+1--2 provenance references, and lifecycle timestamps derived from the item index; it
+uses no randomness and performs no merge, delete, or automatic supersession decision.
+
+`evaluateRegistryGrowth(sizes, activeShares)` returns one cell per size/share pair with
+`counts`, persisted `stateJsonBytes`, all-item `snapshotItems` and `snapshotJsonBytes`,
+verification finding counts, and `recoveryEligible`. The simulated post-compaction
+context contains every active content verbatim. Because every discovery is critical,
+each inactive item contributes one literal lost finding, active findings are zero, and
+only active items are recovery-eligible. JSON key insertion order is fixed to match the
+persisted state shape, making byte measurements deterministic. `retentionContribution`
+compares persisted bytes with the same-size all-active cell and reports inactive
+findings as a percentage of retained snapshot items; `inactiveShareOfFindings` is an
+existing-style `{ numerator, denominator, rate }` summary with an empty denominator
+reporting rate `1`.
+
+Both benchmarks are measurement-only. Their corpus annotations and derived metrics are
+never imported by `src/`, do not alter production behavior, and do not change schema v5.
