@@ -7,7 +7,7 @@ import type {
   PersistedStateV1,
   PersistedStateV2,
   PersistedStateV3,
-  PersistedStateV4,
+  PersistedStateV5,
 } from '../src/types.js';
 import {
   FakePiHarness,
@@ -167,10 +167,10 @@ function discoveryPayload(harness: FakePiHarness): {
   };
 }
 
-function latestV2State(harness: FakePiHarness): PersistedStateV4 {
+function latestV2State(harness: FakePiHarness): PersistedStateV5 {
   const state = latestState(harness);
-  expect(state.schemaVersion).toBe(4);
-  return state as PersistedStateV4;
+  expect(state.schemaVersion).toBe(5);
+  return state as PersistedStateV5;
 }
 
 async function invokeInput(
@@ -1300,7 +1300,7 @@ describe('Pi automatic extraction persistence and lifecycle', () => {
     );
     await invokeInput(original, automatic);
     const saved = latestV2State(original);
-    expect(saved.schemaVersion).toBe(4);
+    expect(saved.schemaVersion).toBe(5);
     expect(saved.extraction).toBe('automatic');
     expect(saved.autoItemIds).toEqual([automaticId('decision', automatic)]);
 
@@ -1836,7 +1836,7 @@ describe('Pi agent discovery capture', () => {
     const state = latestState(harness);
     const id = discoveryId('The read command returned version 1.2.');
 
-    expect(state.schemaVersion).toBe(4);
+    expect(state.schemaVersion).toBe(5);
     expect(state.discovery).toBe('automatic');
     expect(state.discoveryItemIds).toEqual([id]);
     expect(state.items).toEqual([
@@ -1872,7 +1872,7 @@ describe('Pi agent discovery capture', () => {
 
     await harness.command('list');
     const list = harness.notifyMessages().at(-1) ?? '';
-    expect(list).toContain(`[discovery]`);
+    expect(list).toContain(`[discovery active]`);
     expect(list).toContain('1 evidence reference');
     expect(list).toContain('read');
     expect(list).not.toContain('PRIVATE-IMAGE-TEXT');
@@ -2357,7 +2357,7 @@ describe('Pi agent discovery capture', () => {
     await loaded.start();
     expect(loaded.notifications).toHaveLength(0);
     await loaded.command('list');
-    expect(loaded.notifyMessages().at(-1)).toContain('[discovery]');
+    expect(loaded.notifyMessages().at(-1)).toContain('[discovery active]');
     expect(loaded.notifyMessages().at(-1)).toContain('read');
     expect(loaded.notifyMessages().at(-1)).not.toContain('private-tool');
     await loaded.command('status');

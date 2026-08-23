@@ -11,6 +11,10 @@ import {
   isTextBlock,
   parseAssistantText,
 } from './extraction.js';
+import {
+  copyDiscoveryLifecycle,
+  createDiscoveryLifecycle,
+} from './discovery-lifecycle.js';
 import { concatenateEvidenceText } from './provenance.js';
 import {
   digest12,
@@ -27,6 +31,7 @@ import {
 } from './request.js';
 import type {
   DiscoveryFailureKind,
+  DiscoveryLifecycle,
   DiscoveryProvenance,
   LastDiscovery,
   RuntimeState,
@@ -314,6 +319,10 @@ function applyMutation(
       references.map((reference) => ({ ...reference })),
     );
   }
+  const previousLifecycle = new Map<string, DiscoveryLifecycle>();
+  for (const [id, record] of state.discoveryLifecycle) {
+    previousLifecycle.set(id, copyDiscoveryLifecycle(record));
+  }
   const previousLastDiscovery = state.lastDiscovery;
 
   try {
@@ -324,6 +333,8 @@ function applyMutation(
       if (references !== undefined) {
         state.discoveryProvenance.set(item.id, references);
       }
+      // A newly captured fact is authoritative until someone says otherwise.
+      state.discoveryLifecycle.set(item.id, createDiscoveryLifecycle());
     }
     state.lastDiscovery = {
       status: 'success',
@@ -341,6 +352,10 @@ function applyMutation(
     state.discoveryProvenance.clear();
     for (const [id, references] of previousProvenance) {
       state.discoveryProvenance.set(id, references);
+    }
+    state.discoveryLifecycle.clear();
+    for (const [id, record] of previousLifecycle) {
+      state.discoveryLifecycle.set(id, record);
     }
     state.lastDiscovery = previousLastDiscovery;
     throw error;

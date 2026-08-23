@@ -4,7 +4,9 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from '@earendil-works/pi-coding-agent';
+import { copyDiscoveryLifecycle, createDiscoveryLifecycle } from './discovery-lifecycle.js';
 import type {
+  DiscoveryLifecycle,
   DiscoveryMode,
   DiscoveryProvenance,
   PersistedState,
@@ -12,6 +14,7 @@ import type {
   PersistedStateV2,
   PersistedStateV3,
   PersistedStateV4,
+  PersistedStateV5,
   RecoveryMode,
   RuntimeState,
 } from './types.js';
@@ -113,6 +116,27 @@ function isPersistedStateV3Shape(value: unknown): value is PersistedStateV3 {
   );
 }
 
+function isDiscoveryLifecycleRecord(
+  value: unknown,
+): value is DiscoveryLifecycle {
+  return (
+    isRecord(value) &&
+    (value.status === 'active' ||
+      value.status === 'superseded' ||
+      value.status === 'retired') &&
+    typeof value.createdAt === 'string' &&
+    typeof value.updatedAt === 'string' &&
+    (!Object.prototype.hasOwnProperty.call(value, 'supersededBy') ||
+      typeof value.supersededBy === 'string')
+  );
+}
+
+function isDiscoveryLifecycle(
+  value: unknown,
+): value is Readonly<Record<string, DiscoveryLifecycle>> {
+  return isRecord(value) && Object.values(value).every(isDiscoveryLifecycleRecord);
+}
+
 function isPersistedStateV4Shape(value: unknown): value is PersistedStateV4 {
   return (
     isRecord(value) &&
@@ -125,6 +149,50 @@ function isPersistedStateV4Shape(value: unknown): value is PersistedStateV4 {
     isStringArray(value.discoveryItemIds) &&
     isDiscoveryProvenance(value.discoveryProvenance)
   );
+}
+
+function isPersistedStateV5Shape(value: unknown): value is PersistedStateV5 {
+  return (
+    isRecord(value) &&
+    value.schemaVersion === 5 &&
+    isRecoveryMode(value.recovery) &&
+    isExtractionMode(value.extraction) &&
+    isDiscoveryMode(value.discovery) &&
+    Array.isArray(value.items) &&
+    isStringArray(value.autoItemIds) &&
+    isStringArray(value.discoveryItemIds) &&
+    isDiscoveryProvenance(value.discoveryProvenance) &&
+    isDiscoveryLifecycle(value.discoveryLifecycle)
+  );
+}
+
+function emptyDiscoveryLifecycle(): Map<string, DiscoveryLifecycle> {
+  return new Map<string, DiscoveryLifecycle>();
+}
+
+/**
+ * Restores lifecycle records for the discoveries still present in the guard.
+ * State written before schema v5 carries no lifecycle at all, so every
+ * discovery it holds comes back active: an older session must not lose
+ * recovery for facts nobody retired.
+ */
+function discoveryLifecycleForState(
+  data: PersistedStateV3 | PersistedStateV4 | PersistedStateV5,
+  discoveryItemIds: ReadonlySet<string>,
+): Map<string, DiscoveryLifecycle> {
+  const lifecycle = emptyDiscoveryLifecycle();
+  const persisted =
+    'discoveryLifecycle' in data ? data.discoveryLifecycle : undefined;
+  for (const id of discoveryItemIds) {
+    const record = persisted?.[id];
+    lifecycle.set(
+      id,
+      record === undefined
+        ? createDiscoveryLifecycle()
+        : copyDiscoveryLifecycle(record),
+    );
+  }
+  return lifecycle;
 }
 
 function emptyDiscoveryProvenance(): Map<
@@ -153,7 +221,7 @@ function copyDiscoveryProvenance(
 }
 
 function discoveryProvenanceForState(
-  data: PersistedStateV3 | PersistedStateV4,
+  data: PersistedStateV3 | PersistedStateV4 | PersistedStateV5,
   guard: RuntimeState['guard'],
 ): Map<string, readonly DiscoveryProvenance[]> {
   const provenance = emptyDiscoveryProvenance();
@@ -174,6 +242,7 @@ export function createEmptyState(): RuntimeState {
     autoItemIds: new Set<string>(),
     discoveryItemIds: new Set<string>(),
     discoveryProvenance: emptyDiscoveryProvenance(),
+    discoveryLifecycle: emptyDiscoveryLifecycle(),
     degraded: false,
     lastExtraction: undefined,
     lastDiscovery: undefined,
@@ -197,12 +266,19 @@ export function loadState(
 
   try {
     const data = latestStateEntry.data;
-    if (isPersistedStateV4Shape(data) || isPersistedStateV3Shape(data)) {
+    if (
+      isPersistedStateV5Shape(data) ||
+      isPersistedStateV4Shape(data) ||
+      isPersistedStateV3Shape(data)
+    ) {
       const guard = createContextGuard(
         data.items as readonly ContextItemInput[],
       );
       const autoItemIds = new Set<string>(
         data.autoItemIds.filter((id) => guard.has(id)),
+      );
+      const discoveryItemIds = new Set<string>(
+        data.discoveryItemIds.filter((id) => guard.has(id)),
       );
       return {
         guard,
@@ -210,10 +286,9 @@ export function loadState(
         extraction: data.extraction,
         discovery: data.discovery,
         autoItemIds,
-        discoveryItemIds: new Set<string>(
-          data.discoveryItemIds.filter((id) => guard.has(id)),
-        ),
+        discoveryItemIds,
         discoveryProvenance: discoveryProvenanceForState(data, guard),
+        discoveryLifecycle: discoveryLifecycleForState(data, discoveryItemIds),
         degraded: false,
         lastExtraction: undefined,
         lastDiscovery: undefined,
@@ -234,6 +309,7 @@ export function loadState(
         ),
         discoveryItemIds: new Set<string>(),
         discoveryProvenance: emptyDiscoveryProvenance(),
+        discoveryLifecycle: emptyDiscoveryLifecycle(),
         degraded: false,
         lastExtraction: undefined,
         lastDiscovery: undefined,
@@ -252,6 +328,7 @@ export function loadState(
         autoItemIds: new Set<string>(),
         discoveryItemIds: new Set<string>(),
         discoveryProvenance: emptyDiscoveryProvenance(),
+        discoveryLifecycle: emptyDiscoveryLifecycle(),
         degraded: false,
         lastExtraction: undefined,
         lastDiscovery: undefined,
@@ -286,8 +363,16 @@ export function saveState(
     }
   }
 
+  const discoveryLifecycle: Record<string, DiscoveryLifecycle> = {};
+  for (const id of discoveryItemIds) {
+    const record = state.discoveryLifecycle.get(id);
+    if (record !== undefined) {
+      discoveryLifecycle[id] = copyDiscoveryLifecycle(record);
+    }
+  }
+
   const payload: PersistedState = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     recovery: state.recovery,
     extraction: state.extraction,
     discovery: state.discovery,
@@ -295,6 +380,7 @@ export function saveState(
     autoItemIds: Array.from(state.autoItemIds).filter((id) => state.guard.has(id)),
     discoveryItemIds,
     discoveryProvenance,
+    discoveryLifecycle,
   };
   pi.appendEntry(STATE_CUSTOM_TYPE, payload);
   state.degraded = false;

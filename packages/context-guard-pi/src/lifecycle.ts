@@ -34,6 +34,12 @@ interface LifecycleDependencies {
   readonly pi: ExtensionAPI;
   readonly getGuard: () => ContextGuard;
   readonly getRecoveryMode: () => RecoveryMode;
+  /**
+   * Whether recovery may re-inject one item. Verification still reports every
+   * item honestly; this only decides what is worth putting back, so a
+   * discovery someone retired or superseded stops returning after compaction.
+   */
+  readonly isRecoverableItem: (itemId: string) => boolean;
 }
 
 export interface LifecycleController {
@@ -222,6 +228,9 @@ export function createLifecycle(
     }
 
     const criticalItems = report.criticalFailures.flatMap((itemId) => {
+      if (!dependencies.isRecoverableItem(itemId)) {
+        return [];
+      }
       const item = verification.snapshot.items.find(
         (candidate) => candidate.id === itemId,
       );

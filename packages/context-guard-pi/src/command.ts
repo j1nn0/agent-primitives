@@ -4,6 +4,13 @@ import type {
   ExtensionAPI,
   ExtensionCommandContext,
 } from '@earendil-works/pi-coding-agent';
+import {
+  discoveryStatus,
+  retireDiscovery,
+  supersedeDiscovery,
+  type DiscoveryLifecycleFailure,
+  type DiscoveryLifecycleResult,
+} from './discovery-lifecycle.js';
 import type {
   DiscoveryMode,
   ExtractionMode,
@@ -13,7 +20,7 @@ import type {
 } from './types.js';
 
 const USAGE =
-  'Usage: /context-guard add <id> <kind> [--critical] <content...> | list | remove <id> | clear [--yes] | status | recovery [off|critical] | extraction [off|automatic] | discovery [off|automatic]';
+  'Usage: /context-guard add <id> <kind> [--critical] <content...> | list | remove <id> | clear [--yes] | status | recovery [off|critical] | extraction [off|automatic] | discovery [off|automatic] | discovery retire <id> | discovery supersede <id> <supersededById>';
 const KINDS: readonly ContextItemKind[] = [
   'goal',
   'constraint',
@@ -118,7 +125,7 @@ function listItems(
   const lines = items.map((item) => {
     const critical = item.critical ? ', critical' : '';
     const provenance = state.discoveryItemIds.has(item.id)
-      ? 'discovery'
+      ? `discovery ${discoveryStatus(state, item.id)}`
       : state.autoItemIds.has(item.id)
         ? 'auto'
         : 'manual';
@@ -170,8 +177,14 @@ function showStatus(
   ).length;
   const manualCount = items.length - automaticCount - discoveryCount;
   const discoveryLabel = discoveryCount === 1 ? 'discovery' : 'discoveries';
+  const discoveryItems = items.filter((item) =>
+    state.discoveryItemIds.has(item.id),
+  );
+  const countByStatus = (status: string): number =>
+    discoveryItems.filter((item) => discoveryStatus(state, item.id) === status)
+      .length;
   const status = [
-    `Context Guard: ${items.length} items, ${criticalCount} critical, ${manualCount} manual, ${automaticCount} automatic, ${discoveryCount} ${discoveryLabel}, recovery ${state.recovery}, extraction ${state.extraction}, discovery ${state.discovery}, degraded ${state.degraded ? 'yes' : 'no'}.`,
+    `Context Guard: ${items.length} items, ${criticalCount} critical, ${manualCount} manual, ${automaticCount} automatic, ${discoveryCount} ${discoveryLabel} (${countByStatus('active')} active, ${countByStatus('superseded')} superseded, ${countByStatus('retired')} retired), recovery ${state.recovery}, extraction ${state.extraction}, discovery ${state.discovery}, degraded ${state.degraded ? 'yes' : 'no'}.`,
     extractionSummary(state),
     discoverySummary(state),
     verificationSummary(
@@ -231,6 +244,7 @@ function removeItem(
   state.autoItemIds.delete(id);
   state.discoveryItemIds.delete(id);
   state.discoveryProvenance.delete(id);
+  state.discoveryLifecycle.delete(id);
 
   controller.clearPendingSnapshot();
   controller.persist();
@@ -258,6 +272,7 @@ function clearItems(
   state.autoItemIds.clear();
   state.discoveryItemIds.clear();
   state.discoveryProvenance.clear();
+  state.discoveryLifecycle.clear();
   controller.persist();
   notify(ctx, `Context Guard: cleared ${count} protected item${count === 1 ? '' : 's'}.`);
 }
@@ -331,6 +346,82 @@ function changeDiscovery(
   notify(ctx, `Context Guard: discovery set to '${mode}'.`);
 }
 
+const LIFECYCLE_FAILURE_MESSAGES: Readonly<
+  Record<DiscoveryLifecycleFailure, string>
+> = {
+  'unknown-item': "Context Guard: item '%s' was not found.",
+  'not-a-discovery':
+    "Context Guard: item '%s' is not a discovery; only discoveries have a lifecycle.",
+  'same-item': 'Context Guard: a discovery cannot supersede itself.',
+  'already-retired': "Context Guard: discovery '%s' is already retired.",
+  'already-superseded': "Context Guard: discovery '%s' is already superseded.",
+  'target-not-active':
+    "Context Guard: discovery '%s' is not active and cannot supersede another.",
+};
+
+function notifyLifecycleFailure(
+  ctx: ExtensionCommandContext,
+  result: Extract<DiscoveryLifecycleResult, { ok: false }>,
+): void {
+  notify(
+    ctx,
+    LIFECYCLE_FAILURE_MESSAGES[result.failure].replace('%s', result.subject),
+    'warning',
+  );
+}
+
+function retireDiscoveryItem(
+  ctx: ExtensionCommandContext,
+  controller: CommandController,
+  value: string,
+): void {
+  const id = parseSingleArgument(value);
+  if (id === undefined) {
+    notify(ctx, 'Usage: /context-guard discovery retire <id>', 'warning');
+    return;
+  }
+
+  const state = controller.getState();
+  const result = retireDiscovery(state, id);
+  if (!result.ok) {
+    notifyLifecycleFailure(ctx, result);
+    return;
+  }
+
+  controller.clearPendingSnapshot();
+  controller.persist();
+  notify(ctx, `Context Guard: retired discovery '${id}'.`);
+}
+
+function supersedeDiscoveryItem(
+  ctx: ExtensionCommandContext,
+  controller: CommandController,
+  value: string,
+): void {
+  const match = /^(\S+)\s+(\S+)$/.exec(value.trim());
+  const id = match?.[1];
+  const supersededBy = match?.[2];
+  if (id === undefined || supersededBy === undefined) {
+    notify(
+      ctx,
+      'Usage: /context-guard discovery supersede <id> <supersededById>',
+      'warning',
+    );
+    return;
+  }
+
+  const state = controller.getState();
+  const result = supersedeDiscovery(state, id, supersededBy);
+  if (!result.ok) {
+    notifyLifecycleFailure(ctx, result);
+    return;
+  }
+
+  controller.clearPendingSnapshot();
+  controller.persist();
+  notify(ctx, `Context Guard: discovery '${id}' superseded by '${supersededBy}'.`);
+}
+
 async function handleCommand(
   args: string,
   ctx: ExtensionCommandContext,
@@ -379,13 +470,23 @@ async function handleCommand(
       }
       changeExtraction(ctx, controller, value);
       return;
-    case 'discovery':
+    case 'discovery': {
       if (value.trim().length === 0) {
         notify(ctx, `Context Guard: discovery is '${controller.getState().discovery}'.`);
         return;
       }
+      const operation = /^(\S+)(?:\s+([\s\S]*))?$/.exec(value.trimStart());
+      if (operation?.[1] === 'retire') {
+        retireDiscoveryItem(ctx, controller, operation[2] ?? '');
+        return;
+      }
+      if (operation?.[1] === 'supersede') {
+        supersedeDiscoveryItem(ctx, controller, operation[2] ?? '');
+        return;
+      }
       changeDiscovery(ctx, controller, value);
       return;
+    }
     default:
       notify(ctx, USAGE, 'warning');
   }

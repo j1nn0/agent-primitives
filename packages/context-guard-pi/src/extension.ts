@@ -4,6 +4,7 @@ import type {
   TurnEndEvent,
 } from '@earendil-works/pi-coding-agent';
 import { registerContextGuardCommand } from './command.js';
+import { isRecoverableItem } from './discovery-lifecycle.js';
 import { createDiscoveryController } from './discovery.js';
 import { createExtractionController } from './extraction.js';
 import { createLifecycle } from './lifecycle.js';
@@ -34,6 +35,8 @@ export default function registerContextGuardExtension(pi: ExtensionAPI): void {
     pi,
     getGuard: (): RuntimeState['guard'] => state.guard,
     getRecoveryMode: (): RecoveryMode => state.recovery,
+    isRecoverableItem: (itemId: string): boolean =>
+      isRecoverableItem(state, itemId),
   });
   const extraction = createExtractionController({
     getEpoch: (): number => sessionEpoch,

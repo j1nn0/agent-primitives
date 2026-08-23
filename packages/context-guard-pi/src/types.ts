@@ -68,6 +68,23 @@ export interface PersistedStateV3 {
   readonly discoveryProvenance: Readonly<Record<string, readonly DiscoveryProvenance[]>>;
 }
 
+/**
+ * Whether a captured discovery still carries authority. Evidence-backed and
+ * currently authoritative are different properties: a fact can stay perfectly
+ * supported by its evidence long after a newer observation replaced it.
+ */
+export type DiscoveryLifecycleStatus = 'active' | 'superseded' | 'retired';
+
+export interface DiscoveryLifecycle {
+  readonly status: DiscoveryLifecycleStatus;
+  /** ISO 8601 timestamp of first capture. */
+  readonly createdAt: string;
+  /** ISO 8601 timestamp of the last status change. */
+  readonly updatedAt: string;
+  /** Set only when status is 'superseded': the discovery id that replaced it. */
+  readonly supersededBy?: string;
+}
+
 export interface PersistedStateV4 {
   readonly schemaVersion: 4;
   readonly recovery: RecoveryMode;
@@ -79,8 +96,23 @@ export interface PersistedStateV4 {
   readonly discoveryProvenance: Readonly<Record<string, readonly DiscoveryProvenance[]>>;
 }
 
-/** New persisted state. The loader also accepts PersistedStateV1, V2, and V3. */
-export type PersistedState = PersistedStateV4;
+export interface PersistedStateV5 {
+  readonly schemaVersion: 5;
+  readonly recovery: RecoveryMode;
+  readonly extraction: ExtractionMode;
+  readonly discovery: DiscoveryMode;
+  readonly items: readonly ContextItem[];
+  readonly autoItemIds: readonly string[];
+  readonly discoveryItemIds: readonly string[];
+  readonly discoveryProvenance: Readonly<Record<string, readonly DiscoveryProvenance[]>>;
+  readonly discoveryLifecycle: Readonly<Record<string, DiscoveryLifecycle>>;
+}
+
+/**
+ * New persisted state. The loader also accepts PersistedStateV1 through V4;
+ * discoveries restored from those load as 'active'.
+ */
+export type PersistedState = PersistedStateV5;
 
 export type LastExtraction =
   | {
@@ -114,6 +146,7 @@ export interface RuntimeState {
   autoItemIds: Set<string>;
   discoveryItemIds: Set<string>;
   discoveryProvenance: Map<string, readonly DiscoveryProvenance[]>;
+  discoveryLifecycle: Map<string, DiscoveryLifecycle>;
   degraded: boolean;
   lastExtraction: LastExtraction | undefined;
   lastDiscovery: LastDiscovery | undefined;
