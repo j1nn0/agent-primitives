@@ -126,7 +126,9 @@ function isDiscoveryLifecycleRecord(
       value.status !== 'superseded' &&
       value.status !== 'retired') ||
     typeof value.createdAt !== 'string' ||
-    typeof value.updatedAt !== 'string'
+    value.createdAt.length === 0 ||
+    typeof value.updatedAt !== 'string' ||
+    value.updatedAt.length === 0
   ) {
     return false;
   }

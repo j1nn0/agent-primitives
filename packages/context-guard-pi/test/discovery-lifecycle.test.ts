@@ -127,6 +127,28 @@ function v5State(
   };
 }
 
+/**
+ * Rewrites the lifecycle timestamps of the single discovery in a v5 fixture.
+ * The contract is a non-empty string, so an empty one has to be rejected as a
+ * malformed record rather than treated as an unknown time.
+ */
+function withLifecycleTimestamps(
+  data: PersistedStateV5,
+  createdAt: string,
+  updatedAt: string,
+): PersistedStateV5 {
+  const record = data.discoveryLifecycle['discovery-old'];
+  if (record === undefined) {
+    throw new Error('The fixture must hold a discovery-old lifecycle record.');
+  }
+  return {
+    ...data,
+    discoveryLifecycle: {
+      'discovery-old': { ...record, createdAt, updatedAt },
+    },
+  };
+}
+
 async function harnessWithDiscoveries(
   ...ids: readonly string[]
 ): Promise<FakePiHarness> {
@@ -706,6 +728,14 @@ describe('discovery lifecycle persisted invariants', () => {
     [
       'superseded with its own key',
       v5State('superseded', 'discovery-old'),
+    ],
+    [
+      'an empty createdAt',
+      withLifecycleTimestamps(v5State('active'), '', '2026-01-02T00:00:00.000Z'),
+    ],
+    [
+      'an empty updatedAt',
+      withLifecycleTimestamps(v5State('active'), '2026-01-01T00:00:00.000Z', ''),
     ],
   ] as const)('discards %s and does not fall back', async (_name, data) => {
     const harness = new FakePiHarness([
