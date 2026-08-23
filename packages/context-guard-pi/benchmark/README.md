@@ -147,3 +147,80 @@ Copying evidence verbatim does not help, because the summarizer reformats regard
 
 `evidence-native` also produced context-free content such as `{"version":"3.7.1"}` where a
 single quote carried no scope, which is a regression the control does not have.
+
+
+## Discovery verification policy benchmark
+
+This benchmark keeps four propositions separate:
+
+- **A — context presence:** the registered claim is present in the post-compaction context given to the model.
+- **B — evidence resolvability:** the stored provenance can recover its quote from a tool result still reachable on the current branch.
+- **C — entailment:** the claim follows from that evidence.
+- **D — truth:** the claim remains true in the world.
+
+Verification answers only A. Branch reachability does not tell us what the model can see after compaction, and evidence resolution alone does not establish entailment or continuing truth.
+
+The synthetic benchmark compares five decisions:
+
+- **A, literal only:** the current production control; only a literal match is preserved, and every other result recovers.
+- **B, literal or evidence-resolvable:** a missing literal match with resolved evidence is marked `preserved` without recovery.
+- **C1:** uses `supported` for a missing literal match with resolved evidence and does not recover that case; other non-literal cases are `unknown` and recover.
+- **C2:** uses the same statuses as C1 but still recovers `supported` cases.
+- **D, backtick-tolerant literal:** removes U+0060 backticks from the item and context before calling the core literal verifier; it never uses evidence resolution.
+
+Here, `preserved` means the literal content remains in model-visible context. `supported` is not a claim about the model-visible context: it means only that the original evidence is still resolvable on the current branch.
+
+`unsafeNonRecovery` counts cases whose evaluation-only ground truth says the claim is absent from the context fixture but the policy does not recover. A candidate for adoption must have zero of these. `unnecessaryRecovery` counts cases whose fixture ground truth says the claim is present but the policy recovers anyway. Category breakdowns retain the case category for both metrics.
+
+`claimActuallyIncludedByFixture` is evaluation-only ground truth. Runtime cannot know it, so it must never enter a production payload, production decision, or production code. The corpus and every context, evidence record, and outcome in this benchmark are entirely synthetic.
+
+### Measured result
+
+All five decisions were run over the 30-case corpus. No policy was adopted; production
+still verifies discovery items with the core literal verifier alone.
+
+| metric | A | B | C1 | C2 | D |
+| --- | --- | --- | --- | --- | --- |
+| `preserved` | 4 | 21 | 4 | 4 | 7 |
+| `supported` | 0 | 0 | 17 | 17 | 0 |
+| `lost` | 26 | 9 | 0 | 0 | 23 |
+| `unknown` | 0 | 0 | 9 | 9 | 0 |
+| `recoveryCount` | 26 | 9 | 9 | 26 | 23 |
+| **`unsafeNonRecovery`** | **0** | **8** | **8** | **0** | **0** |
+| `unnecessaryRecovery` | 9 | 0 | 0 | 9 | 6 |
+
+Evidence resolution over the corpus: 21 of 30 `resolved`, 3 `unavailable`, 4 `invalid`,
+2 `legacy-unresolvable`.
+
+B and C1 fail the safety requirement. Their eight unsafe non-recoveries are three
+`claim-omitted`, three `claim-omitted-evidence-present`, one `multi-ref-all-resolve` and
+one `contradictory-later-evidence` — every case where the claim is gone from the context
+while the evidence still resolves. That is the whole problem in one line: a compaction
+does not delete tool-result entries, it only hides them from model context, so evidence
+resolution carries no information about whether the claim survived.
+
+C2 is safe but pointless: it recovers exactly the cases A recovers and leaves both metrics
+identical to the control, so it adds a status concept and buys nothing.
+
+D is safe and improves the control slightly, but only on the one formatting mode it
+targets. Its remaining unnecessary recoveries are two punctuation rewrites, three
+paraphrases and one non-backtick formatting change.
+
+### Real Pi observation
+
+A separate run captured four discovery facts from real tool evidence in one Pi session,
+then compacted twice. Across both compactions every discovery item was literally lost and
+had `resolved` evidence — the signal B and C1 depend on was constant at 100% while the
+literal signal was constant at 0%, so it could not have discriminated anything.
+
+The summariser preserved all four claims in meaning but rewrote every one of them:
+
+    registered  The artifact cache is stored at /var/lib/novacache/index.db.
+    summary     `cache.txt`: Cache path is `/var/lib/novacache/index.db`.
+
+    registered  Ledger version 2.3.0 runs with strict mode enabled.
+    summary     `ledger.txt`: Ledger v2.3.0 uses strict mode.
+
+Backtick tolerance recovers none of these, because the rewriting is not decoration. A
+formatting-normalising policy is therefore worth only as much as the next summary's
+formatting happens to match, which is not something this package can rely on.
