@@ -75,7 +75,7 @@ pi install -l npm:@j1nn0/agent-context-guard-pi
 The extension registers the `/context-guard` command. Its complete usage is:
 
 ```text
-Usage: /context-guard add <id> <kind> [--critical] <content...> | list | remove <id> | clear [--yes] | status | recovery [off|critical] | extraction [off|automatic] | discovery [off|automatic]
+Usage: /context-guard add <id> <kind> [--critical] <content...> | list | remove <id> | clear [--yes] | status | recovery [off|critical] | extraction [off|automatic] | discovery [off|automatic] | discovery retire <id> | discovery supersede <id> <supersededById>
 ```
 
 The supported item kinds are `goal`, `constraint`, `requirement`, `decision`, and `fact`. Automatic extraction uses only `goal`, `constraint`, `requirement`, and `decision`; it never creates `fact` items.
@@ -83,16 +83,18 @@ The supported item kinds are `goal`, `constraint`, `requirement`, `decision`, an
 | Command | Behaviour |
 | --- | --- |
 | `/context-guard add <id> <kind> [--critical] <content...>` | Adds one protected item. `<id>` and `<kind>` are single non-whitespace arguments. Put `--critical` before the content to include the item in critical-failure recovery. The remaining content must be non-empty and is stored as entered, except that one trailing ASCII space is removed. A duplicate id is rejected. |
-| `/context-guard list` | Lists the registered items, including their ids, `[manual]`, `[auto]`, or `[discovery]` provenance markers, kinds, critical markers, and content. Discovery items may also show their evidence-reference count and tool names; quotes are never shown. It accepts no extra arguments. |
+| `/context-guard list` | Lists the registered items, including their ids, `[manual]`, `[auto]`, or `[discovery <status>]` provenance markers, kinds, critical markers, and content. Discovery items may also show their evidence-reference count and tool names; quotes are never shown. It accepts no extra arguments. |
 | `/context-guard remove <id>` | Removes one item by id and accepts exactly one id. |
 | `/context-guard clear` | Does not delete anything. It shows the number of items that would be deleted and asks you to run `/context-guard clear --yes`. |
 | `/context-guard clear --yes` | Deletes all protected items after explicit confirmation. `--yes` must be the complete argument. |
-| `/context-guard status` | Shows item, critical, manual, automatic, and discovery counts; recovery, extraction, and discovery modes; degraded-state status; the last-extraction and last-discovery summaries; and the latest verification summary. It accepts no extra arguments. |
+| `/context-guard status` | Shows item, critical, manual, automatic, and discovery counts including the active, superseded, and retired discovery breakdown; recovery, extraction, and discovery modes; degraded-state status; the last-extraction and last-discovery summaries; and the latest verification summary. It accepts no extra arguments. |
 | `/context-guard recovery [off\|critical]` | Sets recovery to `off` or `critical`. One of those two arguments is required; an omitted or invalid value shows usage. |
 | `/context-guard extraction [off\|automatic]` | With no argument, prints the current extraction mode. With `off` or `automatic`, disables or enables automatic extraction. An invalid value shows usage. |
 | `/context-guard discovery [off\|automatic]` | With no argument, prints the current discovery mode. With `off` or `automatic`, disables or enables agent discovery capture. An invalid value shows usage. |
+| `/context-guard discovery retire <id>` | Marks one discovery as no longer authoritative. Nothing is deleted and the item stays verifiable; it simply stops being recovered. Rejects an unknown id, a manual or extracted item, and an already retired discovery, without changing state. |
+| `/context-guard discovery supersede <id> <supersededById>` | Records that a newer discovery replaced an older one. The older item becomes `superseded` and stops being recovered; the replacement must itself be an active discovery. Rejects an unknown id, a manual or extracted item, a discovery superseding itself, an inactive replacement, and an already superseded item, without changing state. |
 
-A successful add, remove, clear, recovery-mode change, extraction-mode change, or discovery-mode change is persisted and clears the pending pre-compaction snapshot. Automatic extraction and discovery mutations are also persisted and clear that snapshot. Duplicate adds, invalid commands, and an already-selected mode do not change state. Invalid syntax or an unknown kind reports usage without mutating the registry.
+A successful add, remove, clear, recovery-mode change, extraction-mode change, discovery-mode change, retirement, or supersession is persisted and clears the pending pre-compaction snapshot. Automatic extraction and discovery mutations are also persisted and clear that snapshot. Duplicate adds, invalid commands, and an already-selected mode do not change state. Invalid syntax or an unknown kind reports usage without mutating the registry.
 
 ### Worked example
 
@@ -117,6 +119,20 @@ To opt in to restoration of critical failures:
 - **`critical`:** after verification, select only the ids in `report.criticalFailures`. For those ids, the extension takes content from the pre-compaction snapshot and creates one hidden custom recovery message. The message is returned for the imminent context and is also sent to Pi for persistence after the handler returns.
 
 Recovery is one message per compaction. It does not fire twice for the same compaction, and a later compaction can recover again. If there are no critical failures, no recovery message is created.
+
+Only active discoveries are recoverable. A discovery someone retired or superseded is still verified and still reported honestly, but recovery leaves it out: an item that is no longer authoritative should not be pushed back into the model's context. Manual and extracted items are never filtered this way — their recovery semantics are unchanged.
+
+## Discovery lifecycle
+
+A discovery carries a lifecycle record alongside its provenance, because being backed by evidence and being currently authoritative are different properties. `CACHE_DRIVER=redis` and `CACHE_DRIVER=valkey` can both be evidence-backed observations while only the later one still holds.
+
+- **`active`** — the default for a newly captured discovery, and what every discovery restored from an older schema becomes.
+- **`superseded`** — a newer discovery replaced it. The record keeps `supersededBy` so the replacement is nameable.
+- **`retired`** — it is no longer authoritative and no replacement is claimed.
+
+Each record also stores `createdAt` and `updatedAt` as ISO 8601 timestamps. The status is the only thing that changes: nothing is deleted, provenance is preserved, and the item remains in the registry and in verification.
+
+Both transitions are explicit operations. This package does not retire a discovery because it looks old, because it resembles another one, or because a model suggested it. Age is not staleness, similarity is not identity, and neither is something to infer silently on a user's behalf.
 
 ## Automatic extraction
 
@@ -153,7 +169,7 @@ The `/context-guard list` output marks each line with `[manual]`, `[auto]`, or `
 
 ### Persistence and privacy
 
-Automatic extraction provenance is stored in the package's persisted state schema v4. The state stores the extraction mode and adapter-side `autoItemIds` provenance alongside the protected items and discovery metadata. A valid v1 state still loads normally, with extraction and discovery off and every loaded item treated as manual. A valid v2 state preserves extraction and automatic provenance while adding discovery off with empty discovery metadata; unknown automatic ids are ignored. A malformed latest state remains fail-safe and does not fall back to an older entry.
+Automatic extraction provenance is stored in the package's persisted state schema v5. The state stores the extraction mode and adapter-side `autoItemIds` provenance alongside the protected items and discovery metadata. A valid v1 state still loads normally, with extraction and discovery off and every loaded item treated as manual. A valid v2 state preserves extraction and automatic provenance while adding discovery off with empty discovery metadata; unknown automatic ids are ignored. A malformed latest state remains fail-safe and does not fall back to an older entry.
 
 On an eligible message, the provider receives the fixed extractor system prompt plus one user payload containing only:
 
@@ -246,9 +262,9 @@ Discovery is add-only. An existing item with the same kind and content is skippe
 
 ### Persistence and provenance
 
-Discovery uses persisted state schema v4. It stores the discovery mode, `discoveryItemIds`, and `discoveryProvenance` alongside the existing recovery, extraction, items, and `autoItemIds` fields. v1 and v2 entries still load normally rather than degraded: v1 turns both automatic modes off and treats every item as manual; v2 preserves extraction and automatic provenance while adding discovery off with empty discovery metadata. A valid v3 or v4 load drops discovery ids and provenance entries that refer to no current item. v3 provenance records remain valid without spans; v4 spans are validated. An invalid latest state still uses the existing fail-safe empty/degraded behavior without falling back to an older entry.
+Discovery uses persisted state schema v5. It stores the discovery mode, `discoveryItemIds`, `discoveryProvenance`, and `discoveryLifecycle` alongside the existing recovery, extraction, items, and `autoItemIds` fields. v1 and v2 entries still load normally rather than degraded: v1 turns both automatic modes off and treats every item as manual; v2 preserves extraction and automatic provenance while adding discovery off with empty discovery metadata. A valid v3, v4 or v5 load drops discovery ids, provenance, and lifecycle entries that refer to no current item. v3 provenance records remain valid without spans; v4 and v5 spans are validated. A discovery restored from v3 or v4 has no persisted lifecycle and comes back active, so an older session never silently loses recovery. An invalid latest state still uses the existing fail-safe empty/degraded behavior without falling back to an older entry.
 
-For each registered discovery item, provenance stores only a small list of `toolCallId`, tool name, a hash of each accepted quote, and, in schema v4, a half-open UTF-16 code-unit span into the concatenated text blocks of one tool result. The raw quote is still never persisted. The recorded span is the first occurrence of the quote; when the quote occurs more than once, it does not identify which occurrence the model referenced. Resolution needs the matching tool result to be on the caller's current branch path. An unresolvable record means **cannot verify**, not **invalid**. The session already retains the tool result, and duplicating it would increase session size and persist whatever the tool printed. Provenance is adapter-side; it is not a field on the core `ContextItem`. The Pi tool call id remains the evidence identity across resume, branch, and fork, subject to the current branch containing the tool result.
+For each registered discovery item, provenance stores only a small list of `toolCallId`, tool name, a hash of each accepted quote, and, since schema v4, a half-open UTF-16 code-unit span into the concatenated text blocks of one tool result. The raw quote is still never persisted. The recorded span is the first occurrence of the quote; when the quote occurs more than once, it does not identify which occurrence the model referenced. Resolution needs the matching tool result to be on the caller's current branch path. An unresolvable record means **cannot verify**, not **invalid**. The session already retains the tool result, and duplicating it would increase session size and persist whatever the tool printed. Provenance is adapter-side; it is not a field on the core `ContextItem`. The Pi tool call id remains the evidence identity across resume, branch, and fork, subject to the current branch containing the tool result.
 
 ### Measured smoke behavior
 
@@ -265,7 +281,7 @@ spans were added:
 
 ### Limitations and secrets
 
-Discovery facts are model-synthesized and are therefore more prone to literal false-loss than user-quoted items when the core verifier checks them after compaction. Exact kind-plus-content deduplication does not recognize paraphrases: a re-phrased version of an existing fact is a new item. Phase 1 has no discovery retirement, conflict resolution, or semantic deduplication; claims that are only true for a particular version, file, or command should carry that scope in their content.
+Discovery facts are model-synthesized and are therefore more prone to literal false-loss than user-quoted items when the core verifier checks them after compaction. Exact kind-plus-content deduplication does not recognize paraphrases: a re-phrased version of an existing fact is a new item. Retirement and supersession are explicit operations only: nothing retires a discovery on its own, and no similarity, age, or model judgement is consulted. There is no conflict resolution or semantic deduplication, so claims that are only true for a particular version, file, or command should carry that scope in their content.
 
 **Do not enable automatic discovery for workflows where tool output may expose secrets unless you accept that eligible evidence may be sent to the active model provider.** The measured 0-occurrence result is about adapter state, not prevention: the tool result still lives in the session and eligible text is intentionally sent to the active provider.
 
@@ -289,7 +305,7 @@ Pi `0.84.2` has no compaction-failure event. The extension therefore does not re
 
 ## Persistence
 
-Explicitly registered protected items, the recovery and extraction modes, the discovery mode, automatic provenance, and discovery provenance are persisted in the local Pi session as schema-v4 custom entries of type `agent-context-guard-state`. State is appended after each successful mutation and restored from the latest matching entry on `session_start`. Valid v1 and v2 entries still load normally: v1 has both automatic modes off and all items treated as manual, while v2 preserves extraction and automatic provenance and adds discovery off with empty discovery metadata. The latest matching entry is authoritative: if it is malformed, the extension starts with an empty registry, marks the state degraded, and shows a warning rather than falling back to an older valid entry.
+Explicitly registered protected items, the recovery and extraction modes, the discovery mode, automatic provenance, discovery provenance, and discovery lifecycle are persisted in the local Pi session as schema-v5 custom entries of type `agent-context-guard-state`. State is appended after each successful mutation and restored from the latest matching entry on `session_start`. Valid v1 and v2 entries still load normally: v1 has both automatic modes off and all items treated as manual, while v2 preserves extraction and automatic provenance and adds discovery off with empty discovery metadata. The latest matching entry is authoritative: if it is malformed, the extension starts with an empty registry, marks the state degraded, and shows a warning rather than falling back to an older valid entry.
 
 Pending snapshots, pending verifications, the last-extraction summary, and the last-discovery summary are in-memory lifecycle state, not durable recovery records. Do not put secrets in protected items. Item content is stored in the local Pi session and may be shown by `/context-guard list` or included in an opted-in recovery message. Discovery provenance intentionally stores only tool call ids, tool names, quote hashes, and UTF-16 spans; it does not duplicate evidence text.
 
@@ -306,13 +322,13 @@ The adapter has no telemetry or `console.*` output. With both automatic extracti
 - Recovery is limited to `report.criticalFailures`, uses the pre-compaction snapshot, and is disabled by default.
 - Discovery facts are model-synthesized, so they are more prone to literal false-loss than user-quoted items.
 - Discovery deduplication is exact kind-plus-content; a re-phrased version of an existing fact becomes a second item.
-- Phase 1 has no discovery retirement, conflict resolution, or semantic entailment check; version-scoped claims should carry their scope.
+- Discovery retirement is explicit only; there is no conflict resolution or semantic entailment check, and version-scoped claims should carry their scope.
 - Pi `0.84.2` does not expose a compaction-failure lifecycle event, so there is no failure-event handler.
 - The package is a Pi adapter only. It does not implement integrations for other agent harnesses or an MCP adapter.
 
 ## Phase 1 scope
 
-Phase 1 provides a small Pi `0.84.2` extension with explicit protected-item commands, literal post-compaction verification, local schema-v4 session persistence, evidence-backed fact discovery off by default, counts-and-ids lifecycle reporting, and opt-in recovery for critical failures. It deliberately leaves semantic verification, discovery retirement, automatic recovery by default, other harness adapters, and an MCP adapter out of scope.
+Phase 1 provides a small Pi `0.84.2` extension with explicit protected-item commands, literal post-compaction verification, local schema-v5 session persistence, evidence-backed fact discovery off by default, counts-and-ids lifecycle reporting, and opt-in recovery for critical failures. It deliberately leaves semantic verification, automatic retirement, automatic recovery by default, other harness adapters, and an MCP adapter out of scope.
 
 ## Troubleshooting
 
