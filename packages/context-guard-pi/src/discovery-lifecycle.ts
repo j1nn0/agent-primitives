@@ -121,8 +121,12 @@ export function retireDiscovery(
   if (failure !== undefined) {
     return { ok: false, failure, subject: itemId };
   }
-  if (discoveryStatus(state, itemId) === 'retired') {
+  const status = discoveryStatus(state, itemId);
+  if (status === 'retired') {
     return { ok: false, failure: 'already-retired', subject: itemId };
+  }
+  if (status === 'superseded') {
+    return { ok: false, failure: 'already-superseded', subject: itemId };
   }
 
   transition(state, itemId, { status: 'retired' });
@@ -147,15 +151,19 @@ export function supersedeDiscovery(
   if (failure !== undefined) {
     return { ok: false, failure, subject: itemId };
   }
+  const status = discoveryStatus(state, itemId);
+  if (status === 'retired') {
+    return { ok: false, failure: 'already-retired', subject: itemId };
+  }
+  if (status === 'superseded') {
+    return { ok: false, failure: 'already-superseded', subject: itemId };
+  }
   const targetFailure = requireDiscovery(state, supersededBy);
   if (targetFailure !== undefined) {
     return { ok: false, failure: targetFailure, subject: supersededBy };
   }
   if (discoveryStatus(state, supersededBy) !== 'active') {
     return { ok: false, failure: 'target-not-active', subject: supersededBy };
-  }
-  if (discoveryStatus(state, itemId) === 'superseded') {
-    return { ok: false, failure: 'already-superseded', subject: itemId };
   }
 
   transition(state, itemId, { status: 'superseded', supersededBy });

@@ -2,8 +2,10 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { FakePiHarness } from './harness.js';
 import { STATE_CUSTOM_TYPE } from '../src/state.js';
+import { createDiscoveryLifecycle } from '../src/discovery-lifecycle.js';
 import type {
   DiscoveryProvenance,
+  DiscoveryLifecycle,
   PersistedState,
   PersistedStateV1,
   PersistedStateV2,
@@ -377,12 +379,15 @@ describe('discovery lifecycle safety', () => {
     message: string,
   ): Promise<void> {
     const harness = await harnessWithDiscoveries('discovery-a', 'discovery-b');
+    await persistForInspection(harness);
+    const beforeLifecycle = lifecycleRecords(harness);
     const before = harness.appendedEntries.length;
 
     await harness.command(command);
 
     expect(harness.notifyMessages().at(-1)).toBe(message);
     expect(harness.appendedEntries).toHaveLength(before);
+    expect(lifecycleRecords(harness)).toEqual(beforeLifecycle);
   }
 
   it('rejects an unknown id without mutating state', async () => {
@@ -423,6 +428,7 @@ describe('discovery lifecycle safety', () => {
   it('refuses to retire the same discovery twice', async () => {
     const harness = await harnessWithDiscoveries('discovery-a');
     await harness.command('discovery retire discovery-a');
+    const beforeLifecycle = lifecycleRecords(harness);
     const before = harness.appendedEntries.length;
 
     await harness.command('discovery retire discovery-a');
@@ -431,11 +437,13 @@ describe('discovery lifecycle safety', () => {
       "Context Guard: discovery 'discovery-a' is already retired.",
     );
     expect(harness.appendedEntries).toHaveLength(before);
+    expect(lifecycleRecords(harness)).toEqual(beforeLifecycle);
   });
 
   it('refuses to supersede with an inactive discovery', async () => {
     const harness = await harnessWithDiscoveries('discovery-a', 'discovery-b');
     await harness.command('discovery retire discovery-b');
+    const beforeLifecycle = lifecycleRecords(harness);
     const before = harness.appendedEntries.length;
 
     await harness.command('discovery supersede discovery-a discovery-b');
@@ -444,6 +452,7 @@ describe('discovery lifecycle safety', () => {
       "Context Guard: discovery 'discovery-b' is not active and cannot supersede another.",
     );
     expect(harness.appendedEntries).toHaveLength(before);
+    expect(lifecycleRecords(harness)).toEqual(beforeLifecycle);
   });
 
   it('shows usage when an id is missing', async () => {
@@ -456,5 +465,351 @@ describe('discovery lifecycle safety', () => {
       'Usage: /context-guard discovery retire <id>',
     );
     expect(harness.appendedEntries).toHaveLength(before);
+  });
+});
+
+function lifecycleRecord(
+  harness: FakePiHarness,
+  id: string,
+): DiscoveryLifecycle {
+  const record = latestState(harness).discoveryLifecycle[id];
+  if (record === undefined) {
+    throw new Error(`Missing lifecycle record for '${id}'.`);
+  }
+  return record;
+}
+
+function lifecycleRecords(
+  harness: FakePiHarness,
+): Readonly<Record<string, DiscoveryLifecycle>> {
+  return latestState(harness).discoveryLifecycle;
+}
+
+async function persistForInspection(harness: FakePiHarness): Promise<void> {
+  await harness.command('recovery off');
+}
+
+async function expectLifecycleRejection(
+  harness: FakePiHarness,
+  command: string,
+  message: string,
+): Promise<void> {
+  const before = lifecycleRecords(harness);
+  const appendedEntries = harness.appendedEntries.length;
+
+  await harness.command(command);
+
+  expect(harness.notifyMessages().at(-1)).toBe(message);
+  expect(harness.appendedEntries).toHaveLength(appendedEntries);
+  expect(lifecycleRecords(harness)).toEqual(before);
+}
+
+describe('discovery lifecycle transition matrix', () => {
+  it('allows active to retire', async () => {
+    const harness = await harnessWithDiscoveries('discovery-a', 'discovery-b');
+    await persistForInspection(harness);
+    const before = lifecycleRecord(harness, 'discovery-a');
+    const appendedEntries = harness.appendedEntries.length;
+
+    await harness.command('discovery retire discovery-a');
+
+    const after = lifecycleRecord(harness, 'discovery-a');
+    expect(harness.notifyMessages().at(-1)).toBe(
+      'Context Guard: retired discovery \'discovery-a\'.',
+    );
+    expect(after.status).toBe('retired');
+    expect(after.createdAt).toBe(before.createdAt);
+    expect(after.updatedAt).not.toBe(before.updatedAt);
+    expect(after.updatedAt >= after.createdAt).toBe(true);
+    expect(harness.appendedEntries).toHaveLength(appendedEntries + 1);
+  });
+
+  it('allows active to supersede an active target', async () => {
+    const harness = await harnessWithDiscoveries('discovery-a', 'discovery-b');
+    await persistForInspection(harness);
+    const before = lifecycleRecord(harness, 'discovery-a');
+    const appendedEntries = harness.appendedEntries.length;
+
+    await harness.command('discovery supersede discovery-a discovery-b');
+
+    const after = lifecycleRecord(harness, 'discovery-a');
+    expect(harness.notifyMessages().at(-1)).toBe(
+      'Context Guard: discovery \'discovery-a\' superseded by \'discovery-b\'.',
+    );
+    expect(after.status).toBe('superseded');
+    expect(after.supersededBy).toBe('discovery-b');
+    expect(after.createdAt).toBe(before.createdAt);
+    expect(after.updatedAt).not.toBe(before.updatedAt);
+    expect(after.updatedAt >= after.createdAt).toBe(true);
+    expect(lifecycleRecord(harness, 'discovery-b').status).toBe('active');
+    expect(harness.appendedEntries).toHaveLength(appendedEntries + 1);
+  });
+
+  it('rejects retiring a retired discovery', async () => {
+    const harness = await harnessWithDiscoveries('discovery-a', 'discovery-b');
+    await persistForInspection(harness);
+    await harness.command('discovery retire discovery-a');
+
+    await expectLifecycleRejection(
+      harness,
+      'discovery retire discovery-a',
+      'Context Guard: discovery \'discovery-a\' is already retired.',
+    );
+  });
+
+  it('rejects superseding a retired discovery', async () => {
+    const harness = await harnessWithDiscoveries('discovery-a', 'discovery-b');
+    await persistForInspection(harness);
+    await harness.command('discovery retire discovery-a');
+
+    await expectLifecycleRejection(
+      harness,
+      'discovery supersede discovery-a discovery-b',
+      'Context Guard: discovery \'discovery-a\' is already retired.',
+    );
+  });
+
+  it('rejects retiring a superseded discovery', async () => {
+    const harness = await harnessWithDiscoveries('discovery-a', 'discovery-b');
+    await persistForInspection(harness);
+    await harness.command('discovery supersede discovery-a discovery-b');
+
+    await expectLifecycleRejection(
+      harness,
+      'discovery retire discovery-a',
+      'Context Guard: discovery \'discovery-a\' is already superseded.',
+    );
+  });
+
+  it('rejects superseding a superseded discovery', async () => {
+    const harness = await harnessWithDiscoveries(
+      'discovery-a',
+      'discovery-b',
+      'discovery-c',
+    );
+    await persistForInspection(harness);
+    await harness.command('discovery supersede discovery-a discovery-b');
+
+    await expectLifecycleRejection(
+      harness,
+      'discovery supersede discovery-a discovery-c',
+      'Context Guard: discovery \'discovery-a\' is already superseded.',
+    );
+  });
+
+  it('rejects retiring a superseded discovery without losing its replacement link', async () => {
+    const harness = await harnessWithDiscoveries('discovery-a', 'discovery-b');
+    await persistForInspection(harness);
+    await harness.command('discovery supersede discovery-a discovery-b');
+    const before = lifecycleRecord(harness, 'discovery-a');
+    const appendedEntries = harness.appendedEntries.length;
+
+    await harness.command('discovery retire discovery-a');
+
+    const after = lifecycleRecord(harness, 'discovery-a');
+    expect(harness.notifyMessages().at(-1)).toBe(
+      'Context Guard: discovery \'discovery-a\' is already superseded.',
+    );
+    expect(after.status).toBe(before.status);
+    expect(after.supersededBy).toBe('discovery-b');
+    expect(after.updatedAt).toBe(before.updatedAt);
+    expect(harness.appendedEntries).toHaveLength(appendedEntries);
+  });
+});
+
+describe('discovery lifecycle target validation', () => {
+  it('rejects a retired target without changing the active subject', async () => {
+    const harness = await harnessWithDiscoveries('discovery-a', 'discovery-b');
+    await persistForInspection(harness);
+    await harness.command('discovery retire discovery-b');
+
+    await expectLifecycleRejection(
+      harness,
+      'discovery supersede discovery-a discovery-b',
+      'Context Guard: discovery \'discovery-b\' is not active and cannot supersede another.',
+    );
+  });
+
+  it('rejects a superseded target without changing the active subject', async () => {
+    const harness = await harnessWithDiscoveries(
+      'discovery-a',
+      'discovery-b',
+      'discovery-c',
+    );
+    await persistForInspection(harness);
+    await harness.command('discovery supersede discovery-b discovery-c');
+
+    await expectLifecycleRejection(
+      harness,
+      'discovery supersede discovery-a discovery-b',
+      'Context Guard: discovery \'discovery-b\' is not active and cannot supersede another.',
+    );
+  });
+
+  it('rejects an unknown target without changing the active subject', async () => {
+    const harness = await harnessWithDiscoveries('discovery-a', 'discovery-b');
+    await persistForInspection(harness);
+
+    await expectLifecycleRejection(
+      harness,
+      'discovery supersede discovery-a nope',
+      'Context Guard: item \'nope\' was not found.',
+    );
+  });
+
+  it('rejects a discovery superseding itself without changing state', async () => {
+    const harness = await harnessWithDiscoveries('discovery-a', 'discovery-b');
+    await persistForInspection(harness);
+
+    await expectLifecycleRejection(
+      harness,
+      'discovery supersede discovery-a discovery-a',
+      'Context Guard: a discovery cannot supersede itself.',
+    );
+  });
+
+  it('validates an inactive subject before validating its replacement', async () => {
+    const harness = await harnessWithDiscoveries('discovery-a', 'discovery-b');
+    await persistForInspection(harness);
+    await harness.command('discovery retire discovery-a');
+
+    await expectLifecycleRejection(
+      harness,
+      'discovery supersede discovery-a nope',
+      'Context Guard: discovery \'discovery-a\' is already retired.',
+    );
+  });
+});
+
+describe('discovery lifecycle persisted invariants', () => {
+  it.each([
+    ['active', v5State('active')],
+    ['retired', v5State('retired')],
+    ['superseded', v5State('superseded', 'discovery-new')],
+  ] as const)('loads a valid %s lifecycle record', async (_name, data) => {
+    const harness = new FakePiHarness([
+      stateEntry(data),
+    ] as unknown as readonly CandidateMessage[]);
+    await harness.start();
+
+    expect(harness.notifyMessages().join('\n')).not.toContain('discarded');
+    await harness.command('status');
+    expect(harness.notifyMessages().at(-1)).toContain('2 items');
+    expect(harness.notifyMessages().at(-1)).toContain('degraded no');
+  });
+
+  it.each([
+    ['active with supersededBy', v5State('active', 'discovery-new')],
+    ['retired with supersededBy', v5State('retired', 'discovery-new')],
+    ['superseded without supersededBy', v5State('superseded')],
+    ['superseded with an empty supersededBy', v5State('superseded', '')],
+    [
+      'superseded with its own key',
+      v5State('superseded', 'discovery-old'),
+    ],
+  ] as const)('discards %s and does not fall back', async (_name, data) => {
+    const harness = new FakePiHarness([
+      stateEntry(v5State('active')),
+      stateEntry(data),
+    ] as unknown as readonly CandidateMessage[]);
+    await harness.start();
+
+    expect(harness.notifications).toHaveLength(1);
+    expect(harness.notifications[0]?.type).toBe('warning');
+    expect(harness.notifyMessages()[0]).toContain('discarded');
+    expect(harness.appendedEntries).toHaveLength(0);
+
+    await harness.command('list');
+    expect(harness.notifyMessages().at(-1)).toBe(
+      'Context Guard: no protected items.',
+    );
+    await harness.command('status');
+    expect(harness.notifyMessages().at(-1)).toContain('0 items');
+    expect(harness.notifyMessages().at(-1)).toContain('degraded yes');
+  });
+});
+
+describe('discovery lifecycle migration and timestamps', () => {
+  it('migrates a v3 discovery as active with provenance and saves schema 5', async () => {
+    const quote = 'Cache driver is redis.';
+    const v3: PersistedStateV3 = {
+      schemaVersion: 3,
+      recovery: 'critical',
+      extraction: 'off',
+      discovery: 'automatic',
+      items: [item('discovery-old', quote)] as PersistedStateV3['items'],
+      autoItemIds: [],
+      discoveryItemIds: ['discovery-old'],
+      discoveryProvenance: {
+        'discovery-old': [
+          {
+            toolCallId: 'call-1',
+            toolName: 'read',
+            quoteHash: quoteHash(quote),
+          },
+        ],
+      },
+    };
+    const harness = new FakePiHarness([
+      stateEntry(v3),
+    ] as unknown as readonly CandidateMessage[]);
+    await harness.start();
+
+    await harness.command('list');
+    expect(harness.notifyMessages().at(-1)).toContain('[discovery active]');
+    await harness.command('recovery off');
+    const saved = latestState(harness);
+    expect(saved.schemaVersion).toBe(5);
+    expect(saved.discoveryProvenance['discovery-old']).toEqual([
+      v3.discoveryProvenance['discovery-old']?.[0],
+    ]);
+    expect(saved.discoveryLifecycle['discovery-old']).toMatchObject({
+      status: 'active',
+    });
+    expect(saved.discoveryLifecycle['discovery-old']?.createdAt).toBe(
+      saved.discoveryLifecycle['discovery-old']?.updatedAt,
+    );
+  });
+
+  it('creates a new lifecycle record with matching timestamps', () => {
+    const lifecycle = createDiscoveryLifecycle();
+
+    expect(lifecycle.createdAt).toBe(lifecycle.updatedAt);
+  });
+
+  it('preserves lifecycle records, links, and timestamps on resume', async () => {
+    const harness = await harnessWithDiscoveries('discovery-a', 'discovery-b');
+    await persistForInspection(harness);
+    await harness.command('discovery supersede discovery-a discovery-b');
+    const before = lifecycleRecords(harness);
+
+    const resumed = new FakePiHarness(harness.getBranch());
+    await resumed.start();
+    await resumed.command('discovery off');
+
+    expect(lifecycleRecords(resumed)).toEqual(before);
+  });
+});
+
+describe('discovery lifecycle recovery policy', () => {
+  it('recovers active items in a mixed lifecycle without recovering inactive discoveries', async () => {
+    const harness = await harnessWithDiscoveries(
+      'discovery-retired',
+      'discovery-superseded',
+      'discovery-active',
+    );
+    await harness.command('discovery retire discovery-retired');
+    await harness.command(
+      'discovery supersede discovery-superseded discovery-active',
+    );
+
+    const content = recoveryContent(
+      await compactWithNothingPreserved(harness, 'cycle-mixed'),
+    );
+    expect(content).not.toContain('Fact for discovery-retired.');
+    expect(content).not.toContain('Fact for discovery-superseded.');
+    expect(content).toContain('Fact for discovery-active.');
+    expect(content).toContain('Keep the public API stable.');
+    expect(harness.notifyMessages().at(-1)).toContain('4 lost');
   });
 });

@@ -77,9 +77,13 @@ export type DiscoveryLifecycleStatus = 'active' | 'superseded' | 'retired';
 
 export interface DiscoveryLifecycle {
   readonly status: DiscoveryLifecycleStatus;
-  /** ISO 8601 timestamp of first capture. */
+  /**
+   * Timestamp when this lifecycle record was first created or materialised.
+   * This is not evidence observation time, fact capture time for migrated rows,
+   * truth start time, or a freshness signal.
+   */
   readonly createdAt: string;
-  /** ISO 8601 timestamp of the last status change. */
+  /** Timestamp when the lifecycle status last changed. */
   readonly updatedAt: string;
   /** Set only when status is 'superseded': the discovery id that replaced it. */
   readonly supersededBy?: string;

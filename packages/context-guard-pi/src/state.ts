@@ -118,23 +118,42 @@ function isPersistedStateV3Shape(value: unknown): value is PersistedStateV3 {
 
 function isDiscoveryLifecycleRecord(
   value: unknown,
+  key: string,
 ): value is DiscoveryLifecycle {
-  return (
-    isRecord(value) &&
-    (value.status === 'active' ||
-      value.status === 'superseded' ||
-      value.status === 'retired') &&
-    typeof value.createdAt === 'string' &&
-    typeof value.updatedAt === 'string' &&
-    (!Object.prototype.hasOwnProperty.call(value, 'supersededBy') ||
-      typeof value.supersededBy === 'string')
+  if (
+    !isRecord(value) ||
+    (value.status !== 'active' &&
+      value.status !== 'superseded' &&
+      value.status !== 'retired') ||
+    typeof value.createdAt !== 'string' ||
+    typeof value.updatedAt !== 'string'
+  ) {
+    return false;
+  }
+  const hasSupersededBy = Object.prototype.hasOwnProperty.call(
+    value,
+    'supersededBy',
   );
+  if (value.status === 'superseded') {
+    return (
+      hasSupersededBy &&
+      typeof value.supersededBy === 'string' &&
+      value.supersededBy.length > 0 &&
+      value.supersededBy !== key
+    );
+  }
+  return !hasSupersededBy;
 }
 
 function isDiscoveryLifecycle(
   value: unknown,
 ): value is Readonly<Record<string, DiscoveryLifecycle>> {
-  return isRecord(value) && Object.values(value).every(isDiscoveryLifecycleRecord);
+  return (
+    isRecord(value) &&
+    Object.entries(value).every(([key, record]) =>
+      isDiscoveryLifecycleRecord(record, key),
+    )
+  );
 }
 
 function isPersistedStateV4Shape(value: unknown): value is PersistedStateV4 {
