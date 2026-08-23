@@ -5,6 +5,11 @@ import type {
   ExtensionCommandContext,
 } from '@earendil-works/pi-coding-agent';
 import {
+  findSupersessionCandidates,
+  type DiscoveryAnchor,
+  type DiscoveryAnchorCategory,
+} from './discovery-candidates.js';
+import {
   discoveryStatus,
   retireDiscovery,
   supersedeDiscovery,
@@ -20,7 +25,7 @@ import type {
 } from './types.js';
 
 const USAGE =
-  'Usage: /context-guard add <id> <kind> [--critical] <content...> | list | remove <id> | clear [--yes] | status | recovery [off|critical] | extraction [off|automatic] | discovery [off|automatic] | discovery retire <id> | discovery supersede <id> <supersededById>';
+  'Usage: /context-guard add <id> <kind> [--critical] <content...> | list | remove <id> | clear [--yes] | status | recovery [off|critical] | extraction [off|automatic] | discovery [off|automatic] | discovery retire <id> | discovery supersede <id> <supersededById> | discovery candidates';
 const KINDS: readonly ContextItemKind[] = [
   'goal',
   'constraint',
@@ -422,6 +427,73 @@ function supersedeDiscoveryItem(
   notify(ctx, `Context Guard: discovery '${id}' superseded by '${supersededBy}'.`);
 }
 
+const CANDIDATE_CATEGORIES: readonly DiscoveryAnchorCategory[] = [
+  'path',
+  'opaque-id',
+  'versioned-subject',
+];
+
+/** At most this many groups are printed, so one command cannot flood the UI. */
+const MAX_CANDIDATE_GROUPS = 10;
+
+function formatAnchor(anchor: DiscoveryAnchor): string {
+  return `${anchor.category} ${anchor.value}`;
+}
+
+/**
+ * Suggests which active discoveries mention the same structured token. This is
+ * a suggestion, never a decision: a shared anchor is not shared meaning, so the
+ * command changes nothing and the user records any replacement themselves.
+ */
+function showCandidates(
+  ctx: ExtensionCommandContext,
+  controller: CommandController,
+): void {
+  const state = controller.getState();
+  const items = state.guard
+    .list()
+    .filter(
+      (item) =>
+        state.discoveryItemIds.has(item.id) &&
+        discoveryStatus(state, item.id) === 'active',
+    );
+  const contentById = new Map(items.map((item) => [item.id, item.content]));
+  const groups = findSupersessionCandidates(
+    items.map((item) => ({ id: item.id, content: item.content })),
+    CANDIDATE_CATEGORIES,
+  );
+
+  if (groups.length === 0) {
+    notify(ctx, 'Context Guard: no discovery supersession candidates.');
+    return;
+  }
+
+  const shown = groups.slice(0, MAX_CANDIDATE_GROUPS);
+  const lines = [
+    `Context Guard: ${groups.length} discovery supersession candidate group${groups.length === 1 ? '' : 's'}.`,
+  ];
+  for (const group of shown) {
+    lines.push(
+      '',
+      `Shared anchors: ${group.anchors.map(formatAnchor).join(', ')}`,
+      ...group.itemIds.map(
+        (id) => `  ${id}: ${contentById.get(id) ?? ''}`,
+      ),
+    );
+  }
+  if (groups.length > shown.length) {
+    lines.push(
+      '',
+      `Showing ${shown.length} of ${groups.length} candidate groups.`,
+    );
+  }
+  lines.push(
+    '',
+    'Nothing was changed. Run /context-guard discovery supersede <id> <supersededById> to record a replacement.',
+  );
+  notify(ctx, lines.join('\n'));
+}
+
 async function handleCommand(
   args: string,
   ctx: ExtensionCommandContext,
@@ -482,6 +554,14 @@ async function handleCommand(
       }
       if (operation?.[1] === 'supersede') {
         supersedeDiscoveryItem(ctx, controller, operation[2] ?? '');
+        return;
+      }
+      if (operation?.[1] === 'candidates') {
+        if ((operation[2] ?? '').trim().length !== 0) {
+          notify(ctx, 'Usage: /context-guard discovery candidates', 'warning');
+          return;
+        }
+        showCandidates(ctx, controller);
         return;
       }
       changeDiscovery(ctx, controller, value);
