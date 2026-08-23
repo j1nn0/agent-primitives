@@ -75,7 +75,7 @@ pi install -l npm:@j1nn0/agent-context-guard-pi
 The extension registers the `/context-guard` command. Its complete usage is:
 
 ```text
-Usage: /context-guard add <id> <kind> [--critical] <content...> | list | remove <id> | clear [--yes] | status | recovery [off|critical] | extraction [off|automatic] | discovery [off|automatic] | discovery retire <id> | discovery supersede <id> <supersededById>
+Usage: /context-guard add <id> <kind> [--critical] <content...> | list | remove <id> | clear [--yes] | status | recovery [off|critical] | extraction [off|automatic] | discovery [off|automatic] | discovery retire <id> | discovery supersede <id> <supersededById> | discovery candidates
 ```
 
 The supported item kinds are `goal`, `constraint`, `requirement`, `decision`, and `fact`. Automatic extraction uses only `goal`, `constraint`, `requirement`, and `decision`; it never creates `fact` items.
@@ -92,6 +92,7 @@ The supported item kinds are `goal`, `constraint`, `requirement`, `decision`, an
 | `/context-guard extraction [off\|automatic]` | With no argument, prints the current extraction mode. With `off` or `automatic`, disables or enables automatic extraction. An invalid value shows usage. |
 | `/context-guard discovery [off\|automatic]` | With no argument, prints the current discovery mode. With `off` or `automatic`, disables or enables agent discovery capture. An invalid value shows usage. |
 | `/context-guard discovery retire <id>` | Marks one discovery as no longer authoritative. Nothing is deleted and the item stays verifiable; it simply stops being recovered. Rejects an unknown id, a manual or extracted item, and an already retired or superseded discovery, without changing state. |
+| `/context-guard discovery candidates` | Lists groups of active discoveries that mention the same structured token, so you can decide whether one replaced another. It changes nothing and accepts no arguments. |
 | `/context-guard discovery supersede <id> <supersededById>` | Records that a newer discovery replaced an older one. The older item becomes `superseded` and stops being recovered; the replacement must itself be an active discovery. Rejects an unknown id, a manual or extracted item, a discovery superseding itself, an inactive replacement, and an already retired or superseded subject, without changing state. |
 
 A successful add, remove, clear, recovery-mode change, extraction-mode change, discovery-mode change, retirement, or supersession is persisted and clears the pending pre-compaction snapshot. Automatic extraction and discovery mutations are also persisted and clear that snapshot. Duplicate adds, invalid commands, and an already-selected mode do not change state. Invalid syntax or an unknown kind reports usage without mutating the registry.
@@ -133,6 +134,28 @@ A discovery carries a lifecycle record alongside its provenance, because being b
 Each record also stores `createdAt` (when the lifecycle record was first created or materialised) and `updatedAt` (when its lifecycle status last changed). `createdAt` is not evidence observation time, fact capture time for migrated rows, truth start time, or a freshness signal. The status is the only thing that changes: nothing is deleted, provenance is preserved, and the item remains in the registry and in verification.
 
 Both transitions are explicit operations. This package does not retire a discovery because it looks old, because it resembles another one, or because a model suggested it. Age is not staleness, similarity is not identity, and neither is something to infer silently on a user's behalf.
+
+### Supersession candidates
+
+`/context-guard discovery candidates` groups active discoveries that mention the same structured token:
+
+```text
+Context Guard: 1 discovery supersession candidate group.
+
+Shared anchors: opaque-id QSHARD-7731-ZETA
+  discovery:fact:aaa: Queue shard QSHARD-7731-ZETA is assigned to staging.
+  discovery:fact:bbb: Only QSHARD-7731-ZETA is accepted by the staging gateway.
+
+Nothing was changed. Run /context-guard discovery supersede <id> <supersededById> to record a replacement.
+```
+
+A candidate is a suggestion, not a recommendation and never a decision. Three token shapes count as a shared anchor: an exact file path, an exact opaque identifier, and the subject a version is attached to. Matching is exact and structural — no similarity scoring, no model call, no network access, and nothing that reads the two contents as language.
+
+A shared anchor is not shared meaning. `Laravel version 12` and `Laravel version 13` share a subject and contradict each other, which is precisely why the command stops at showing them. You record a replacement by running `discovery supersede` yourself.
+
+Only active discoveries are considered; retired and superseded ones, manual items and extracted items are all excluded. A group has no direction and names no source or target, because nothing available here can tell which discovery is newer: lifecycle timestamps record when a lifecycle record was written, not when a fact became true, so they are not consulted.
+
+Recall is deliberately low. Two facts that paraphrase each other without sharing a structural token are not detected, and no group is produced for a token that only looks significant — a bare version, a bare number, a shared filename under different directories, or a word like `staging` that several unrelated facts happen to use. Missing a real duplicate is the accepted cost of not inventing false ones. At most ten groups are printed; beyond that the total is named.
 
 A discovery restored from schema v3 or v4 has no persisted lifecycle, so one is materialised while loading. Its `createdAt` is therefore the time of that load, not the time the fact was captured, and nothing in the schema distinguishes a materialised record from a native one. That is the concrete reason these timestamps must not be read as freshness.
 
