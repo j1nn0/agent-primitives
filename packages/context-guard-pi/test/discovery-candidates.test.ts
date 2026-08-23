@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { FakePiHarness } from './harness.js';
+import {
+  candidateZeroRate,
+  measureOperationalDatasets,
+  operationalDatasets,
+} from '../benchmark/operational-candidate-evaluate.js';
 import { STATE_CUSTOM_TYPE } from '../src/state.js';
 import type { PersistedStateV5 } from '../src/types.js';
 import {
@@ -79,6 +84,36 @@ describe('discovery candidate anchors', () => {
       { category: 'opaque-id', value: 'QSHARD-7731-ZETA' },
       { category: 'versioned-subject', value: 'ledger' },
     ]);
+  });
+  it('does not anchor on the tail of a templated route', () => {
+    // `{app_id}` ends the token scan, leaving a `/sso` fragment that belongs to
+    // neither route. Two unrelated templated routes must not meet on it.
+    const first = 'The SSO route /apps/{app_id}/sso redirects to the provider.';
+    const second = 'The admin route /admin/{org_id}/sso is gated by a flag.';
+
+    expect(collectDiscoveryAnchors(first, ALL_CATEGORIES)).toEqual([]);
+    expect(collectDiscoveryAnchors(second, ALL_CATEGORIES)).toEqual([]);
+    expect(
+      findSupersessionCandidates(
+        [
+          { id: 'route-one', content: first },
+          { id: 'route-two', content: second },
+        ],
+        ALL_CATEGORIES,
+      ),
+    ).toEqual([]);
+  });
+
+  it('still anchors on a two-segment absolute path', () => {
+    expect(
+      collectDiscoveryAnchors('The endpoint /api/users returns 200.', ALL_CATEGORIES),
+    ).toEqual([{ category: 'path', value: '/api/users' }]);
+  });
+
+  it('does not anchor on a single-segment absolute path', () => {
+    expect(
+      collectDiscoveryAnchors('Scratch data lives in /tmp only.', ALL_CATEGORIES),
+    ).toEqual([]);
   });
 });
 
@@ -516,5 +551,61 @@ describe('discovery candidates command', () => {
       message.split('\n').filter((line) => line.startsWith('Shared anchors:')),
     ).toHaveLength(10);
     expect(message).not.toContain('SHARD-1010-NODE');
+  });
+});
+
+describe('operational candidate measurement', () => {
+  const measurements = measureOperationalDatasets();
+  const byId = new Map(measurements.map((m) => [m.datasetId, m]));
+
+  it('covers three datasets of differing provenance', () => {
+    expect(operationalDatasets().map((dataset) => dataset.kind)).toEqual([
+      'independent',
+      'session',
+      'adversarial',
+    ]);
+  });
+
+  it('finds structural anchors in only a minority of natural discovery content', () => {
+    const independent = byId.get('independent');
+    const session = byId.get('session');
+
+    expect(independent?.facts).toBe(28);
+    expect(independent?.anchorBearing).toBe(5);
+    expect(session?.facts).toBe(17);
+    expect(session?.anchorBearing).toBe(4);
+  });
+
+  it('produces no candidates at all for a real session', () => {
+    // The headline operational result: nine turns of ordinary investigation
+    // yielded seventeen discoveries and nothing worth suggesting. Silence is
+    // the expected output of a precision-first suggestion, not a defect.
+    expect(byId.get('session')?.candidateGroups).toBe(0);
+  });
+
+  it('produces one useful group on independent content', () => {
+    expect(byId.get('independent')?.groups).toEqual([
+      {
+        anchors: ['versioned-subject:ledger'],
+        contents: [
+          'The Ledger version 2.3.0 is pinned.',
+          'Ledger version 2.3.0 runs with strict mode enabled.',
+        ],
+      },
+    ]);
+  });
+
+  it('never groups two templated routes on a shared trailing segment', () => {
+    const adversarial = byId.get('adversarial');
+    expect(
+      adversarial?.groups.some((group) =>
+        group.anchors.some((anchor) => anchor.endsWith('/sso')),
+      ),
+    ).toBe(false);
+  });
+
+  it('still groups the shapes that collide by construction', () => {
+    expect(byId.get('adversarial')?.candidateGroups).toBe(5);
+    expect(candidateZeroRate(measurements)).toBeCloseTo(1 / 3);
   });
 });

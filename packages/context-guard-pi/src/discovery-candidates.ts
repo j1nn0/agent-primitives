@@ -117,12 +117,17 @@ function isPathAnchor(token: string): boolean {
   }
 
   if (segments[0] === '') {
-    return segments
-      .slice(1)
-      .every(
-        (segment) =>
-          segment.length > 0 && PATH_SEGMENT_REGEX.test(segment),
-      );
+    // Two segments at minimum. A templated route such as `/apps/{app_id}/sso`
+    // stops the token scan at the brace and leaves a trailing `/sso`, which
+    // belongs to neither of the paths it came from; anchoring on it groups
+    // unrelated routes that merely end the same way.
+    const rest = segments.slice(1);
+    return (
+      rest.length >= 2 &&
+      rest.every(
+        (segment) => segment.length > 0 && PATH_SEGMENT_REGEX.test(segment),
+      )
+    );
   }
 
   if (segments.some((segment) => !PATH_SEGMENT_REGEX.test(segment))) {
