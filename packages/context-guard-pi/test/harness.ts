@@ -131,6 +131,11 @@ export class FakePiHarness {
     this.context = this.createContext();
   }
 
+  setModel(model: unknown): void {
+    this.modelValue = model;
+    this.context = this.createContext();
+  }
+
   setCompletionResponse(response: unknown): void {
     this.completionError = undefined;
     this.completionResponse = response;

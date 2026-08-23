@@ -19,6 +19,7 @@ import {
 } from './identifiers.js';
 import {
   currentRequestState,
+  getAuxiliaryReasoningEffort,
   readSessionId,
   REQUEST_TIMEOUT_MS,
   signalFailureKind,
@@ -432,6 +433,7 @@ export function createDiscoveryController(
     }
 
     const model = ctx.model;
+    const reasoningEffort = getAuxiliaryReasoningEffort(model);
     const evidence = Array.from(evidenceByToolCallId.values()).map(
       (record, index): DiscoveryEvidence => ({
         id: `e${index + 1}`,
@@ -479,6 +481,7 @@ export function createDiscoveryController(
         {
           signal: controller.signal,
           maxTokens: 1024,
+          ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
         },
       );
 

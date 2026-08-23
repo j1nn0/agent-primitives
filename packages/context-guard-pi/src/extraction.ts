@@ -12,6 +12,7 @@ import {
 } from './identifiers.js';
 import {
   currentRequestState,
+  getAuxiliaryReasoningEffort,
   readSessionId,
   REQUEST_TIMEOUT_MS,
   signalFailureKind,
@@ -431,6 +432,7 @@ export function createExtractionController(
     }
 
     const model = ctx.model;
+    const reasoningEffort = getAuxiliaryReasoningEffort(model);
     const automaticItemsAtStart = automaticItemsForState(stateAtStart);
     const controller = new AbortController();
     dependencies.requestTracker.track(controller);
@@ -471,6 +473,7 @@ export function createExtractionController(
         {
           signal: controller.signal,
           maxTokens: 1024,
+          ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
         },
       );
 

@@ -162,6 +162,12 @@ On an eligible message, the provider receives the fixed extractor system prompt 
 
 The adapter never sends manual item content as registry data, the session transcript, tool results, candidate effective context, files, or compaction summaries to the extractor. The extractor call is a single completion request; it does not create a session entry or hidden agent turn.
 
+### Reasoning level of auxiliary requests
+
+Automatic extraction and automatic discovery each make one small auxiliary completion request. Where the active model would otherwise be sent its `off` thinking mapping, the adapter instead asks for the lowest reasoning level that model's own metadata declares. Extraction and discovery are classification work, so the cheapest declared level is the right ask, and naming a level explicitly is necessary because some OpenAI-compatible gateways reject the `off` mapping Pi sends when the option is omitted.
+
+This applies only to those two auxiliary requests. It does not read, change, or depend on the reasoning level of your own agent turns.
+
 ### When extraction does not finish
 
 The extraction request is given 20 seconds. If it has not answered by then it is abandoned and the registry is left alone.

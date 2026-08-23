@@ -111,6 +111,24 @@ function extractorJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function auxiliaryModel(): unknown {
+  return {
+    id: 'auxiliary-model',
+    api: 'openai-completions',
+    provider: 'fixture-provider',
+    reasoning: true,
+    thinkingLevelMap: {
+      off: 'none',
+      minimal: null,
+      low: 'low',
+      medium: 'medium',
+      high: 'high',
+      xhigh: 'xhigh',
+      max: 'max',
+    },
+  };
+}
+
 function discoveryId(content: string): string {
   return `discovery:fact:${createHash('sha256')
     .update(`fact ${content}`)
@@ -813,6 +831,23 @@ describe('Pi automatic extraction mode', () => {
     harness.setModelAvailable(false);
     await invokeInput(harness, 'There is no active model.');
     expect(harness.completeCalls).toHaveLength(2);
+  });
+
+  it('sends extraction at the lowest safe declared reasoning level', async () => {
+    const harness = new FakePiHarness();
+    await harness.start();
+    harness.setModel(auxiliaryModel());
+    await harness.command('extraction automatic');
+
+    await invokeInput(harness, 'An extraction request.');
+
+    expect(harness.completeCalls).toHaveLength(1);
+    const options = harness.completeCalls[0]?.options as {
+      readonly maxTokens?: number;
+      readonly reasoningEffort?: string;
+    } | undefined;
+    expect(options?.maxTokens).toBe(1024);
+    expect(options?.reasoningEffort).toBe('low');
   });
 
   it('persists and restores automatic mode', async () => {
@@ -1744,6 +1779,28 @@ describe('Pi agent discovery capture', () => {
     }
     await harness.endTurn();
   }
+
+  it('sends discovery at the lowest safe declared reasoning level', async () => {
+    const harness = new FakePiHarness();
+    await harness.start();
+    harness.setModel(auxiliaryModel());
+    await harness.command('discovery automatic');
+    harness.setCompletionResponse(
+      discoveryResponse({ schemaVersion: 1, discoveries: [] }),
+    );
+
+    await discoveryTurn(harness, [
+      { id: 'call-1', toolName: 'read', content: [block('evidence')] },
+    ]);
+
+    expect(harness.completeCalls).toHaveLength(1);
+    const options = harness.completeCalls[0]?.options as {
+      readonly maxTokens?: number;
+      readonly reasoningEffort?: string;
+    } | undefined;
+    expect(options?.maxTokens).toBe(1024);
+    expect(options?.reasoningEffort).toBe('low');
+  });
 
   it('captures validated facts with bounded evidence provenance', async () => {
     const harness = new FakePiHarness();
