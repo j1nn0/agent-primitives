@@ -96,6 +96,10 @@ the example need the workspace built at least once.
 
 The example is a private workspace package and runs after the context-guard package has been built.
 
+## Security
+
+See [SECURITY.md](SECURITY.md) for how to report a vulnerability privately. Do not report vulnerabilities in public GitHub issues.
+
 ## License
 
 MIT. See [`LICENSE`](LICENSE).
