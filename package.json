@@ -13,6 +13,7 @@
     "test": "pnpm -r run test",
     "lint": "eslint .",
     "check:package": "pnpm -r --if-present run check:package",
+    "check:release": "node scripts/guard-release-workflow.mjs",
     "example": "node examples/context-guard/basic.ts"
   },
   "devDependencies": {
@@ -24,6 +25,7 @@
     "publint": "^0.3.24",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.67.0",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "yaml": "^2.9.0"
   }
 }

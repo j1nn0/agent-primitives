@@ -46,7 +46,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out dispatched commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.sha }}
 
@@ -99,10 +99,10 @@ jobs:
           fi
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.x
           cache: pnpm
@@ -356,7 +356,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out dispatched commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
@@ -396,10 +396,10 @@ jobs:
           fi
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.x
           cache: pnpm
@@ -739,6 +739,7 @@ jobs:
         if: ${{ success() && steps.registry_preflight.outputs.publish_adapter == 'true' }}
         env:
           CORE_VERSION: ${{ inputs.core_version }}
+          RELEASE_COMMIT: ${{ github.sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -757,7 +758,9 @@ jobs:
                 "$attestation_url" 2>/dev/null || true
             )"
             if [[ "$core_attestation_status" == "200" ]] && python3 - "$attestation_file" <<'PY'
+          import base64
           import json
+          import os
           import sys
 
           required = {
@@ -789,6 +792,74 @@ jobs:
           missing = required - predicate_types
           if missing:
               raise SystemExit(f"attestation response is missing predicate types: {sorted(missing)}")
+
+          slsa_statement = None
+          for attestation in attestations:
+              if not isinstance(attestation, dict):
+                  continue
+              bundle = attestation.get("bundle")
+              if not isinstance(bundle, dict):
+                  continue
+              dsse_envelope = bundle.get("dsseEnvelope")
+              if not isinstance(dsse_envelope, dict):
+                  continue
+              payload = dsse_envelope.get("payload")
+              if not isinstance(payload, str):
+                  continue
+              try:
+                  decoded_payload = base64.b64decode(payload, validate=True)
+                  statement = json.loads(decoded_payload)
+              except (ValueError, UnicodeDecodeError):
+                  continue
+              if (
+                  isinstance(statement, dict)
+                  and statement.get("predicateType") == "https://slsa.dev/provenance/v1"
+                  and isinstance(statement.get("predicate"), dict)
+              ):
+                  slsa_statement = statement
+                  break
+          if slsa_statement is None:
+              raise SystemExit("attestation response has no decodable SLSA v1 statement with a dict predicate")
+          predicate = slsa_statement["predicate"]
+          build_definition = predicate.get("buildDefinition")
+          if not isinstance(build_definition, dict):
+              build_definition = {}
+          external_parameters = build_definition.get("externalParameters")
+          if not isinstance(external_parameters, dict):
+              external_parameters = {}
+          workflow = external_parameters.get("workflow")
+          if not isinstance(workflow, dict):
+              workflow = {}
+          resolved_dependencies = build_definition.get("resolvedDependencies")
+          first_dependency = resolved_dependencies[0] if isinstance(resolved_dependencies, list) and resolved_dependencies else {}
+          digest = first_dependency.get("digest") if isinstance(first_dependency, dict) else {}
+          if not isinstance(digest, dict):
+              digest = {}
+
+          expected_commit = os.environ.get("RELEASE_COMMIT")
+          if not expected_commit:
+              raise SystemExit(
+                  "buildDefinition.resolvedDependencies[0].digest.gitCommit mismatch: "
+                  "expected the RELEASE_COMMIT environment value, actual environment value is missing"
+              )
+          expected_identity = {
+              "buildDefinition.externalParameters.workflow.repository": "https://github.com/j1nn0/agent-primitives",
+              "buildDefinition.externalParameters.workflow.path": ".github/workflows/release.yml",
+              "buildDefinition.externalParameters.workflow.ref": "refs/heads/main",
+              "buildDefinition.resolvedDependencies[0].digest.gitCommit": expected_commit,
+          }
+          actual_identity = {
+              "buildDefinition.externalParameters.workflow.repository": workflow.get("repository"),
+              "buildDefinition.externalParameters.workflow.path": workflow.get("path"),
+              "buildDefinition.externalParameters.workflow.ref": workflow.get("ref"),
+              "buildDefinition.resolvedDependencies[0].digest.gitCommit": digest.get("gitCommit"),
+          }
+          for field, expected_value in expected_identity.items():
+              actual_value = actual_identity[field]
+              if actual_value != expected_value:
+                  raise SystemExit(
+                      f"{field} mismatch: expected {expected_value!r}, actual {actual_value!r}"
+                  )
           PY
             then
               core_attestation_visible=true
@@ -871,6 +942,7 @@ jobs:
         if: ${{ success() && steps.registry_preflight.outputs.publish_adapter == 'true' }}
         env:
           PI_VERSION: ${{ inputs.pi_version }}
+          RELEASE_COMMIT: ${{ github.sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -889,7 +961,9 @@ jobs:
                 "$attestation_url" 2>/dev/null || true
             )"
             if [[ "$pi_attestation_status" == "200" ]] && python3 - "$attestation_file" <<'PY'
+          import base64
           import json
+          import os
           import sys
 
           required = {
@@ -921,6 +995,74 @@ jobs:
           missing = required - predicate_types
           if missing:
               raise SystemExit(f"attestation response is missing predicate types: {sorted(missing)}")
+
+          slsa_statement = None
+          for attestation in attestations:
+              if not isinstance(attestation, dict):
+                  continue
+              bundle = attestation.get("bundle")
+              if not isinstance(bundle, dict):
+                  continue
+              dsse_envelope = bundle.get("dsseEnvelope")
+              if not isinstance(dsse_envelope, dict):
+                  continue
+              payload = dsse_envelope.get("payload")
+              if not isinstance(payload, str):
+                  continue
+              try:
+                  decoded_payload = base64.b64decode(payload, validate=True)
+                  statement = json.loads(decoded_payload)
+              except (ValueError, UnicodeDecodeError):
+                  continue
+              if (
+                  isinstance(statement, dict)
+                  and statement.get("predicateType") == "https://slsa.dev/provenance/v1"
+                  and isinstance(statement.get("predicate"), dict)
+              ):
+                  slsa_statement = statement
+                  break
+          if slsa_statement is None:
+              raise SystemExit("attestation response has no decodable SLSA v1 statement with a dict predicate")
+          predicate = slsa_statement["predicate"]
+          build_definition = predicate.get("buildDefinition")
+          if not isinstance(build_definition, dict):
+              build_definition = {}
+          external_parameters = build_definition.get("externalParameters")
+          if not isinstance(external_parameters, dict):
+              external_parameters = {}
+          workflow = external_parameters.get("workflow")
+          if not isinstance(workflow, dict):
+              workflow = {}
+          resolved_dependencies = build_definition.get("resolvedDependencies")
+          first_dependency = resolved_dependencies[0] if isinstance(resolved_dependencies, list) and resolved_dependencies else {}
+          digest = first_dependency.get("digest") if isinstance(first_dependency, dict) else {}
+          if not isinstance(digest, dict):
+              digest = {}
+
+          expected_commit = os.environ.get("RELEASE_COMMIT")
+          if not expected_commit:
+              raise SystemExit(
+                  "buildDefinition.resolvedDependencies[0].digest.gitCommit mismatch: "
+                  "expected the RELEASE_COMMIT environment value, actual environment value is missing"
+              )
+          expected_identity = {
+              "buildDefinition.externalParameters.workflow.repository": "https://github.com/j1nn0/agent-primitives",
+              "buildDefinition.externalParameters.workflow.path": ".github/workflows/release.yml",
+              "buildDefinition.externalParameters.workflow.ref": "refs/heads/main",
+              "buildDefinition.resolvedDependencies[0].digest.gitCommit": expected_commit,
+          }
+          actual_identity = {
+              "buildDefinition.externalParameters.workflow.repository": workflow.get("repository"),
+              "buildDefinition.externalParameters.workflow.path": workflow.get("path"),
+              "buildDefinition.externalParameters.workflow.ref": workflow.get("ref"),
+              "buildDefinition.resolvedDependencies[0].digest.gitCommit": digest.get("gitCommit"),
+          }
+          for field, expected_value in expected_identity.items():
+              actual_value = actual_identity[field]
+              if actual_value != expected_value:
+                  raise SystemExit(
+                      f"{field} mismatch: expected {expected_value!r}, actual {actual_value!r}"
+                  )
           PY
             then
               pi_attestation_visible=true
@@ -946,13 +1088,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out dispatched commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.sha }}
 
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.x
 
