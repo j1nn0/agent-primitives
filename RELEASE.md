@@ -35,7 +35,7 @@ The workflow authenticates to npm through Trusted Publishing only. There is no t
 Trusted publishing requires npm CLI `11.5.1` or newer and Node.js `22.14.0` or
 newer. The workflow uses the Node `24.x` runner, which already satisfies both
 requirements, so it does not upgrade npm globally. The repository uses
-`pnpm@10.34.5`.
+`pnpm@11.22.0`.
 
 ### Supply-chain and release integrity
 

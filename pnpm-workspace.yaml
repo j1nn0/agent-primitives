@@ -1,3 +1,11 @@
 packages:
   - packages/*
   - examples/*
+
+# pnpm 11 fails an install when a dependency's build script is neither allowed nor
+# reviewed. These two arrive transitively through the Pi coding agent devDependency
+# and their scripts are not needed to build or test this workspace, so they stay
+# unexecuted; recording them here keeps the strict default in force for anything new.
+allowBuilds:
+  '@google/genai': false
+  protobufjs: false
