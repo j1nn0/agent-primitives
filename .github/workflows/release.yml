@@ -530,8 +530,21 @@ jobs:
               core_identity_file="$RUNNER_TEMP/core-registry-identity"
               core_identity_error_file="$RUNNER_TEMP/core-registry-identity.err"
               rm -f "$core_identity_file" "$core_identity_error_file"
-              if ! npm view "@j1nn0/agent-context-guard@$CORE_VERSION" name version repository --json > "$core_identity_file" 2> "$core_identity_error_file"; then
-                echo "Existing core could not be verified; refusing partial recovery." >&2
+              max_attempts=40
+              retry_delay=15
+              core_identity_visible=false
+              for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
+                if npm view "@j1nn0/agent-context-guard@$CORE_VERSION" name version repository --prefer-online --json > "$core_identity_file" 2> "$core_identity_error_file"; then
+                  core_identity_visible=true
+                  break
+                fi
+                if (( attempt < max_attempts )); then
+                  echo "Waiting for @j1nn0/agent-context-guard@$CORE_VERSION on the public registry (attempt $attempt/$max_attempts); retrying in ${retry_delay}s."
+                  sleep "$retry_delay"
+                fi
+              done
+              if [[ "$core_identity_visible" != true ]]; then
+                echo "Existing core could not be verified; refusing partial recovery. The version did not become visible on the public registry within the wait window." >&2
                 cat "$core_identity_error_file" >&2
                 exit 1
               fi
@@ -597,8 +610,21 @@ jobs:
           verification_file="$RUNNER_TEMP/core-registry-verification"
           verification_error_file="$RUNNER_TEMP/core-registry-verification.err"
           rm -f "$verification_file" "$verification_error_file"
-          if ! npm view "@j1nn0/agent-context-guard@$CORE_VERSION" name version repository --json > "$verification_file" 2> "$verification_error_file"; then
-            echo "Core registry verification failed; the adapter will not be published." >&2
+          max_attempts=40
+          retry_delay=15
+          core_visible=false
+          for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
+            if npm view "@j1nn0/agent-context-guard@$CORE_VERSION" name version repository --prefer-online --json > "$verification_file" 2> "$verification_error_file"; then
+              core_visible=true
+              break
+            fi
+            if (( attempt < max_attempts )); then
+              echo "Waiting for @j1nn0/agent-context-guard@$CORE_VERSION on the public registry (attempt $attempt/$max_attempts); retrying in ${retry_delay}s."
+              sleep "$retry_delay"
+            fi
+          done
+          if [[ "$core_visible" != true ]]; then
+            echo "Core registry verification failed; the adapter will not be published. The version did not become visible on the public registry within the wait window." >&2
             cat "$verification_error_file" >&2
             exit 1
           fi
@@ -644,8 +670,21 @@ jobs:
           verification_file="$RUNNER_TEMP/pi-registry-verification"
           verification_error_file="$RUNNER_TEMP/pi-registry-verification.err"
           rm -f "$verification_file" "$verification_error_file"
-          if ! npm view "@j1nn0/agent-context-guard-pi@$PI_VERSION" name version dependencies --json > "$verification_file" 2> "$verification_error_file"; then
-            echo "Pi adapter registry verification failed." >&2
+          max_attempts=40
+          retry_delay=15
+          adapter_visible=false
+          for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
+            if npm view "@j1nn0/agent-context-guard-pi@$PI_VERSION" name version dependencies --prefer-online --json > "$verification_file" 2> "$verification_error_file"; then
+              adapter_visible=true
+              break
+            fi
+            if (( attempt < max_attempts )); then
+              echo "Waiting for @j1nn0/agent-context-guard-pi@$PI_VERSION on the public registry (attempt $attempt/$max_attempts); retrying in ${retry_delay}s."
+              sleep "$retry_delay"
+            fi
+          done
+          if [[ "$adapter_visible" != true ]]; then
+            echo "Pi adapter registry verification failed. The version did not become visible on the public registry within the wait window." >&2
             cat "$verification_error_file" >&2
             exit 1
           fi

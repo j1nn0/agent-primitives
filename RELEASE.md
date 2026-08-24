@@ -82,6 +82,12 @@ For the State B recovery procedure, first inspect the failed preflight and the
 registry independently, then re-dispatch **Release** in publish mode with the
 same versions, the exact confirmation, and `allow_existing_core=true`. Do not
 use that switch for a normal first release or to bypass a failed identity check.
+A newly created package name can take several minutes to appear on npm's public
+read path after a successful publish. The workflow retries post-publish registry
+verification within a bounded window. A verification timeout means propagation
+was slow, not that the publish was lost: inspect the registry with `npm view`
+before re-dispatching, and use `allow_existing_core=true` if the core is already
+published.
 
 ### Anonymous post-publish smoke
 
