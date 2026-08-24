@@ -14,12 +14,12 @@ on:
       core_version:
         description: Version of @j1nn0/agent-context-guard to release
         required: true
-        default: 0.1.0
+        default: 0.1.1
         type: string
       pi_version:
         description: Version of @j1nn0/agent-context-guard-pi to release
         required: true
-        default: 0.1.0
+        default: 0.1.1
         type: string
       confirmation:
         description: 'Required in publish mode: publish-<core_version>-<pi_version>'
@@ -41,6 +41,8 @@ concurrency:
 
 jobs:
   validate:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - name: Check out dispatched commit
@@ -346,6 +348,9 @@ jobs:
           NODE
 
   publish:
+    permissions:
+      contents: read
+      id-token: write
     if: ${{ inputs.mode == 'publish' }}
     needs: validate
     runs-on: ubuntu-latest
@@ -398,7 +403,6 @@ jobs:
         with:
           node-version: 24.x
           cache: pnpm
-          registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -428,45 +432,120 @@ jobs:
             exit 1
           fi
 
-      - name: Re-check the packed adapter dependency
+      - name: Pack and audit publish artifacts
+        id: publish_artifacts
         env:
           CORE_VERSION: ${{ inputs.core_version }}
+          PI_VERSION: ${{ inputs.pi_version }}
         shell: bash
         run: |
           set -euo pipefail
           artifact_dir="$RUNNER_TEMP/publish-artifacts"
           rm -rf "$artifact_dir"
           mkdir -p "$artifact_dir"
+          pnpm --filter @j1nn0/agent-context-guard pack --pack-destination "$artifact_dir"
           pnpm --filter @j1nn0/agent-context-guard-pi pack --pack-destination "$artifact_dir"
-          adapter_tarball="$(find "$artifact_dir" -maxdepth 1 -type f -name 'j1nn0-agent-context-guard-pi-*.tgz' -print -quit)"
-          if [[ -z "$adapter_tarball" ]]; then
-            echo "Could not locate the pre-publish adapter tarball." >&2
+          core_tarball="$(find "$artifact_dir" -maxdepth 1 -type f -name 'j1nn0-agent-context-guard-*.tgz' ! -name 'j1nn0-agent-context-guard-pi-*.tgz' -print -quit)"
+          pi_tarball="$(find "$artifact_dir" -maxdepth 1 -type f -name 'j1nn0-agent-context-guard-pi-*.tgz' -print -quit)"
+          if [[ -z "$core_tarball" || -z "$pi_tarball" ]]; then
+            echo "Could not locate both pre-publish release tarballs." >&2
             exit 1
           fi
-          manifest_file="$RUNNER_TEMP/publish-adapter-package.json"
-          tar -xOzf "$adapter_tarball" package/package.json > "$manifest_file"
-          python3 - "$manifest_file" "$CORE_VERSION" <<'PY'
+          python3 - "$core_tarball" "$pi_tarball" "$CORE_VERSION" "$PI_VERSION" <<'PY'
           import json
           import sys
+          import tarfile
+          from pathlib import PurePosixPath
 
-          manifest_path = sys.argv[1]
-          core_version = sys.argv[2]
-          with open(manifest_path, encoding="utf-8") as handle:
-              manifest = json.load(handle)
-          dependencies = manifest.get("dependencies")
+          core_tarball = sys.argv[1]
+          pi_tarball = sys.argv[2]
+          core_version = sys.argv[3]
+          pi_version = sys.argv[4]
+
+          expected = {
+              core_tarball: ("@j1nn0/agent-context-guard", core_version),
+              pi_tarball: ("@j1nn0/agent-context-guard-pi", pi_version),
+          }
+          forbidden_parts = {"test", "tests", "benchmark", "benchmarks", ".git", ".npmrc"}
+
+          def fail(message: str) -> None:
+              raise SystemExit(f"Pre-publish artifact audit failed: {message}")
+
+          audits = {}
+          for archive, (expected_name, expected_version) in expected.items():
+              with tarfile.open(archive, "r:gz") as tar:
+                  members = tar.getmembers()
+                  names = {member.name.rstrip("/") for member in members}
+                  manifest_member = next(
+                      (member for member in members if member.name.rstrip("/") == "package/package.json"),
+                      None,
+                  )
+                  if manifest_member is None:
+                      fail(f"{archive} has no package/package.json")
+                  manifest_data = tar.extractfile(manifest_member)
+                  if manifest_data is None:
+                      fail(f"{archive} package manifest cannot be read")
+                  try:
+                      manifest = json.load(manifest_data)
+                  except json.JSONDecodeError as error:
+                      fail(f"{archive} has invalid package.json: {error}")
+
+                  if manifest.get("name") != expected_name:
+                      fail(f"{archive} has unexpected package name")
+                  if manifest.get("version") != expected_version:
+                      fail(f"{archive} has unexpected package version")
+                  if "package/LICENSE" not in names:
+                      fail(f"{archive} is missing LICENSE")
+                  if "package/README.md" not in names:
+                      fail(f"{archive} is missing README.md")
+                  if not any(name == "package/dist" or name.startswith("package/dist/") for name in names):
+                      fail(f"{archive} is missing dist/")
+                  if not any(name == "package/src" or name.startswith("package/src/") for name in names):
+                      fail(f"{archive} is missing src/")
+
+                  for name in names:
+                      parts = PurePosixPath(name).parts
+                      if any(part in forbidden_parts for part in parts) or name.endswith(".tgz") or "/home/" in name:
+                          fail(f"{archive} contains forbidden path {name}")
+                  for member in members:
+                      if not member.isfile():
+                          continue
+                      content = tar.extractfile(member)
+                      if content is not None and b"/home/" in content.read():
+                          fail(f"{archive} contains /home/ in {member.name}")
+
+              audits[archive] = (manifest, names)
+
+          adapter_manifest, adapter_names = audits[pi_tarball]
+          dependencies = adapter_manifest.get("dependencies")
           if not isinstance(dependencies, dict):
-              raise SystemExit("Pre-publish adapter manifest has no dependencies object.")
-          if "workspace:" in json.dumps(dependencies, sort_keys=True):
-              raise SystemExit("Pre-publish adapter dependencies contain workspace:.")
-          expected = f"^{core_version}"
-          actual = dependencies.get("@j1nn0/agent-context-guard")
-          if actual != expected:
-              raise SystemExit(
-                  "Pre-publish adapter dependency is "
-                  f"{actual!r}; expected {expected!r}."
+              fail("adapter packed manifest has no dependencies object")
+          dependency_text = json.dumps(dependencies, sort_keys=True)
+          if "workspace:" in dependency_text:
+              fail("adapter packed dependencies contain workspace:")
+          expected_dependency = f"^{core_version}"
+          actual_dependency = dependencies.get("@j1nn0/agent-context-guard")
+          if actual_dependency != expected_dependency:
+              fail(
+                  "adapter packed dependency on @j1nn0/agent-context-guard "
+                  f"is {actual_dependency!r}, expected {expected_dependency!r}"
               )
-          print("Pre-publish adapter dependency audit passed.")
+
+          pi_manifest = adapter_manifest.get("pi")
+          extensions = pi_manifest.get("extensions") if isinstance(pi_manifest, dict) else None
+          if not isinstance(extensions, list) or not extensions:
+              fail("adapter packed manifest has no pi.extensions entry")
+          for target in extensions:
+              if not isinstance(target, str) or target.startswith("/"):
+                  fail(f"adapter pi.extensions target is invalid: {target!r}")
+              target_path = target[2:] if target.startswith("./") else target
+              if not target_path or f"package/{target_path}" not in adapter_names:
+                  fail(f"adapter pi.extensions target is missing: {target!r}")
+
+          print("Pre-publish artifacts passed manifest, contents, dependency, extension, and path audits.")
           PY
+          printf 'core_tarball=%s\n' "$core_tarball" >> "$GITHUB_OUTPUT"
+          printf 'pi_tarball=%s\n' "$pi_tarball" >> "$GITHUB_OUTPUT"
 
       - name: Registry preflight
         id: registry_preflight
@@ -591,14 +670,20 @@ jobs:
               ;;
           esac
 
-      - name: Publish core
+      - name: Record Node and npm versions for trusted publishing
         if: ${{ steps.registry_preflight.outputs.publish_core == 'true' }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-          pnpm --filter @j1nn0/agent-context-guard publish --access public --no-git-checks
+          node --version
+          npm --version
+
+      - name: Publish core
+        if: ${{ steps.registry_preflight.outputs.publish_core == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm publish "${{ steps.publish_artifacts.outputs.core_tarball }}" --access public --provenance
 
       - name: Verify core on the registry before the adapter
         if: ${{ success() && steps.registry_preflight.outputs.publish_adapter == 'true' }}
@@ -650,14 +735,83 @@ jobs:
           print("Core registry verification passed.")
           PY
 
-      - name: Publish Pi adapter
+      - name: Verify core provenance attestation before the adapter
         if: ${{ success() && steps.registry_preflight.outputs.publish_adapter == 'true' }}
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          CORE_VERSION: ${{ inputs.core_version }}
         shell: bash
         run: |
           set -euo pipefail
-          pnpm --filter @j1nn0/agent-context-guard-pi publish --access public --no-git-checks
+          attestation_url="https://registry.npmjs.org/-/npm/v1/attestations/@j1nn0%2Fagent-context-guard@$CORE_VERSION"
+          attestation_file="$RUNNER_TEMP/core-provenance-attestation"
+          rm -f "$attestation_file"
+          max_attempts=40
+          retry_delay=15
+          core_attestation_visible=false
+          core_attestation_status=""
+          for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
+            core_attestation_status="$(
+              curl --silent --show-error --location \
+                --output "$attestation_file" \
+                --write-out '%{http_code}' \
+                "$attestation_url" 2>/dev/null || true
+            )"
+            if [[ "$core_attestation_status" == "200" ]] && python3 - "$attestation_file" <<'PY'
+          import json
+          import sys
+
+          required = {
+              "https://github.com/npm/attestation/tree/main/specs/publish/v0.1",
+              "https://slsa.dev/provenance/v1",
+          }
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              body = json.load(handle)
+          attestations = body.get("attestations") if isinstance(body, dict) else None
+          if not isinstance(attestations, list):
+              raise SystemExit("attestation response has no attestations list")
+
+          predicate_types = set()
+
+          def collect(value):
+              if isinstance(value, dict):
+                  for key, nested in value.items():
+                      if key == "predicateType" and isinstance(nested, str):
+                          predicate_types.add(nested)
+                      elif key == "predicateTypes" and isinstance(nested, list):
+                          predicate_types.update(item for item in nested if isinstance(item, str))
+                      collect(nested)
+              elif isinstance(value, list):
+                  for nested in value:
+                      collect(nested)
+
+          for attestation in attestations:
+              collect(attestation)
+          missing = required - predicate_types
+          if missing:
+              raise SystemExit(f"attestation response is missing predicate types: {sorted(missing)}")
+          PY
+            then
+              core_attestation_visible=true
+              break
+            fi
+            if (( attempt < max_attempts )); then
+              echo "Waiting for the core provenance attestation (attempt $attempt/$max_attempts); retrying in ${retry_delay}s."
+              sleep "$retry_delay"
+            fi
+          done
+          if [[ "$core_attestation_visible" != true ]]; then
+            echo "Core provenance attestation did not appear for @j1nn0/agent-context-guard@$CORE_VERSION; the adapter will not be published." >&2
+            echo "Last attestation HTTP status: ${core_attestation_status:-unknown}." >&2
+            exit 1
+          fi
+          echo "Core provenance attestation verified for @j1nn0/agent-context-guard@$CORE_VERSION."
+
+      - name: Publish Pi adapter
+        if: ${{ success() && steps.registry_preflight.outputs.publish_adapter == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm publish "${{ steps.publish_artifacts.outputs.pi_tarball }}" --access public --provenance
 
       - name: Verify Pi adapter on the registry
         if: ${{ success() && steps.registry_preflight.outputs.publish_adapter == 'true' }}
@@ -713,7 +867,80 @@ jobs:
           print("Pi adapter registry verification passed.")
           PY
 
+      - name: Verify Pi adapter provenance attestation
+        if: ${{ success() && steps.registry_preflight.outputs.publish_adapter == 'true' }}
+        env:
+          PI_VERSION: ${{ inputs.pi_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          attestation_url="https://registry.npmjs.org/-/npm/v1/attestations/@j1nn0%2Fagent-context-guard-pi@$PI_VERSION"
+          attestation_file="$RUNNER_TEMP/pi-provenance-attestation"
+          rm -f "$attestation_file"
+          max_attempts=40
+          retry_delay=15
+          pi_attestation_visible=false
+          pi_attestation_status=""
+          for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
+            pi_attestation_status="$(
+              curl --silent --show-error --location \
+                --output "$attestation_file" \
+                --write-out '%{http_code}' \
+                "$attestation_url" 2>/dev/null || true
+            )"
+            if [[ "$pi_attestation_status" == "200" ]] && python3 - "$attestation_file" <<'PY'
+          import json
+          import sys
+
+          required = {
+              "https://github.com/npm/attestation/tree/main/specs/publish/v0.1",
+              "https://slsa.dev/provenance/v1",
+          }
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              body = json.load(handle)
+          attestations = body.get("attestations") if isinstance(body, dict) else None
+          if not isinstance(attestations, list):
+              raise SystemExit("attestation response has no attestations list")
+
+          predicate_types = set()
+
+          def collect(value):
+              if isinstance(value, dict):
+                  for key, nested in value.items():
+                      if key == "predicateType" and isinstance(nested, str):
+                          predicate_types.add(nested)
+                      elif key == "predicateTypes" and isinstance(nested, list):
+                          predicate_types.update(item for item in nested if isinstance(item, str))
+                      collect(nested)
+              elif isinstance(value, list):
+                  for nested in value:
+                      collect(nested)
+
+          for attestation in attestations:
+              collect(attestation)
+          missing = required - predicate_types
+          if missing:
+              raise SystemExit(f"attestation response is missing predicate types: {sorted(missing)}")
+          PY
+            then
+              pi_attestation_visible=true
+              break
+            fi
+            if (( attempt < max_attempts )); then
+              echo "Waiting for the Pi adapter provenance attestation (attempt $attempt/$max_attempts); retrying in ${retry_delay}s."
+              sleep "$retry_delay"
+            fi
+          done
+          if [[ "$pi_attestation_visible" != true ]]; then
+            echo "Pi adapter provenance attestation did not appear for @j1nn0/agent-context-guard-pi@$PI_VERSION." >&2
+            echo "Last attestation HTTP status: ${pi_attestation_status:-unknown}." >&2
+            exit 1
+          fi
+          echo "Pi adapter provenance attestation verified for @j1nn0/agent-context-guard-pi@$PI_VERSION."
+
   registry-smoke:
+    permissions:
+      contents: read
     if: ${{ needs.publish.result == 'success' }}
     needs: publish
     runs-on: ubuntu-latest
@@ -803,3 +1030,15 @@ jobs:
           console.log(`Installed @earendil-works/pi-coding-agent version: ${peerManifest.version}`);
           console.log('Public registry consumer smoke passed.');
           NODE
+          signature_output_file="$RUNNER_TEMP/npm-audit-signatures"
+          if npm audit signatures > "$signature_output_file" 2>&1; then
+            cat "$signature_output_file"
+          else
+            cat "$signature_output_file"
+            echo "npm audit signatures failed." >&2
+            exit 1
+          fi
+          if ! grep -Eiq '[1-9][0-9]* packages? (has|have) (a )?verified attestations?' "$signature_output_file"; then
+            echo "npm audit signatures reported no verified attestations." >&2
+            exit 1
+          fi
