@@ -1,6 +1,6 @@
 {
   "name": "@j1nn0/agent-context-guard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Verify that critical agent context survives compaction, summarization and handoff.",
   "license": "MIT",
   "author": "j1nn0",
