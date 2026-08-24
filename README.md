@@ -49,6 +49,10 @@ moment, and that is the adapter's job.
 
 `@j1nn0/agent-context-guard` is implemented in this repository. The context guard records goals, constraints, requirements, decisions, and facts; creates deterministic snapshots; and verifies a candidate context with a literal or injected verifier. See [`packages/context-guard/README.md`](packages/context-guard/README.md) for the package documentation.
 
+#### `@j1nn0/agent-state`
+
+`@j1nn0/agent-state` records the caller-declared current position of work: an optional objective, insertion-ordered work items with explicit statuses, and decisions. It creates deterministic snapshots, restores validated plain data, and summarizes current status counts. See [`packages/agent-state/README.md`](packages/agent-state/README.md) for the package documentation.
+
 ### Harness adapters
 
 #### `@j1nn0/agent-context-guard-pi`
@@ -65,7 +69,6 @@ it; adapters for other harnesses follow from what it teaches.
 
 The following are **not implemented**. They describe a direction, not an API promise:
 
-- **Agent state** — how far the work got, what was decided, what is still open.
 - **Retry guard** — whether the same failure is being repeated.
 - **Progress** — whether the work is actually moving forward.
 - **Evidence** — whether a completion claim is backed by something.
@@ -74,7 +77,7 @@ The following are **not implemented**. They describe a direction, not an API pro
 - **Tool policy** — allow, deny, and require-approval rules for tool invocation.
 - **MCP adapter** — exposing primitives to MCP-based agents, without the core packages depending on an MCP SDK.
 
-The context guard core and Pi harness adapter are implemented in this repository.
+The context guard core, Agent state core, and Pi harness adapter are implemented in this repository.
 
 ## Development
 

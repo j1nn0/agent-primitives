@@ -1,0 +1,8 @@
+{
+  "name": "@examples/agent-state",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@j1nn0/agent-state": "workspace:*"
+  }
+}
