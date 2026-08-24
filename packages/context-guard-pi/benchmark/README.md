@@ -271,23 +271,89 @@ turns unless the recorder retains them separately.
 
 ## Registry growth benchmark
 
-`registry-growth-evaluate.ts` measures inactive-discovery retention cost using plain
-objects with the schema-v5 persisted payload shape emitted by `saveState`: discovery
-items, `discoveryItemIds`, provenance, and lifecycle records are all retained. `buildRegistry(size, activeShare)` creates deterministic discovery-only contents of 80--300 characters,
-1--2 provenance references, and lifecycle timestamps derived from the item index; it
-uses no randomness and performs no merge, delete, or automatic supersession decision.
+`registry-growth-evaluate.ts` measures inactive-discovery retention on deterministic,
+discovery-only schema-v5 payloads. It keeps the default grid at sizes
+`[10, 25, 50, 100, 250]` and active shares `[1, 0.75, 0.5, 0.25]`.
 
-`evaluateRegistryGrowth(sizes, activeShares)` returns one cell per size/share pair with
-`counts`, persisted `stateJsonBytes`, all-item `snapshotItems` and `snapshotJsonBytes`,
-verification finding counts, and `recoveryEligible`. The simulated post-compaction
-context contains every active content verbatim. Because every discovery is critical,
-each inactive item contributes one literal lost finding, active findings are zero, and
-only active items are recovery-eligible. JSON key insertion order is fixed to match the
-persisted state shape, making byte measurements deterministic. `retentionContribution`
-compares persisted bytes with the same-size all-active cell and reports inactive
-findings as a percentage of retained snapshot items; `inactiveShareOfFindings` is an
-existing-style `{ numerator, denominator, rate }` summary with an empty denominator
-reporting rate `1`.
+The benchmark reports three separate comparisons:
+
+1. **Inactive metadata overhead** — `inactiveMetadataOverhead(cell)` compares the
+   mixed cell with a freshly built all-active registry of the same size and item
+   count. `bytes = cell.stateJsonBytes - allActiveStateJsonBytes` and
+   `percent = bytes / allActiveStateJsonBytes * 100`. This isolates lifecycle
+   representation overhead from retaining the item and provenance records.
+2. **Inactive retention footprint** — `inactiveRetentionFootprint(cell)` compares
+   the full mixed state with `projectRegistryActiveOnly(registry)` for the same
+   logical registry. `bytes = fullStateBytes - activeOnlyStateBytes` and
+   `percent = bytes / activeOnlyStateBytes * 100`.
+3. **Snapshot retention footprint** — `snapshotRetentionFootprint(cell)` compares
+   `{ schemaVersion: 1, items: allItems }` with the corresponding active-only
+   snapshot. It reports `fullItems`, `activeItems`, `itemsRemoved`, `fullBytes`,
+   `activeOnlyBytes`, and `bytesSaved`; `percentReduced` is
+   `itemsRemoved / fullItems * 100`, an item-count percentage.
+
+`projectRegistryActiveOnly` is deliberately a research-only hypothetical. It
+keeps only active items, discovery ids, provenance, and lifecycle entries, so it
+discards retained inactive history and is not valid production persisted state
+under the package's history-preservation norms. In this deterministic registry,
+only inactive superseded lifecycle entries carry `supersededBy`; filtering to
+active entries therefore creates no dangling superseded-by references. The
+projection is a measurement baseline, not automatic deletion or compaction
+logic.
+
+Verification uses one fixed simulation assumption: post-compaction context
+contains every active discovery content verbatim. Every inactive critical
+discovery then contributes one lost finding and active discoveries contribute
+none. The three reported ratios have distinct meanings:
+
+- `inactiveShareOfFindings` is `findingsFromInactive / findingsTotal`.
+- `inactiveFindingsPerRetainedItem` is `findingsFromInactive / snapshotItems`.
+- `inactiveShareOfSnapshot` is `counts.inactive / snapshotItems`.
+
+Each ratio includes `numerator`, `denominator`, `rate`, and `applicable`. A zero
+denominator is explicitly not applicable (`rate: null`, `applicable: false`),
+not the general empty-denominator rate of `1`; nonzero denominators report their
+ordinary numeric rate. `recoveryEligible` remains the active-item count.
+
+`stateJsonBytes` and `snapshotJsonBytes` are real UTF-8 byte counts from
+`Buffer.byteLength(JSON.stringify(value), 'utf8')`, not JavaScript string
+lengths. All registry contents, timestamps, and derived metrics are
+measurement-only and deterministic; no production state is changed.
 
 Both benchmarks are measurement-only. Their corpus annotations and derived metrics are
 never imported by `src/`, do not alter production behavior, and do not change schema v5.
+
+
+## Discovery operational validation
+
+`discovery-operational-recorded.ts` is an append-only, provider-free fixture registry for
+ordinary Pi discovery captures. A **rich** record uses `capturedTurns` and retains assistant
+turn indexes, evidence counts, evidence references, and accepted fact contents. A
+**fact-level** record uses `factContents` only; it can contribute known discovery contents
+but cannot be used for turn, evidence-unit, yield, or granularity metrics. The XOR recording
+contract is validated fail-safe rather than silently coercing one representation into the
+other.
+
+Each record carries quality flags for real-Pi versus synthetic provenance and for turn and
+evidence metadata. Lifecycle transitions use three explicit taxonomic buckets: `natural` for
+ordinary observed lifecycle behavior, `experimental` for deliberately induced or post-capture
+research commands, and `unknown` when a transition occurred but its cause was not recorded.
+A missing `transitions` field is different from an all-zero transition object: it means
+lifecycle events were unobserved. Likewise, `statusUnknownCount` records facts whose end
+status was not observed. Missing metadata is reported as unknown or not applicable, never as
+zero; applicable ratios carry `{ numerator, denominator, rate, applicable }` and do not
+fabricate a rate for an unavailable denominator.
+
+The privacy boundary permits repository-safe fact content, local `eN` references, turn
+indexes, counts, and tool category names. It excludes raw transcripts, provider responses,
+credentials, absolute home paths, and unrelated private content. In `operational-live-02`,
+every `/home/j1nn0/repos/j1nn0.github/agent-primitives` prefix was scrubbed to `.`, and every
+other `/home/j1nn0/...` prefix was scrubbed to `~`. The known semantic-candidate fixture leak
+was also reduced to `The repository root is the agent-primitives repository.` with a source
+comment documenting that scrub. `HERDR_ENV=1` and `HERDR_TAB_ID=w11:t5` remain because they are
+non-sensitive environment observations, not credentials or private values.
+
+Future sessions are added by appending one privacy-reviewed record, importing or mapping the
+captured fixture data without copying it unnecessarily, and extending the replay pins and
+invariants. `aggregateOperationalSessions()` then compares the complete recorded set
+entirely offline; no provider call is needed to replay or aggregate the measurements.

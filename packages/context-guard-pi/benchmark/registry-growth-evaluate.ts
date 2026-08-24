@@ -1,3 +1,5 @@
+import { Buffer } from 'node:buffer';
+
 export type RegistryLifecycleStatus = 'active' | 'superseded' | 'retired';
 
 export interface RegistryItem {
@@ -52,11 +54,21 @@ export interface RateSummary {
   readonly rate: number;
 }
 
+/** A ratio whose denominator may make the measurement not applicable. */
+export interface ApplicableRateSummary {
+  readonly numerator: number;
+  readonly denominator: number;
+  readonly rate: number | null;
+  readonly applicable: boolean;
+}
+
 export interface RegistryVerificationSummary {
   readonly findingsTotal: number;
   readonly findingsFromActive: number;
   readonly findingsFromInactive: number;
-  readonly inactiveShareOfFindings: RateSummary;
+  readonly inactiveShareOfFindings: ApplicableRateSummary;
+  readonly inactiveFindingsPerRetainedItem: ApplicableRateSummary;
+  readonly inactiveShareOfSnapshot: ApplicableRateSummary;
 }
 
 export interface RegistryGrowthCell {
@@ -71,21 +83,42 @@ export interface RegistryGrowthCell {
   readonly recoveryEligible: number;
 }
 
-export interface RetentionContribution {
-  /** Percentage change in persisted state bytes versus the all-active cell. */
-  readonly bytesDeltaPercent: number;
-  /** Inactive findings as a percentage of the retained snapshot item count. */
-  readonly findingsDeltaPercent: number;
+export interface RetentionByteComparison {
+  readonly bytes: number;
+  readonly percent: number;
+}
+
+export interface SnapshotRetentionFootprint {
+  readonly fullItems: number;
+  readonly activeItems: number;
+  readonly itemsRemoved: number;
+  readonly fullBytes: number;
+  readonly activeOnlyBytes: number;
+  readonly bytesSaved: number;
+  /** Percentage of snapshot items removed, not a byte percentage. */
+  readonly percentReduced: number;
+}
+
+export interface RetentionDiagnostics {
+  readonly metadataOverhead: RetentionByteComparison;
+  readonly retentionFootprint: RetentionByteComparison;
+  readonly snapshotFootprint: SnapshotRetentionFootprint;
+  readonly verification: RegistryVerificationSummary;
 }
 
 export const DEFAULT_REGISTRY_SIZES: readonly number[] = [10, 25, 50, 100, 250];
 export const DEFAULT_REGISTRY_ACTIVE_SHARES: readonly number[] = [1, 0.75, 0.5, 0.25];
 
-function rateSummary(numerator: number, denominator: number): RateSummary {
+function verificationRatio(
+  numerator: number,
+  denominator: number,
+): ApplicableRateSummary {
+  const applicable = denominator !== 0;
   return {
     numerator,
     denominator,
-    rate: denominator === 0 ? 1 : numerator / denominator,
+    rate: applicable ? numerator / denominator : null,
+    applicable,
   };
 }
 
@@ -275,18 +308,80 @@ function countsFor(registry: PersistedRegistry): RegistryCounts {
   };
 }
 
-function jsonBytes(value: unknown): number {
+/** Return the UTF-8 byte length of a JSON serialization. */
+export function jsonBytes(value: unknown): number {
   const serialized = JSON.stringify(value);
-  return serialized.length;
+  return serialized === undefined ? 0 : Buffer.byteLength(serialized, 'utf8');
+}
+
+interface RegistrySnapshot {
+  readonly schemaVersion: 1;
+  readonly items: readonly RegistryItem[];
+}
+
+function snapshotFor(registry: PersistedRegistry): RegistrySnapshot {
+  return {
+    schemaVersion: 1,
+    items: registry.items,
+  };
+}
+
+/**
+ * Project a registry to only its active discoveries and associated records.
+ *
+ * This is a research-only hypothetical that intentionally discards retained
+ * inactive history, so it is not valid production persisted state under the
+ * package's history-preservation norms. Only inactive (superseded) lifecycle
+ * records carry `supersededBy` in this deterministic registry; filtering to
+ * active lifecycle entries therefore leaves no dangling `supersededBy` links.
+ */
+export function projectRegistryActiveOnly(
+  registry: PersistedRegistry,
+): PersistedRegistry {
+  const activeIds = new Set(
+    registry.discoveryItemIds.filter(
+      (id) => registry.discoveryLifecycle[id]?.status === 'active',
+    ),
+  );
+  const discoveryItemIds = registry.discoveryItemIds.filter((id) =>
+    activeIds.has(id),
+  );
+  const items = registry.items.filter((item) => activeIds.has(item.id));
+  const discoveryProvenance: Record<string, readonly RegistryProvenance[]> = {};
+  const discoveryLifecycle: Record<string, RegistryLifecycle> = {};
+
+  for (const id of discoveryItemIds) {
+    const provenance = registry.discoveryProvenance[id];
+    if (provenance !== undefined) {
+      discoveryProvenance[id] = provenance;
+    }
+    const lifecycle = registry.discoveryLifecycle[id];
+    if (lifecycle !== undefined) {
+      discoveryLifecycle[id] = {
+        status: lifecycle.status,
+        createdAt: lifecycle.createdAt,
+        updatedAt: lifecycle.updatedAt,
+      };
+    }
+  }
+
+  return {
+    schemaVersion: registry.schemaVersion,
+    recovery: registry.recovery,
+    extraction: registry.extraction,
+    discovery: registry.discovery,
+    items,
+    autoItemIds: registry.autoItemIds,
+    discoveryItemIds,
+    discoveryProvenance,
+    discoveryLifecycle,
+  };
 }
 
 function evaluateCell(size: number, activeShare: number): RegistryGrowthCell {
   const registry = buildRegistry(size, activeShare);
   const counts = countsFor(registry);
-  const snapshot = {
-    schemaVersion: 1 as const,
-    items: registry.items,
-  };
+  const snapshot = snapshotFor(registry);
   const findingsFromActive = 0;
   const findingsFromInactive = counts.inactive;
   const findingsTotal = findingsFromActive + findingsFromInactive;
@@ -302,9 +397,17 @@ function evaluateCell(size: number, activeShare: number): RegistryGrowthCell {
       findingsTotal,
       findingsFromActive,
       findingsFromInactive,
-      inactiveShareOfFindings: rateSummary(
+      inactiveShareOfFindings: verificationRatio(
         findingsFromInactive,
         findingsTotal,
+      ),
+      inactiveFindingsPerRetainedItem: verificationRatio(
+        findingsFromInactive,
+        snapshot.items.length,
+      ),
+      inactiveShareOfSnapshot: verificationRatio(
+        counts.inactive,
+        snapshot.items.length,
       ),
     },
     recoveryEligible: counts.active,
@@ -347,24 +450,81 @@ function percentageDelta(current: number, baseline: number): number {
   return baseline === 0 ? (current === 0 ? 0 : 100) : ((current - baseline) / baseline) * 100;
 }
 
-/**
- * Compare one cell with a same-size all-active registry. Persisted bytes use
- * the schema-v5 state JSON as their baseline. The all-active findings baseline
- * is zero, so findings delta is reported as the fraction of retained snapshot
- * items that become inactive findings rather than an undefined divide-by-zero.
- */
-export function retentionContribution(
-  cell: RegistryGrowthCell,
-): RetentionContribution {
-  const baseline = evaluateCell(cell.size, 1);
+function registryForCell(cell: RegistryGrowthCell): PersistedRegistry {
+  return buildRegistry(cell.size, cell.activeShare);
+}
+
+function byteComparison(
+  currentBytes: number,
+  baselineBytes: number,
+): RetentionByteComparison {
   return {
-    bytesDeltaPercent: percentageDelta(
-      cell.stateJsonBytes,
-      baseline.stateJsonBytes,
-    ),
-    findingsDeltaPercent:
-      cell.snapshotItems === 0
-        ? 0
-        : (cell.verification.findingsTotal / cell.snapshotItems) * 100,
+    bytes: currentBytes - baselineBytes,
+    percent: percentageDelta(currentBytes, baselineBytes),
+  };
+}
+
+/**
+ * Measure inactive lifecycle-representation overhead against the same-size
+ * all-active registry. Both registries retain the same number of items and
+ * associated records; only their lifecycle mix differs.
+ */
+export function inactiveMetadataOverhead(
+  cell: RegistryGrowthCell,
+): RetentionByteComparison {
+  const allActiveBytes = jsonBytes(buildRegistry(cell.size, 1));
+  return byteComparison(cell.stateJsonBytes, allActiveBytes);
+}
+
+/**
+ * Measure full-state bytes against the active-only projection of this logical
+ * registry. The projection is a research-only history-discarding hypothetical;
+ * it is not a production retention recommendation.
+ */
+export function inactiveRetentionFootprint(
+  cell: RegistryGrowthCell,
+): RetentionByteComparison {
+  const registry = registryForCell(cell);
+  const activeOnlyBytes = jsonBytes(projectRegistryActiveOnly(registry));
+  return byteComparison(cell.stateJsonBytes, activeOnlyBytes);
+}
+
+/** Compare the all-item snapshot with its active-only snapshot projection. */
+export function snapshotRetentionFootprint(
+  cell: RegistryGrowthCell,
+): SnapshotRetentionFootprint {
+  const registry = registryForCell(cell);
+  const fullSnapshot = snapshotFor(registry);
+  const activeOnlyRegistry = projectRegistryActiveOnly(registry);
+  const activeOnlySnapshot: RegistrySnapshot = {
+    schemaVersion: 1,
+    items: activeOnlyRegistry.items,
+  };
+  const fullItems = fullSnapshot.items.length;
+  const activeItems = activeOnlySnapshot.items.length;
+  const itemsRemoved = fullItems - activeItems;
+  const fullBytes = cell.snapshotJsonBytes;
+  const activeOnlyBytes = jsonBytes(activeOnlySnapshot);
+
+  return {
+    fullItems,
+    activeItems,
+    itemsRemoved,
+    fullBytes,
+    activeOnlyBytes,
+    bytesSaved: fullBytes - activeOnlyBytes,
+    percentReduced: fullItems === 0 ? 0 : (itemsRemoved / fullItems) * 100,
+  };
+}
+
+/** Return all three byte comparisons together with the cell's verification ratios. */
+export function retentionDiagnostics(
+  cell: RegistryGrowthCell,
+): RetentionDiagnostics {
+  return {
+    metadataOverhead: inactiveMetadataOverhead(cell),
+    retentionFootprint: inactiveRetentionFootprint(cell),
+    snapshotFootprint: snapshotRetentionFootprint(cell),
+    verification: cell.verification,
   };
 }

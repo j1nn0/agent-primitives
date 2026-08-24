@@ -11,7 +11,8 @@ export interface RecordedSemanticCandidateFact {
 /** Ten ordinary repository-investigation turns with automatic discovery enabled. */
 export const RECORDED_SEMANTIC_CANDIDATE_FACTS: readonly RecordedSemanticCandidateFact[] = [
   {
-    content: 'The repository root is /home/j1nn0/repos/j1nn0.github/agent-primitives.',
+    // Scrubbed absolute repository path from the recorded fixture.
+    content: 'The repository root is the agent-primitives repository.',
     toolNames: ['bash'],
   },
   {
