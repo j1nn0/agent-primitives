@@ -20,7 +20,7 @@ The core guard does not know when a harness is about to compact, which messages 
 
 ## Installation
 
-This package is **not currently published to npm**. For local development, build it from the repository root and install the package by local path:
+Install this adapter from the registry (once a release is on npm) or from a local checkout. For local development, build it from the repository root and install the package by local path:
 
 ```sh
 pnpm install
@@ -34,11 +34,13 @@ Pi also supports a one-run, temporary load without adding the package to setting
 pi -e "$(pwd)/packages/context-guard-pi"
 ```
 
-When a published release is available, the Pi npm package syntax is:
+For a registry installation, the Pi npm package syntax is:
 
 ```sh
 pi install npm:@j1nn0/agent-context-guard-pi
 ```
+
+The adapter is tested against @earendil-works/pi-coding-agent 0.84.2; the peer dependency range intentionally stays wide.
 
 ## Pi configuration
 
@@ -64,7 +66,9 @@ pi install -l "$(pwd)/packages/context-guard-pi"
 pi install "$(pwd)/packages/context-guard-pi"
 ```
 
-A project setting can be shared with the project, while a user setting applies to the user's Pi sessions. The absolute local path also avoids ambiguity because Pi resolves local path references relative to the settings file. The npm form is equivalent after a release is published:
+A project setting can be shared with the project, while a user setting applies to the user's Pi sessions. The absolute local path also avoids ambiguity because Pi resolves local path references relative to the settings file.
+
+For a registry installation, the corresponding Pi package setting is:
 
 ```sh
 pi install -l npm:@j1nn0/agent-context-guard-pi

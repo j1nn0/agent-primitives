@@ -16,7 +16,15 @@ Verification is deliberately separate from storage. The built-in literal verifie
 
 ## Installation
 
-Add the package with your package manager:
+Install this package from the registry (once a release is on npm) or from a local checkout. For a local checkout, build it, then install the built package by local path:
+
+```sh
+pnpm install
+pnpm --filter @j1nn0/agent-context-guard build
+pnpm add file:/path/to/agent-primitives/packages/context-guard
+```
+
+For a registry installation, add the package with your package manager:
 
 - pnpm: `pnpm add @j1nn0/agent-context-guard`
 - npm: `npm install @j1nn0/agent-context-guard`

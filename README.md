@@ -16,7 +16,7 @@ Each layer has one job, and the core packages stay on the first line:
 | **Harness adapter** | Observe the lifecycle of a specific agent runtime and enforce or recover. |
 | **MCP adapter** | Expose primitives as capabilities to MCP-based agents. |
 
-Concretely, for the primitive shipped today:
+Concretely, for the primitive implemented today:
 
 ```text
 @j1nn0/agent-context-guard is a decision engine.
@@ -47,13 +47,13 @@ moment, and that is the adapter's job.
 
 #### `@j1nn0/agent-context-guard`
 
-**Shipped.** The context guard records goals, constraints, requirements, decisions, and facts; creates deterministic snapshots; and verifies a candidate context with a literal or injected verifier. See [`packages/context-guard/README.md`](packages/context-guard/README.md) for the package documentation.
+`@j1nn0/agent-context-guard` is implemented in this repository. The context guard records goals, constraints, requirements, decisions, and facts; creates deterministic snapshots; and verifies a candidate context with a literal or injected verifier. See [`packages/context-guard/README.md`](packages/context-guard/README.md) for the package documentation.
 
 ### Harness adapters
 
 #### `@j1nn0/agent-context-guard-pi`
 
-**Shipped.** The Pi extension observes compaction boundaries, verifies protected context after compaction, persists its registry in the local Pi session, and can recover critical failures when explicitly enabled. It also offers optional automatic extraction of protected context from user messages, off by default, and can capture evidence-backed facts learned from tool output, also off by default. See [`packages/context-guard-pi/README.md`](packages/context-guard-pi/README.md) for the package documentation.
+`@j1nn0/agent-context-guard-pi` is implemented in this repository. The Pi extension observes compaction boundaries, verifies protected context after compaction, persists its registry in the local Pi session, and can recover critical failures when explicitly enabled. It also offers optional automatic extraction of protected context from user messages, off by default, and can capture evidence-backed facts learned from tool output, also off by default. See [`packages/context-guard-pi/README.md`](packages/context-guard-pi/README.md) for the package documentation.
 
 ## Direction
 
@@ -74,7 +74,7 @@ The following are **not implemented**. They describe a direction, not an API pro
 - **Tool policy** — allow, deny, and require-approval rules for tool invocation.
 - **MCP adapter** — exposing primitives to MCP-based agents, without the core packages depending on an MCP SDK.
 
-The context guard core and Pi harness adapter are shipped today.
+The context guard core and Pi harness adapter are implemented in this repository.
 
 ## Development
 
