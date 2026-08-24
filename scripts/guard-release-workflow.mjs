@@ -220,6 +220,62 @@ function npmPublishInvocations(records) {
   return invocations;
 }
 
+const expectedReleaseCommitEnv = 'RELEASE_COMMIT';
+const expectedReleaseCommit = '${{ github.sha }}';
+const expectedSlsaPredicate = 'https://slsa.dev/provenance/v1';
+const expectedDsseEnvelope = 'dsseEnvelope';
+const expectedBase64Decode = 'b64decode';
+const expectedRepository = 'https://github.com/j1nn0/agent-primitives';
+const expectedWorkflow = '.github/workflows/release.yml';
+const expectedRef = 'refs/heads/main';
+const expectedCommitField = 'gitCommit';
+
+// Confirms the identity assertions remain in each provenance step; it is structural
+// only and cannot prove the shell and Python semantics are correct.
+function checkProvenanceIdentityStep({ step }, packageLabel) {
+  const hasStepMapping = isRecord(step);
+  const env = hasStepMapping ? step.env : undefined;
+  if (!hasStepMapping || !isRecord(env)) {
+    addViolation(
+      `release.yml ${packageLabel} provenance verification step has no step-level environment for ${expectedReleaseCommitEnv}=${expectedReleaseCommit}.`
+    );
+  } else if (env[expectedReleaseCommitEnv] !== expectedReleaseCommit) {
+    addViolation(
+      `release.yml ${packageLabel} provenance verification step must set ${expectedReleaseCommitEnv} to ${expectedReleaseCommit}.`
+    );
+  }
+
+  if (!hasStepMapping || typeof step.run !== 'string') {
+    addViolation(`release.yml ${packageLabel} provenance verification step must have a string run script.`);
+    return;
+  }
+
+  const run = step.run;
+  if (!run.includes(expectedSlsaPredicate)) {
+    addViolation(`release.yml ${packageLabel} provenance verification step must check the SLSA predicate type ${expectedSlsaPredicate}.`);
+  }
+  if (!run.includes(expectedDsseEnvelope) || !run.includes(expectedBase64Decode)) {
+    addViolation(
+      `release.yml ${packageLabel} provenance verification step must decode the DSSE payload using ${expectedDsseEnvelope} and ${expectedBase64Decode}.`
+    );
+  }
+  if (!run.includes(expectedRepository)) {
+    addViolation(`release.yml ${packageLabel} provenance verification step must verify repository ${expectedRepository}.`);
+  }
+  if (!run.includes(expectedWorkflow)) {
+    addViolation(`release.yml ${packageLabel} provenance verification step must verify workflow ${expectedWorkflow}.`);
+  }
+  if (!run.includes(expectedRef)) {
+    addViolation(`release.yml ${packageLabel} provenance verification step must verify ref ${expectedRef}.`);
+  }
+  if (!run.includes(expectedCommitField)) {
+    addViolation(`release.yml ${packageLabel} provenance verification step must read the ${expectedCommitField} field.`);
+  }
+  if (!run.includes(expectedReleaseCommitEnv)) {
+    addViolation(`release.yml ${packageLabel} provenance verification step must reference ${expectedReleaseCommitEnv} in its run script.`);
+  }
+}
+
 function checkReleaseStructure(release) {
   const { raw, document } = release;
   if (!isRecord(document)) {
@@ -356,6 +412,13 @@ function checkReleaseStructure(release) {
   }
   if (!adapterProvenance) {
     addViolation('release.yml must contain an adapter provenance verification step referencing the npm attestations endpoint.');
+  }
+
+  if (coreProvenance) {
+    checkProvenanceIdentityStep(coreProvenance, 'core');
+  }
+  if (adapterProvenance) {
+    checkProvenanceIdentityStep(adapterProvenance, 'adapter');
   }
 
   if (coreProvenance && publishJobInvocations.length >= 2) {
