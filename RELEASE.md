@@ -28,17 +28,22 @@ GitHub values:
 The workflow filename is part of the trusted-publisher match. Do not rename
 `release.yml`. Do not add a GitHub Actions job environment: an `environment:`
 key changes the OIDC subject claim and breaks the match.
+Changing any of these identity inputs — including renaming the workflow, transferring the repository, or adding an environment — requires reconfiguring the Trusted Publisher on npm before releasing.
 
-The workflow authenticates to npm through GitHub OIDC. It does not use
-`NPM_TOKEN`, a repository npm token secret, or a token-authenticated `.npmrc`.
-The publish job has job-level `contents: read` and `id-token: write`
-permissions. The `validate` and `registry-smoke` jobs have only job-level
-`contents: read`; no other job receives `id-token`.
+The workflow authenticates to npm through Trusted Publishing only. There is no token fallback: it does not use `NPM_TOKEN`, a repository npm token secret, or a token-authenticated `.npmrc`. Both packages are configured on npm to require two-factor authentication and to disallow bypass-2FA tokens. The publish job has job-level `contents: read` and `id-token: write`; the `validate` and `registry-smoke` jobs have only job-level `contents: read`, and no other job receives `id-token`.
 
 Trusted publishing requires npm CLI `11.5.1` or newer and Node.js `22.14.0` or
 newer. The workflow uses the Node `24.x` runner, which already satisfies both
 requirements, so it does not upgrade npm globally. The repository uses
 `pnpm@10.34.5`.
+
+### Supply-chain and release integrity
+
+The release contract is deliberately offline-checkable. The artifact path is `pnpm pack` followed by `npm publish` of the resulting tarball; publishing a package directory is not part of the path. Provenance is mandatory, and the workflow now verifies its SLSA v1 source identity — repository, workflow path, ref, and released commit — with the core checked before the adapter is published.
+
+Both workflows pin every action to a commit SHA and keep a same-line version comment. Dependabot proposes weekly GitHub Actions updates. Because `release.yml` is `workflow_dispatch` only, a Dependabot pull request cannot trigger the release workflow. CI runs `pnpm check:release`, which parses both workflows offline and asserts the release trigger, job dependency and permission boundaries, absence of environments and token references, pack/publish/provenance ordering, tarball publishing flags, setup-node registry configuration, and action-pin format.
+
+Deferred decisions: future tags would use a package-specific `name@version` form, but no tags are created yet. GitHub Releases are deliberately not used for now.
 
 ### Dispatch inputs
 
@@ -129,6 +134,7 @@ endpoint and checks for both predicate types:
 
 - `https://github.com/npm/attestation/tree/main/specs/publish/v0.1`
 - `https://slsa.dev/provenance/v1`
+The SLSA v1 predicate is located by its predicate type and must identify the source repository as `https://github.com/j1nn0/agent-primitives`, the workflow path as `.github/workflows/release.yml`, the ref as `refs/heads/main`, and the released commit. The core identity check runs before the adapter publish, so a core provenance failure prevents the adapter from being published.
 
 For example:
 
