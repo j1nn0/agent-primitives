@@ -59,11 +59,15 @@ moment, and that is the adapter's job.
 
 `@j1nn0/agent-context-guard-pi` is implemented in this repository. The Pi extension observes compaction boundaries, verifies protected context after compaction, persists its registry in the local Pi session, and can recover critical failures when explicitly enabled. It also offers optional automatic extraction of protected context from user messages, off by default, and can capture evidence-backed facts learned from tool output, also off by default. See [`packages/context-guard-pi/README.md`](packages/context-guard-pi/README.md) for the package documentation.
 
+#### `@j1nn0/agent-state-pi`
+
+`@j1nn0/agent-state-pi` is implemented in this repository. The Pi extension provides explicit `/agent-state` commands and four model-callable tools for recording and inspecting caller-declared Agent State, persists it in the local Pi session, and restores it on resume without automatic extraction or per-turn injection. See [`packages/agent-state-pi/README.md`](packages/agent-state-pi/README.md) for the package documentation.
+
 ## Direction
 
-The first harness adapter is now available for Pi. Future work can use that
-integration's real lifecycle feedback before more primitives are built on top of
-it; adapters for other harnesses follow from what it teaches.
+Both core primitives now have a Pi harness adapter. Future work can use those
+integrations' real lifecycle feedback before more primitives are built on top of
+them; adapters for other harnesses follow from what they teach.
 
 ### Possible future primitives
 
