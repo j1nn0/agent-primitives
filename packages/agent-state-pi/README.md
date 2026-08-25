@@ -79,6 +79,8 @@ The adapter's schema version is separate from the core snapshot's `schemaVersion
 
 A new session has no matching custom entry and starts empty. Resuming a session restores its latest valid entry. If the newest entry is missing a required payload, has an unsupported adapter schema version, is malformed, or fails core restoration, the adapter warns once and starts with empty state. It does not silently repair the entry, fall back to an older entry, or append a replacement while loading.
 
+Pi does not write a session file for a brand-new session until the first model turn produces an assistant message. While a new session contains only commands and tool calls, Pi keeps the transcript in memory, so recording state and exiting before any model turn leaves nothing on disk. This is Pi's session-persistence rule rather than a property of this adapter: once a session contains an assistant message, later entries are written normally, and resuming a saved session restores the latest valid entry.
+
 There is no filesystem or cross-session persistence beyond Pi's own session entries.
 
 ## Coexistence with Context Guard

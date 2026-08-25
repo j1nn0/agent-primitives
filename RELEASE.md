@@ -1,161 +1,141 @@
 # Release procedure
 
-This repository publishes two packages:
+The release workflow uses one guarded path for two package families. It never bumps
+versions and it never publishes source directories: each release is packed with
+pnpm and the resulting tarballs are published with npm.
 
-- `@j1nn0/agent-context-guard` (core) — `packages/context-guard`
-- `@j1nn0/agent-context-guard-pi` (Pi adapter) — `packages/context-guard-pi`
+## Package families
 
-The `0.1.1` release publishes both packages. The core must be available on the
-registry before the adapter because the packed adapter depends on the core as
-`^0.1.1`.
+| Family | Core package | Pi adapter package | Current registry status |
+| --- | --- | --- | --- |
+| `context-guard` | `packages/context-guard` → `@j1nn0/agent-context-guard` `0.1.1` | `packages/context-guard-pi` → `@j1nn0/agent-context-guard-pi` `0.1.1` | Published |
+| `agent-state` | `packages/agent-state` → `@j1nn0/agent-state` `0.1.0` | `packages/agent-state-pi` → `@j1nn0/agent-state-pi` `0.1.0` | Implemented, not published; npm currently returns 404 |
+
+The Agent State pair is present in the repository, but it is not installable from
+npm today. Its first release must follow the bootstrap procedure below.
 
 ## Primary path: GitHub Actions
 
 Use [`.github/workflows/release.yml`](.github/workflows/release.yml), whose
-workflow name is **Release**. It is `workflow_dispatch` only: it has no push,
-pull-request, schedule, release, or tag trigger.
+workflow name is **Release**. It is `workflow_dispatch` only. The workflow
+filename is part of the npm Trusted Publisher identity and must remain exactly
+`release.yml`.
 
-### Trusted publishing prerequisites
+### Dispatch inputs and target selection
 
-Configure npm Trusted Publishing separately for both packages with exactly these
-GitHub values:
+- `family` is required and selects exactly one family: `context-guard` or
+  `agent-state`. It defaults to `context-guard`.
+- `mode` is required and is either `validate` or `publish`; it defaults to
+  `validate`.
+- `core_version` is the manifest version of the selected family's core package.
+  Its workflow default is `0.1.1`.
+- `pi_version` is the manifest version of the selected family's Pi adapter. Its
+  workflow default is `0.1.1`.
+- `confirmation` is optional in the input form and is checked only in publish
+  mode. It must equal exactly
+  `publish-<family>-<core_version>-<pi_version>`.
+- `allow_existing_core` defaults to `false` and is only for deliberate partial
+  recovery when the requested core version already exists and the adapter does
+  not.
 
-- owner: `j1nn0`
-- repository: `agent-primitives`
-- workflow filename: `release.yml`
-- environment: none
+For the current Agent State manifests, select `family=agent-state` with
+`core_version=0.1.0` and `pi_version=0.1.0`. The workflow defaults remain
+`0.1.1` so the already-published Context Guard release remains the safe default.
 
-The workflow filename is part of the trusted-publisher match. Do not rename
-`release.yml`. Do not add a GitHub Actions job environment: an `environment:`
-key changes the OIDC subject claim and breaks the match.
-Changing any of these identity inputs — including renaming the workflow, transferring the repository, or adding an environment — requires reconfiguring the Trusted Publisher on npm before releasing.
+### Validate versus publish
 
-The workflow authenticates to npm through Trusted Publishing only. There is no token fallback: it does not use `NPM_TOKEN`, a repository npm token secret, or a token-authenticated `.npmrc`. Both packages are configured on npm to require two-factor authentication and to disallow bypass-2FA tokens. The publish job has job-level `contents: read` and `id-token: write`; the `validate` and `registry-smoke` jobs have only job-level `contents: read`, and no other job receives `id-token`.
+`validate` performs no registry publication and does not require the confirmation
+literal. It installs dependencies from the frozen lockfile, rebuilds from clean
+`dist` directories, runs lint, typecheck, tests, package checks, and examples,
+performs pnpm dry runs, audits both packed tarballs, and runs the selected
+family's fresh-consumer smoke. The local smoke installs both tarballs by absolute
+path in one `npm install`; it does not resolve the Agent State core from npm.
 
-Trusted publishing requires npm CLI `11.5.1` or newer and Node.js `22.14.0` or
-newer. The workflow uses the Node `24.x` runner, which already satisfies both
-requirements, so it does not upgrade npm globally. The repository uses
-`pnpm@11.22.0`.
+`publish` repeats the safety checks, reasserts the manifest versions, performs an
+anonymous registry preflight, and publishes only when the requested registry
+state is safe. The publish job then verifies the core on the registry and verifies
+its provenance before publishing the adapter. Finally it verifies the adapter and
+its provenance, and the anonymous `registry-smoke` job exercises both packages.
 
-### Supply-chain and release integrity
+## Trusted Publishing and first-publish bootstrap
 
-The release contract is deliberately offline-checkable. The artifact path is `pnpm pack` followed by `npm publish` of the resulting tarball; publishing a package directory is not part of the path. Provenance is mandatory, and the workflow now verifies its SLSA v1 source identity — repository, workflow path, ref, and released commit — with the core checked before the adapter is published.
+The release path is tokenless Trusted Publishing only:
 
-Both workflows pin every action to a commit SHA and keep a same-line version comment. Dependabot proposes weekly GitHub Actions updates. Because `release.yml` is `workflow_dispatch` only, a Dependabot pull request cannot trigger the release workflow. CI runs `pnpm check:release`, which parses both workflows offline and asserts the release trigger, job dependency and permission boundaries, absence of environments and token references, pack/publish/provenance ordering, tarball publishing flags, setup-node registry configuration, and action-pin format.
+- no `NPM_TOKEN`;
+- no `NODE_AUTH_TOKEN`;
+- no `secrets.*` expression; and
+- no token-authenticated `.npmrc` or fallback authentication.
 
-Deferred decisions: future tags would use a package-specific `name@version` form, but no tags are created yet. GitHub Releases are deliberately not used for now.
+The workflow uses job-level `contents: read` permissions everywhere, with
+`id-token: write` only on `publish`. It declares no GitHub Actions
+`environment:`. Do not add a token or an environment to the release path.
 
-### Dispatch inputs
+Trusted Publishing cannot perform the first publish of a package that does not
+exist on the npm registry. Therefore the first versions of
+`@j1nn0/agent-state` and `@j1nn0/agent-state-pi` must each be published once by a
+human outside CI. This is documentation only; the workflow contains no bootstrap
+automation. After each package exists, configure its npm Trusted Publisher
+separately with:
 
-| Input | Meaning |
-| --- | --- |
-| `mode` | Required choice: `validate` or `publish`. It defaults to `validate`. |
-| `core_version` | Required string for the core manifest version. It defaults to `0.1.1`. |
-| `pi_version` | Required string for the Pi adapter manifest version. It defaults to `0.1.1`. |
-| `confirmation` | Optional string, empty by default. In publish mode it must equal exactly `publish-<core_version>-<pi_version>`. |
-| `allow_existing_core` | Boolean, default `false`. Use only for deliberate partial recovery when the requested core version is already present and the adapter version is not. |
+- owner: `j1nn0`;
+- repository: `agent-primitives`;
+- workflow filename: `release.yml`; and
+- environment: none.
 
-For this release, the publish confirmation is exactly
-`publish-0.1.1-0.1.1`. The workflow validates both version formats and compares
-both inputs with the package manifests; it never writes or bumps a version.
+Only after both per-package Trusted Publisher settings are configured can the
+Agent State pair use the normal publish dispatch. A bootstrap publish performed
+outside a supported CI provider cannot carry provenance, so it is not a
+substitute for the provenance checks on subsequent Trusted Publishing releases.
 
-### Required sequence
+## Ordering and artifact integrity
 
-1. Dispatch **Release** in `validate` mode from `main`, normally with the two
-   `0.1.1` defaults. Wait for the complete validation job to finish successfully.
-2. Dispatch **Release** again in `publish` mode for the same versions and with
-   the exact confirmation literal. The publish run checks that it is still on
-   `main`, that `main` has not advanced after dispatch, and that the checkout is
-   clean.
-3. Let the workflow pack both packages, publish the core first, verify its
-   registry manifest and provenance, publish the adapter second, and verify its
-   registry manifest and provenance.
+For either family, the required order is:
 
-Validation installs from the frozen lockfile, runs lint, rebuilds both packages
-from a clean `dist`, runs typecheck and tests, runs package checks and the
-example, performs pnpm dry runs, audits both packed tarballs, and runs a fresh
-consumer smoke test. The local smoke installs both tarballs in one npm install
-because the adapter cannot resolve the unpublished core by itself.
+1. pack the core and adapter tarballs with pnpm;
+2. publish the core tarball with `npm publish --access public --provenance`;
+3. verify the core registry manifest and provenance;
+4. publish the adapter tarball with the same flags; and
+5. verify the adapter registry manifest and provenance.
 
-### Publish artifact path
+The adapter is never published before its core. The packed audits require the
+expected name and version, `LICENSE`, `README.md`, `dist/`, and (for the adapter)
+`pi.extensions` targets. They reject workspace dependencies, forbidden test and
+benchmark paths, `.git`, `.npmrc`, nested tarballs, absolute `/home/` paths, and
+`/home/` in file contents. The adapter dependency must be exactly `^<core_version>`
+after pnpm rewrites `workspace:^` during packing.
 
-The publish job packs both packages into a temporary directory with pnpm:
+Each provenance response must contain the npm publish predicate and SLSA v1. The
+SLSA statement must identify:
 
-```sh
-pnpm --filter @j1nn0/agent-context-guard pack --pack-destination "$RUNNER_TEMP/publish-artifacts"
-pnpm --filter @j1nn0/agent-context-guard-pi pack --pack-destination "$RUNNER_TEMP/publish-artifacts"
-```
+- repository: `https://github.com/j1nn0/agent-primitives`;
+- workflow: `.github/workflows/release.yml`;
+- ref: `refs/heads/main`; and
+- the dispatched commit (`github.sha`).
 
-The workflow audits the resulting tarballs before publishing. In particular, it
-checks the package manifests and versions, rejects `workspace:` dependencies,
-requires the adapter dependency to be exactly `^0.1.1`, and checks that every
-`pi.extensions` target exists in the adapter tarball.
+The guard in `scripts/guard-release-workflow.mjs` checks these static invariants,
+including the family pairing, permissions, trigger, action pins, tokenless
+policy, tarball operands, and core-before-adapter provenance ordering. The
+negative-control suite is available as `pnpm test:release-guard`.
 
-This path is intentional. pnpm performs the workspace-protocol rewrite while
-packing; publishing from the adapter package directory with npm would leave the
-literal `workspace:^` dependency in the artifact. npm then publishes the
-finished tarball through its supported OIDC Trusted Publishing path:
+## Registry recovery
 
-```sh
-npm publish <tarball-path> --access public --provenance
-```
+The publish preflight refuses to republish an existing version. It also refuses
+an inconsistent state where the adapter exists but the core does not. If the
+core exists and the adapter does not, the default is to stop; use
+`allow_existing_core=true` only after an explicit decision to verify the existing
+core and publish the missing adapter.
 
-`--provenance` is explicit so a prerequisite or CLI regression fails the release
-rather than silently publishing without an attestation. The pnpm publication
-commands in validation are dry runs only; the actual publish commands are the
-two npm tarball publishes above.
+Inspect the public registry before re-dispatching after a timeout. Registry and
+attestation reads use bounded retries because new releases can take time to
+propagate.
 
-### Registry state handling
+## Required sequence
 
-The publish job performs an anonymous version preflight and uses this state
-machine. It never republishes an existing version or uses force.
+1. Dispatch the selected family in `validate` mode from `main` and wait for the
+   complete validation job to pass.
+2. Dispatch the same family and versions in `publish` mode with the exact
+   family-aware confirmation literal.
+3. Let the workflow finish its core publication, core registry/provenance checks,
+   adapter publication, adapter checks, and anonymous registry smoke.
 
-- **State A — neither version exists:** publish the core, verify its name,
-  version, repository, and provenance, then publish the adapter and verify its
-  version, dependency, and provenance.
-- **State B — core exists, adapter does not:** fail by default with a partial
-  recovery message. If `allow_existing_core=true` is deliberately selected on a
-  new dispatch, verify the existing core's identity and provenance, then publish
-  only the adapter and perform the normal final verification.
-- **State C — adapter exists, core does not:** fail immediately as an
-  inconsistent registry state and publish nothing.
-- **State D — both versions exist:** fail with an already-released message and
-  publish nothing.
-
-Registry reads and attestation reads use the same bounded retry window. A
-newly-created version or attestation can take several minutes to appear on npm's
-public read paths. A timeout means propagation was slow, not that the publish
-was necessarily lost: inspect the registry before re-dispatching.
-
-### Provenance verification
-
-For each package, the workflow requires HTTP 200 from the npm attestations
-endpoint and checks for both predicate types:
-
-- `https://github.com/npm/attestation/tree/main/specs/publish/v0.1`
-- `https://slsa.dev/provenance/v1`
-The SLSA v1 predicate is located by its predicate type and must identify the source repository as `https://github.com/j1nn0/agent-primitives`, the workflow path as `.github/workflows/release.yml`, the ref as `refs/heads/main`, and the released commit. The core identity check runs before the adapter publish, so a core provenance failure prevents the adapter from being published.
-
-For example:
-
-```text
-https://registry.npmjs.org/-/npm/v1/attestations/@j1nn0%2Fagent-context-guard@0.1.1
-https://registry.npmjs.org/-/npm/v1/attestations/@j1nn0%2Fagent-context-guard-pi@0.1.1
-```
-
-The final secret-free `registry-smoke` job installs the exact public versions,
-exercises both packages, and runs `npm audit signatures`. That command's output
-is printed and the job fails if it does not report verified attestations.
-
-## Supported recovery
-
-If a publish is interrupted, inspect the requested versions and re-dispatch the
-workflow rather than publishing manually. When the core is published but the
-adapter is not, use `allow_existing_core=true` for the deliberate State B
-partial-recovery dispatch; the workflow still verifies the existing core before
-publishing the adapter.
-
-A manual local publish is no longer supported: it cannot provide the required
-provenance through this release path and would require a long-lived npm token
-that the project is deliberately removing. Releases before `0.1.1` were
-published with a token; `0.1.1` and later use Trusted Publishing.
+After any required first-publish bootstrap, no manual publish, tag, GitHub Release, or version bump is part of the normal release procedure.
