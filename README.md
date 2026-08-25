@@ -67,12 +67,13 @@ moment, and that is the adapter's job.
 
 `@j1nn0/agent-state-pi` is implemented in this repository. The Pi extension provides explicit `/agent-state` commands and four model-callable tools for recording and inspecting caller-declared Agent State, persists it in the local Pi session, and restores it on resume without automatic extraction or per-turn injection. See [`packages/agent-state-pi/README.md`](packages/agent-state-pi/README.md) for the package documentation.
 
+#### `@j1nn0/agent-progress-pi`
+
+`@j1nn0/agent-progress-pi` is implemented in this repository. The minimal Pi adapter provides explicit `/agent-progress` commands and four model-callable tools for maintaining a caller-declared milestone set, delegates every verdict to `@j1nn0/agent-progress`, and persists the current set plus cumulative baseline in the local Pi session. See [`packages/agent-progress-pi/README.md`](packages/agent-progress-pi/README.md) for the package documentation.
+
 ## Direction
 
-The context guard and Agent state core primitives now have Pi harness adapters.
-Progress is intentionally core-only for now. Future work can use those
-integrations' real lifecycle feedback before more primitives are built on top of
-them; adapters for other harnesses follow from what they teach.
+The context guard, Agent state, and Progress core primitives now have Pi harness adapters. These integrations provide concrete lifecycle boundaries while keeping each core primitive independent and explicit.
 
 ### Possible future primitives
 
@@ -85,7 +86,7 @@ The following are **not implemented**. They describe a direction, not an API pro
 - **Tool policy** — allow, deny, and require-approval rules for tool invocation.
 - **MCP adapter** — exposing primitives to MCP-based agents, without the core packages depending on an MCP SDK.
 
-The context guard core, Agent state core, and Progress core are implemented in this repository. The context guard and Agent state also have Pi harness adapters.
+The context guard core, Agent state core, and Progress core are implemented in this repository, and each currently has a Pi harness adapter.
 
 ## Development
 
