@@ -3,6 +3,14 @@ name: Release
 on:
   workflow_dispatch:
     inputs:
+      family:
+        description: Package family to release
+        required: true
+        default: context-guard
+        type: choice
+        options:
+          - context-guard
+          - agent-state
       mode:
         description: Release mode
         required: true
@@ -12,17 +20,17 @@ on:
           - validate
           - publish
       core_version:
-        description: Version of @j1nn0/agent-context-guard to release
+        description: Version of the core package of the selected family to release
         required: true
         default: 0.1.1
         type: string
       pi_version:
-        description: Version of @j1nn0/agent-context-guard-pi to release
+        description: Version of the Pi adapter package of the selected family to release
         required: true
         default: 0.1.1
         type: string
       confirmation:
-        description: 'Required in publish mode: publish-<core_version>-<pi_version>'
+        description: 'Required in publish mode: publish-<family>-<core_version>-<pi_version>'
         required: false
         default: ''
         type: string
@@ -44,6 +52,13 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    env:
+      CORE_PKG_NAME: ${{ inputs.family == 'agent-state' && '@j1nn0/agent-state' || '@j1nn0/agent-context-guard' }}
+      ADAPTER_PKG_NAME: ${{ inputs.family == 'agent-state' && '@j1nn0/agent-state-pi' || '@j1nn0/agent-context-guard-pi' }}
+      CORE_PKG_DIR: ${{ inputs.family == 'agent-state' && 'packages/agent-state' || 'packages/context-guard' }}
+      ADAPTER_PKG_DIR: ${{ inputs.family == 'agent-state' && 'packages/agent-state-pi' || 'packages/context-guard-pi' }}
+      CORE_TARBALL_BASE: ${{ inputs.family == 'agent-state' && 'j1nn0-agent-state' || 'j1nn0-agent-context-guard' }}
+      ADAPTER_TARBALL_BASE: ${{ inputs.family == 'agent-state' && 'j1nn0-agent-state-pi' || 'j1nn0-agent-context-guard-pi' }}
     steps:
       - name: Check out dispatched commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -52,6 +67,7 @@ jobs:
 
       - name: Validate release inputs and manifests
         env:
+          FAMILY: ${{ inputs.family }}
           MODE: ${{ inputs.mode }}
           CORE_VERSION: ${{ inputs.core_version }}
           PI_VERSION: ${{ inputs.pi_version }}
@@ -70,14 +86,14 @@ jobs:
             exit 1
           fi
 
-          manifest_core_version="$(node -p "JSON.parse(require('node:fs').readFileSync('packages/context-guard/package.json', 'utf8')).version")"
-          manifest_pi_version="$(node -p "JSON.parse(require('node:fs').readFileSync('packages/context-guard-pi/package.json', 'utf8')).version")"
+          manifest_core_version="$(node -p "JSON.parse(require('node:fs').readFileSync('$CORE_PKG_DIR/package.json', 'utf8')).version")"
+          manifest_pi_version="$(node -p "JSON.parse(require('node:fs').readFileSync('$ADAPTER_PKG_DIR/package.json', 'utf8')).version")"
           if [[ "$CORE_VERSION" != "$manifest_core_version" ]]; then
-            echo "core_version $CORE_VERSION does not match packages/context-guard/package.json ($manifest_core_version)." >&2
+            echo "core_version $CORE_VERSION does not match $CORE_PKG_DIR/package.json ($manifest_core_version)." >&2
             exit 1
           fi
           if [[ "$PI_VERSION" != "$manifest_pi_version" ]]; then
-            echo "pi_version $PI_VERSION does not match packages/context-guard-pi/package.json ($manifest_pi_version)." >&2
+            echo "pi_version $PI_VERSION does not match $ADAPTER_PKG_DIR/package.json ($manifest_pi_version)." >&2
             exit 1
           fi
 
@@ -91,7 +107,7 @@ jobs:
           esac
 
           if [[ "$MODE" == "publish" ]]; then
-            expected_confirmation="publish-${CORE_VERSION}-${PI_VERSION}"
+            expected_confirmation="publish-${FAMILY}-${CORE_VERSION}-${PI_VERSION}"
             if [[ "$CONFIRMATION" != "$expected_confirmation" ]]; then
               echo "Invalid confirmation. Expected exactly: $expected_confirmation" >&2
               exit 1
@@ -117,7 +133,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf packages/context-guard/dist packages/context-guard-pi/dist
+          rm -rf "$CORE_PKG_DIR/dist" "$ADAPTER_PKG_DIR/dist"
           pnpm build
 
       - name: Typecheck
@@ -136,8 +152,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          pnpm --filter @j1nn0/agent-context-guard publish --dry-run --access public --no-git-checks
-          pnpm --filter @j1nn0/agent-context-guard-pi publish --dry-run --access public --no-git-checks
+          pnpm --filter "$CORE_PKG_NAME" publish --dry-run --access public --no-git-checks
+          pnpm --filter "$ADAPTER_PKG_NAME" publish --dry-run --access public --no-git-checks
 
       - name: Pack release artifacts
         shell: bash
@@ -145,8 +161,8 @@ jobs:
           set -euo pipefail
           rm -rf "$RUNNER_TEMP/release-artifacts"
           mkdir -p "$RUNNER_TEMP/release-artifacts"
-          pnpm --filter @j1nn0/agent-context-guard pack --pack-destination "$RUNNER_TEMP/release-artifacts"
-          pnpm --filter @j1nn0/agent-context-guard-pi pack --pack-destination "$RUNNER_TEMP/release-artifacts"
+          pnpm --filter "$CORE_PKG_NAME" pack --pack-destination "$RUNNER_TEMP/release-artifacts"
+          pnpm --filter "$ADAPTER_PKG_NAME" pack --pack-destination "$RUNNER_TEMP/release-artifacts"
 
       - name: Extract and audit release artifacts
         env:
@@ -157,8 +173,8 @@ jobs:
           set -euo pipefail
           artifact_dir="$RUNNER_TEMP/release-artifacts"
           audit_dir="$RUNNER_TEMP/release-audit"
-          core_tarball="$(find "$artifact_dir" -maxdepth 1 -type f -name 'j1nn0-agent-context-guard-*.tgz' ! -name 'j1nn0-agent-context-guard-pi-*.tgz' -print -quit)"
-          pi_tarball="$(find "$artifact_dir" -maxdepth 1 -type f -name 'j1nn0-agent-context-guard-pi-*.tgz' -print -quit)"
+          core_tarball="$(find "$artifact_dir" -maxdepth 1 -type f -name "$CORE_TARBALL_BASE-*.tgz" ! -name "$ADAPTER_TARBALL_BASE-*.tgz" -print -quit)"
+          pi_tarball="$(find "$artifact_dir" -maxdepth 1 -type f -name "$ADAPTER_TARBALL_BASE-*.tgz" -print -quit)"
           if [[ -z "$core_tarball" || -z "$pi_tarball" ]]; then
             echo "Could not locate both packed release tarballs." >&2
             exit 1
@@ -169,7 +185,7 @@ jobs:
           tar -xzf "$core_tarball" -C "$audit_dir/core"
           tar -xzf "$pi_tarball" -C "$audit_dir/pi"
 
-          python3 - "$core_tarball" "$pi_tarball" "$audit_dir" "$CORE_VERSION" "$PI_VERSION" <<'PY'
+          python3 - "$core_tarball" "$pi_tarball" "$audit_dir" "$CORE_VERSION" "$PI_VERSION" "$CORE_PKG_NAME" "$ADAPTER_PKG_NAME" <<'PY'
           import json
           import sys
           import tarfile
@@ -180,16 +196,18 @@ jobs:
           audit_dir = Path(sys.argv[3])
           core_version = sys.argv[4]
           pi_version = sys.argv[5]
+          core_package_name = sys.argv[6]
+          adapter_package_name = sys.argv[7]
 
           expected = {
               core_tarball: (
                   audit_dir / "core",
-                  "@j1nn0/agent-context-guard",
+                  core_package_name,
                   core_version,
               ),
               pi_tarball: (
                   audit_dir / "pi",
-                  "@j1nn0/agent-context-guard-pi",
+                  adapter_package_name,
                   pi_version,
               ),
           }
@@ -247,7 +265,7 @@ jobs:
               if extracted_manifest.get("name") != expected_name:
                   fail(f"extracted {archive.name} manifest has unexpected package name")
 
-              if expected_name == "@j1nn0/agent-context-guard-pi":
+              if expected_name == adapter_package_name:
                   dependencies = extracted_manifest.get("dependencies")
                   if not isinstance(dependencies, dict):
                       fail("adapter packed manifest has no dependencies object")
@@ -255,10 +273,10 @@ jobs:
                   if "workspace:" in dependency_text:
                       fail("adapter packed dependencies contain workspace:")
                   expected_dependency = f"^{core_version}"
-                  actual_dependency = dependencies.get("@j1nn0/agent-context-guard")
+                  actual_dependency = dependencies.get(core_package_name)
                   if actual_dependency != expected_dependency:
                       fail(
-                          "adapter packed dependency on @j1nn0/agent-context-guard "
+                          f"adapter packed dependency on {core_package_name} "
                           f"is {actual_dependency!r}, expected {expected_dependency!r}"
                       )
 
@@ -276,7 +294,8 @@ jobs:
           print("Release artifacts passed manifest, contents, extension, and path audits.")
           PY
 
-      - name: Smoke-test packed artifacts in a fresh consumer
+      - name: Smoke-test Context Guard packed artifacts in a fresh consumer
+        if: ${{ inputs.family == 'context-guard' }}
         env:
           CORE_VERSION: ${{ inputs.core_version }}
           PI_VERSION: ${{ inputs.pi_version }}
@@ -285,8 +304,8 @@ jobs:
           set -euo pipefail
           artifact_dir="$RUNNER_TEMP/release-artifacts"
           consumer_dir="$RUNNER_TEMP/release-consumer"
-          core_tarball="$(find "$artifact_dir" -maxdepth 1 -type f -name 'j1nn0-agent-context-guard-*.tgz' ! -name 'j1nn0-agent-context-guard-pi-*.tgz' -print -quit)"
-          pi_tarball="$(find "$artifact_dir" -maxdepth 1 -type f -name 'j1nn0-agent-context-guard-pi-*.tgz' -print -quit)"
+          core_tarball="$(find "$artifact_dir" -maxdepth 1 -type f -name "$CORE_TARBALL_BASE-*.tgz" ! -name "$ADAPTER_TARBALL_BASE-*.tgz" -print -quit)"
+          pi_tarball="$(find "$artifact_dir" -maxdepth 1 -type f -name "$ADAPTER_TARBALL_BASE-*.tgz" -print -quit)"
           if [[ -z "$core_tarball" || -z "$pi_tarball" ]]; then
             echo "Could not locate both packed release tarballs for the consumer smoke test." >&2
             exit 1
@@ -347,6 +366,91 @@ jobs:
           console.log('Packed artifact consumer smoke passed.');
           NODE
 
+      - name: Smoke-test Agent State packed artifacts in a fresh consumer
+        if: ${{ inputs.family == 'agent-state' }}
+        env:
+          CORE_VERSION: ${{ inputs.core_version }}
+          PI_VERSION: ${{ inputs.pi_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/release-artifacts"
+          consumer_dir="$RUNNER_TEMP/release-consumer"
+          core_tarball="$(find "$artifact_dir" -maxdepth 1 -type f -name "$CORE_TARBALL_BASE-*.tgz" ! -name "$ADAPTER_TARBALL_BASE-*.tgz" -print -quit)"
+          pi_tarball="$(find "$artifact_dir" -maxdepth 1 -type f -name "$ADAPTER_TARBALL_BASE-*.tgz" -print -quit)"
+          if [[ -z "$core_tarball" || -z "$pi_tarball" ]]; then
+            echo "Could not locate both packed release tarballs for the consumer smoke test." >&2
+            exit 1
+          fi
+
+          rm -rf "$consumer_dir"
+          mkdir -p "$consumer_dir"
+          cd "$consumer_dir"
+          npm init -y
+          npm install "$core_tarball" "$pi_tarball"
+          node --input-type=module <<'NODE'
+          import {
+            createAgentState,
+            restoreAgentState,
+            summarizeAgentState,
+          } from '@j1nn0/agent-state';
+          import { access, readFile } from 'node:fs/promises';
+
+          const assert = (condition, message) => {
+            if (!condition) {
+              throw new Error(message);
+            }
+          };
+
+          const state = createAgentState({ objective: 'Ship the release safely.' });
+          state.addWorkItem({ id: 'release', content: 'Publish the release.' });
+          state.setWorkItemStatus('release', 'done');
+          state.addDecision({ id: 'ordering', content: 'Publish the core before the adapter.' });
+          const snapshot = state.snapshot();
+          assert(snapshot.schemaVersion === 1, 'snapshot has an unexpected schema version');
+          assert(snapshot.workItems.length === 1, 'snapshot did not contain the work item');
+          assert(snapshot.workItems[0].status === 'done', 'work item status was not updated');
+          assert(snapshot.decisions.length === 1, 'snapshot did not contain the decision');
+
+          const summary = summarizeAgentState(snapshot);
+          assert(
+            summary.open === 0 &&
+              summary.in_progress === 0 &&
+              summary.blocked === 0 &&
+              summary.done === 1 &&
+              summary.total === 1,
+            'Agent State summary counts were incorrect',
+          );
+          const restored = restoreAgentState(snapshot);
+          assert(
+            JSON.stringify(restored.snapshot()) === JSON.stringify(snapshot),
+            'Agent State restore did not preserve the snapshot',
+          );
+
+          const adapter = await import('@j1nn0/agent-state-pi');
+          assert(typeof adapter.default === 'function', 'Pi adapter default export is not a function');
+
+          const adapterManifestUrl = new URL(
+            import.meta.resolve('@j1nn0/agent-state-pi/package.json'),
+          );
+          const adapterManifest = JSON.parse(await readFile(adapterManifestUrl, 'utf8'));
+          const extensions = adapterManifest.pi?.extensions;
+          assert(Array.isArray(extensions) && extensions.length > 0, 'pi.extensions is missing');
+          for (const target of extensions) {
+            await access(new URL(target, adapterManifestUrl));
+          }
+          const dependency = adapterManifest.dependencies?.['@j1nn0/agent-state'];
+          assert(
+            dependency === `^${process.env.CORE_VERSION}`,
+            'packed adapter does not depend on the expected core version',
+          );
+          assert(
+            !JSON.stringify(adapterManifest.dependencies ?? {}).includes('workspace:'),
+            'packed adapter dependencies contain workspace:',
+          );
+          console.log('Agent State packed artifact consumer smoke passed.');
+          NODE
+
   publish:
     permissions:
       contents: read
@@ -354,6 +458,13 @@ jobs:
     if: ${{ inputs.mode == 'publish' }}
     needs: validate
     runs-on: ubuntu-latest
+    env:
+      CORE_PKG_NAME: ${{ inputs.family == 'agent-state' && '@j1nn0/agent-state' || '@j1nn0/agent-context-guard' }}
+      ADAPTER_PKG_NAME: ${{ inputs.family == 'agent-state' && '@j1nn0/agent-state-pi' || '@j1nn0/agent-context-guard-pi' }}
+      CORE_PKG_DIR: ${{ inputs.family == 'agent-state' && 'packages/agent-state' || 'packages/context-guard' }}
+      ADAPTER_PKG_DIR: ${{ inputs.family == 'agent-state' && 'packages/agent-state-pi' || 'packages/context-guard-pi' }}
+      CORE_TARBALL_BASE: ${{ inputs.family == 'agent-state' && 'j1nn0-agent-state' || 'j1nn0-agent-context-guard' }}
+      ADAPTER_TARBALL_BASE: ${{ inputs.family == 'agent-state' && 'j1nn0-agent-state-pi' || 'j1nn0-agent-context-guard-pi' }}
     steps:
       - name: Check out dispatched commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -411,7 +522,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf packages/context-guard/dist packages/context-guard-pi/dist
+          rm -rf "$CORE_PKG_DIR/dist" "$ADAPTER_PKG_DIR/dist"
           pnpm build
 
       - name: Re-assert manifest versions
@@ -421,8 +532,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          manifest_core_version="$(node -p "JSON.parse(require('node:fs').readFileSync('packages/context-guard/package.json', 'utf8')).version")"
-          manifest_pi_version="$(node -p "JSON.parse(require('node:fs').readFileSync('packages/context-guard-pi/package.json', 'utf8')).version")"
+          manifest_core_version="$(node -p "JSON.parse(require('node:fs').readFileSync('$CORE_PKG_DIR/package.json', 'utf8')).version")"
+          manifest_pi_version="$(node -p "JSON.parse(require('node:fs').readFileSync('$ADAPTER_PKG_DIR/package.json', 'utf8')).version")"
           if [[ "$CORE_VERSION" != "$manifest_core_version" ]]; then
             echo "core_version no longer matches the core manifest." >&2
             exit 1
@@ -443,15 +554,15 @@ jobs:
           artifact_dir="$RUNNER_TEMP/publish-artifacts"
           rm -rf "$artifact_dir"
           mkdir -p "$artifact_dir"
-          pnpm --filter @j1nn0/agent-context-guard pack --pack-destination "$artifact_dir"
-          pnpm --filter @j1nn0/agent-context-guard-pi pack --pack-destination "$artifact_dir"
-          core_tarball="$(find "$artifact_dir" -maxdepth 1 -type f -name 'j1nn0-agent-context-guard-*.tgz' ! -name 'j1nn0-agent-context-guard-pi-*.tgz' -print -quit)"
-          pi_tarball="$(find "$artifact_dir" -maxdepth 1 -type f -name 'j1nn0-agent-context-guard-pi-*.tgz' -print -quit)"
+          pnpm --filter "$CORE_PKG_NAME" pack --pack-destination "$artifact_dir"
+          pnpm --filter "$ADAPTER_PKG_NAME" pack --pack-destination "$artifact_dir"
+          core_tarball="$(find "$artifact_dir" -maxdepth 1 -type f -name "$CORE_TARBALL_BASE-*.tgz" ! -name "$ADAPTER_TARBALL_BASE-*.tgz" -print -quit)"
+          pi_tarball="$(find "$artifact_dir" -maxdepth 1 -type f -name "$ADAPTER_TARBALL_BASE-*.tgz" -print -quit)"
           if [[ -z "$core_tarball" || -z "$pi_tarball" ]]; then
             echo "Could not locate both pre-publish release tarballs." >&2
             exit 1
           fi
-          python3 - "$core_tarball" "$pi_tarball" "$CORE_VERSION" "$PI_VERSION" <<'PY'
+          python3 - "$core_tarball" "$pi_tarball" "$CORE_VERSION" "$PI_VERSION" "$CORE_PKG_NAME" "$ADAPTER_PKG_NAME" <<'PY'
           import json
           import sys
           import tarfile
@@ -461,10 +572,12 @@ jobs:
           pi_tarball = sys.argv[2]
           core_version = sys.argv[3]
           pi_version = sys.argv[4]
+          core_package_name = sys.argv[5]
+          adapter_package_name = sys.argv[6]
 
           expected = {
-              core_tarball: ("@j1nn0/agent-context-guard", core_version),
-              pi_tarball: ("@j1nn0/agent-context-guard-pi", pi_version),
+              core_tarball: (core_package_name, core_version),
+              pi_tarball: (adapter_package_name, pi_version),
           }
           forbidden_parts = {"test", "tests", "benchmark", "benchmarks", ".git", ".npmrc"}
 
@@ -524,10 +637,10 @@ jobs:
           if "workspace:" in dependency_text:
               fail("adapter packed dependencies contain workspace:")
           expected_dependency = f"^{core_version}"
-          actual_dependency = dependencies.get("@j1nn0/agent-context-guard")
+          actual_dependency = dependencies.get(core_package_name)
           if actual_dependency != expected_dependency:
               fail(
-                  "adapter packed dependency on @j1nn0/agent-context-guard "
+                  f"adapter packed dependency on {core_package_name} "
                   f"is {actual_dependency!r}, expected {expected_dependency!r}"
               )
 
@@ -570,11 +683,11 @@ jobs:
           rm -f "$core_view_file" "$adapter_view_file"
 
           core_exists=false
-          if npm view "@j1nn0/agent-context-guard@$CORE_VERSION" --json > "$core_view_file" 2>&1; then
+          if npm view "$CORE_PKG_NAME@$CORE_VERSION" --json > "$core_view_file" 2>&1; then
             core_exists=true
           fi
           adapter_exists=false
-          if npm view "@j1nn0/agent-context-guard-pi@$PI_VERSION" --json > "$adapter_view_file" 2>&1; then
+          if npm view "$ADAPTER_PKG_NAME@$PI_VERSION" --json > "$adapter_view_file" 2>&1; then
             adapter_exists=true
           fi
 
@@ -613,12 +726,12 @@ jobs:
               retry_delay=15
               core_identity_visible=false
               for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
-                if npm view "@j1nn0/agent-context-guard@$CORE_VERSION" name version repository --prefer-online --json > "$core_identity_file" 2> "$core_identity_error_file"; then
+                if npm view "$CORE_PKG_NAME@$CORE_VERSION" name version repository --prefer-online --json > "$core_identity_file" 2> "$core_identity_error_file"; then
                   core_identity_visible=true
                   break
                 fi
                 if (( attempt < max_attempts )); then
-                  echo "Waiting for @j1nn0/agent-context-guard@$CORE_VERSION on the public registry (attempt $attempt/$max_attempts); retrying in ${retry_delay}s."
+                  echo "Waiting for $CORE_PKG_NAME@$CORE_VERSION on the public registry (attempt $attempt/$max_attempts); retrying in ${retry_delay}s."
                   sleep "$retry_delay"
                 fi
               done
@@ -627,10 +740,11 @@ jobs:
                 cat "$core_identity_error_file" >&2
                 exit 1
               fi
-              python3 - "$core_identity_file" "$CORE_VERSION" <<'PY'
+              python3 - "$core_identity_file" "$CORE_VERSION" "$CORE_PKG_NAME" <<'PY'
           import json
           import sys
 
+          expected_package_name = sys.argv[3]
           with open(sys.argv[1], encoding="utf-8") as handle:
               data = json.load(handle)
           if isinstance(data, list):
@@ -639,7 +753,7 @@ jobs:
               data = data[0]
           if not isinstance(data, dict):
               raise SystemExit("Existing core verification returned no manifest object.")
-          if data.get("name") != "@j1nn0/agent-context-guard":
+          if data.get("name") != expected_package_name:
               raise SystemExit("Existing core has an unexpected package name.")
           if data.get("version") != sys.argv[2]:
               raise SystemExit("Existing core has an unexpected version.")
@@ -699,12 +813,12 @@ jobs:
           retry_delay=15
           core_visible=false
           for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
-            if npm view "@j1nn0/agent-context-guard@$CORE_VERSION" name version repository --prefer-online --json > "$verification_file" 2> "$verification_error_file"; then
+            if npm view "$CORE_PKG_NAME@$CORE_VERSION" name version repository --prefer-online --json > "$verification_file" 2> "$verification_error_file"; then
               core_visible=true
               break
             fi
             if (( attempt < max_attempts )); then
-              echo "Waiting for @j1nn0/agent-context-guard@$CORE_VERSION on the public registry (attempt $attempt/$max_attempts); retrying in ${retry_delay}s."
+              echo "Waiting for $CORE_PKG_NAME@$CORE_VERSION on the public registry (attempt $attempt/$max_attempts); retrying in ${retry_delay}s."
               sleep "$retry_delay"
             fi
           done
@@ -713,10 +827,11 @@ jobs:
             cat "$verification_error_file" >&2
             exit 1
           fi
-          python3 - "$verification_file" "$CORE_VERSION" <<'PY'
+          python3 - "$verification_file" "$CORE_VERSION" "$CORE_PKG_NAME" <<'PY'
           import json
           import sys
 
+          expected_package_name = sys.argv[3]
           with open(sys.argv[1], encoding="utf-8") as handle:
               data = json.load(handle)
           if isinstance(data, list):
@@ -725,7 +840,7 @@ jobs:
               data = data[0]
           if not isinstance(data, dict):
               raise SystemExit("Core registry verification returned no manifest object.")
-          if data.get("name") != "@j1nn0/agent-context-guard":
+          if data.get("name") != expected_package_name:
               raise SystemExit("Core registry verification returned an unexpected package name.")
           if data.get("version") != sys.argv[2]:
               raise SystemExit("Core registry verification returned an unexpected version.")
@@ -743,7 +858,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          attestation_url="https://registry.npmjs.org/-/npm/v1/attestations/@j1nn0%2Fagent-context-guard@$CORE_VERSION"
+          attestation_url="https://registry.npmjs.org/-/npm/v1/attestations/${CORE_PKG_NAME/\//%2F}@$CORE_VERSION"
           attestation_file="$RUNNER_TEMP/core-provenance-attestation"
           rm -f "$attestation_file"
           max_attempts=40
@@ -871,11 +986,11 @@ jobs:
             fi
           done
           if [[ "$core_attestation_visible" != true ]]; then
-            echo "Core provenance attestation did not appear for @j1nn0/agent-context-guard@$CORE_VERSION; the adapter will not be published." >&2
+            echo "Core provenance attestation did not appear for $CORE_PKG_NAME@$CORE_VERSION; the adapter will not be published." >&2
             echo "Last attestation HTTP status: ${core_attestation_status:-unknown}." >&2
             exit 1
           fi
-          echo "Core provenance attestation verified for @j1nn0/agent-context-guard@$CORE_VERSION."
+          echo "Core provenance attestation verified for $CORE_PKG_NAME@$CORE_VERSION."
 
       - name: Publish Pi adapter
         if: ${{ success() && steps.registry_preflight.outputs.publish_adapter == 'true' }}
@@ -899,12 +1014,12 @@ jobs:
           retry_delay=15
           adapter_visible=false
           for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
-            if npm view "@j1nn0/agent-context-guard-pi@$PI_VERSION" name version dependencies --prefer-online --json > "$verification_file" 2> "$verification_error_file"; then
+            if npm view "$ADAPTER_PKG_NAME@$PI_VERSION" name version dependencies --prefer-online --json > "$verification_file" 2> "$verification_error_file"; then
               adapter_visible=true
               break
             fi
             if (( attempt < max_attempts )); then
-              echo "Waiting for @j1nn0/agent-context-guard-pi@$PI_VERSION on the public registry (attempt $attempt/$max_attempts); retrying in ${retry_delay}s."
+              echo "Waiting for $ADAPTER_PKG_NAME@$PI_VERSION on the public registry (attempt $attempt/$max_attempts); retrying in ${retry_delay}s."
               sleep "$retry_delay"
             fi
           done
@@ -913,10 +1028,12 @@ jobs:
             cat "$verification_error_file" >&2
             exit 1
           fi
-          python3 - "$verification_file" "$PI_VERSION" "$CORE_VERSION" <<'PY'
+          python3 - "$verification_file" "$PI_VERSION" "$CORE_VERSION" "$ADAPTER_PKG_NAME" "$CORE_PKG_NAME" <<'PY'
           import json
           import sys
 
+          adapter_package_name = sys.argv[4]
+          core_package_name = sys.argv[5]
           with open(sys.argv[1], encoding="utf-8") as handle:
               data = json.load(handle)
           if isinstance(data, list):
@@ -925,13 +1042,13 @@ jobs:
               data = data[0]
           if not isinstance(data, dict):
               raise SystemExit("Pi adapter registry verification returned no manifest object.")
-          if data.get("name") != "@j1nn0/agent-context-guard-pi":
+          if data.get("name") != adapter_package_name:
               raise SystemExit("Pi adapter registry verification returned an unexpected package name.")
           if data.get("version") != sys.argv[2]:
               raise SystemExit("Pi adapter registry verification returned an unexpected version.")
           dependencies = data.get("dependencies")
           expected = f"^{sys.argv[3]}"
-          if not isinstance(dependencies, dict) or dependencies.get("@j1nn0/agent-context-guard") != expected:
+          if not isinstance(dependencies, dict) or dependencies.get(core_package_name) != expected:
               raise SystemExit(
                   "Pi adapter registry verification returned an unexpected core dependency."
               )
@@ -946,7 +1063,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          attestation_url="https://registry.npmjs.org/-/npm/v1/attestations/@j1nn0%2Fagent-context-guard-pi@$PI_VERSION"
+          attestation_url="https://registry.npmjs.org/-/npm/v1/attestations/${ADAPTER_PKG_NAME/\//%2F}@$PI_VERSION"
           attestation_file="$RUNNER_TEMP/pi-provenance-attestation"
           rm -f "$attestation_file"
           max_attempts=40
@@ -1074,11 +1191,11 @@ jobs:
             fi
           done
           if [[ "$pi_attestation_visible" != true ]]; then
-            echo "Pi adapter provenance attestation did not appear for @j1nn0/agent-context-guard-pi@$PI_VERSION." >&2
+            echo "Pi adapter provenance attestation did not appear for $ADAPTER_PKG_NAME@$PI_VERSION." >&2
             echo "Last attestation HTTP status: ${pi_attestation_status:-unknown}." >&2
             exit 1
           fi
-          echo "Pi adapter provenance attestation verified for @j1nn0/agent-context-guard-pi@$PI_VERSION."
+          echo "Pi adapter provenance attestation verified for $ADAPTER_PKG_NAME@$PI_VERSION."
 
   registry-smoke:
     permissions:
@@ -1086,6 +1203,9 @@ jobs:
     if: ${{ needs.publish.result == 'success' }}
     needs: publish
     runs-on: ubuntu-latest
+    env:
+      CORE_PKG_NAME: ${{ inputs.family == 'agent-state' && '@j1nn0/agent-state' || '@j1nn0/agent-context-guard' }}
+      ADAPTER_PKG_NAME: ${{ inputs.family == 'agent-state' && '@j1nn0/agent-state-pi' || '@j1nn0/agent-context-guard-pi' }}
     steps:
       - name: Check out dispatched commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1098,7 +1218,8 @@ jobs:
         with:
           node-version: 24.x
 
-      - name: Smoke-test the public registry anonymously
+      - name: Smoke-test Context Guard on the public registry anonymously
+        if: ${{ inputs.family == 'context-guard' }}
         env:
           CORE_VERSION: ${{ inputs.core_version }}
           PI_VERSION: ${{ inputs.pi_version }}
@@ -1110,7 +1231,7 @@ jobs:
           mkdir -p "$consumer_dir"
           cd "$consumer_dir"
           npm init -y
-          npm install "@j1nn0/agent-context-guard@$CORE_VERSION" "@j1nn0/agent-context-guard-pi@$PI_VERSION"
+          npm install "$CORE_PKG_NAME@$CORE_VERSION" "$ADAPTER_PKG_NAME@$PI_VERSION"
           node --input-type=module <<'NODE'
           import { createContextGuard, createLiteralVerifier } from '@j1nn0/agent-context-guard';
           import { readFile } from 'node:fs/promises';
@@ -1171,6 +1292,96 @@ jobs:
           assert(typeof peerManifest.version === 'string', 'installed Pi peer has no version');
           console.log(`Installed @earendil-works/pi-coding-agent version: ${peerManifest.version}`);
           console.log('Public registry consumer smoke passed.');
+          NODE
+          signature_output_file="$RUNNER_TEMP/npm-audit-signatures"
+          if npm audit signatures > "$signature_output_file" 2>&1; then
+            cat "$signature_output_file"
+          else
+            cat "$signature_output_file"
+            echo "npm audit signatures failed." >&2
+            exit 1
+          fi
+          if ! grep -Eiq '[1-9][0-9]* packages? (has|have) (a )?verified attestations?' "$signature_output_file"; then
+            echo "npm audit signatures reported no verified attestations." >&2
+            exit 1
+          fi
+
+      - name: Smoke-test Agent State on the public registry anonymously
+        if: ${{ inputs.family == 'agent-state' }}
+        env:
+          CORE_VERSION: ${{ inputs.core_version }}
+          PI_VERSION: ${{ inputs.pi_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          consumer_dir="$RUNNER_TEMP/registry-consumer"
+          rm -rf "$consumer_dir"
+          mkdir -p "$consumer_dir"
+          cd "$consumer_dir"
+          npm init -y
+          npm install "$CORE_PKG_NAME@$CORE_VERSION" "$ADAPTER_PKG_NAME@$PI_VERSION"
+          node --input-type=module <<'NODE'
+          import {
+            createAgentState,
+            restoreAgentState,
+            summarizeAgentState,
+          } from '@j1nn0/agent-state';
+          import { readFile } from 'node:fs/promises';
+          import { join } from 'node:path';
+
+          const assert = (condition, message) => {
+            if (!condition) {
+              throw new Error(message);
+            }
+          };
+
+          const state = createAgentState({ objective: 'Ship the public release safely.' });
+          state.addWorkItem({ id: 'release', content: 'Publish the release.' });
+          state.setWorkItemStatus('release', 'done');
+          state.addDecision({ id: 'ordering', content: 'Publish the core before the adapter.' });
+          const snapshot = state.snapshot();
+          assert(snapshot.schemaVersion === 1, 'registry snapshot has an unexpected schema version');
+          assert(snapshot.workItems.length === 1, 'registry snapshot did not contain the work item');
+          assert(snapshot.workItems[0].status === 'done', 'registry work item status was not updated');
+          assert(snapshot.decisions.length === 1, 'registry snapshot did not contain the decision');
+          const summary = summarizeAgentState(snapshot);
+          assert(
+            summary.open === 0 &&
+              summary.in_progress === 0 &&
+              summary.blocked === 0 &&
+              summary.done === 1 &&
+              summary.total === 1,
+            'registry Agent State summary counts were incorrect',
+          );
+          const restored = restoreAgentState(snapshot);
+          assert(
+            JSON.stringify(restored.snapshot()) === JSON.stringify(snapshot),
+            'registry Agent State restore did not preserve the snapshot',
+          );
+
+          const adapter = await import('@j1nn0/agent-state-pi');
+          assert(typeof adapter.default === 'function', 'installed Pi adapter default export is not a function');
+
+          const adapterManifestUrl = new URL(
+            import.meta.resolve('@j1nn0/agent-state-pi/package.json'),
+          );
+          const adapterManifest = JSON.parse(await readFile(adapterManifestUrl, 'utf8'));
+          const expectedDependency = `^${process.env.CORE_VERSION}`;
+          assert(
+            adapterManifest.dependencies?.['@j1nn0/agent-state'] === expectedDependency,
+            'installed adapter does not depend on the expected core version',
+          );
+          const peerManifestPath = join(
+            process.cwd(),
+            'node_modules',
+            '@earendil-works',
+            'pi-coding-agent',
+            'package.json',
+          );
+          const peerManifest = JSON.parse(await readFile(peerManifestPath, 'utf8'));
+          assert(typeof peerManifest.version === 'string', 'installed Pi peer has no version');
+          console.log(`Installed @earendil-works/pi-coding-agent version: ${peerManifest.version}`);
+          console.log('Public registry Agent State consumer smoke passed.');
           NODE
           signature_output_file="$RUNNER_TEMP/npm-audit-signatures"
           if npm audit signatures > "$signature_output_file" 2>&1; then

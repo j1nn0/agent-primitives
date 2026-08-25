@@ -5,7 +5,8 @@ import YAML from 'yaml';
 
 /* global console, process */
 
-const rootDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const defaultRootDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const rootDirectory = resolve(process.argv[2] ?? process.env.RELEASE_GUARD_ROOT ?? defaultRootDirectory);
 const workflowSources = [
   {
     name: 'release.yml',
@@ -286,6 +287,29 @@ function checkReleaseStructure(release) {
   const triggers = triggerMapping(document);
   exactKeys(triggers, ['workflow_dispatch'], 'release.yml triggers');
 
+  const workflowDispatch = isRecord(triggers) ? triggers.workflow_dispatch : undefined;
+  const inputs = isRecord(workflowDispatch) ? workflowDispatch.inputs : undefined;
+  const familyInput = isRecord(inputs) ? inputs.family : undefined;
+  const expectedFamilyOptions = ['context-guard', 'agent-state'];
+  if (!isRecord(familyInput)) {
+    addViolation('release.yml workflow_dispatch must define a family input.');
+  } else {
+    if (familyInput.required !== true) {
+      addViolation('release.yml family input must be required.');
+    }
+    if (familyInput.type !== 'choice') {
+      addViolation('release.yml family input must have type choice.');
+    }
+    if (JSON.stringify(familyInput.options) !== JSON.stringify(expectedFamilyOptions)) {
+      addViolation(
+        `release.yml family input options must be exactly ${JSON.stringify(expectedFamilyOptions)}; found ${describe(familyInput.options)}.`,
+      );
+    }
+    if (familyInput.default !== 'context-guard') {
+      addViolation('release.yml family input must default to context-guard.');
+    }
+  }
+
   const jobs = document.jobs;
   const expectedJobs = ['validate', 'publish', 'registry-smoke'];
   exactKeys(jobs, expectedJobs, 'release.yml jobs');
@@ -326,6 +350,27 @@ function checkReleaseStructure(release) {
     );
   }
 
+  const expectedFamilyEnvironment = {
+    CORE_PKG_NAME: "${{ inputs.family == 'agent-state' && '@j1nn0/agent-state' || '@j1nn0/agent-context-guard' }}",
+    ADAPTER_PKG_NAME: "${{ inputs.family == 'agent-state' && '@j1nn0/agent-state-pi' || '@j1nn0/agent-context-guard-pi' }}",
+    CORE_PKG_DIR: "${{ inputs.family == 'agent-state' && 'packages/agent-state' || 'packages/context-guard' }}",
+    ADAPTER_PKG_DIR: "${{ inputs.family == 'agent-state' && 'packages/agent-state-pi' || 'packages/context-guard-pi' }}",
+    CORE_TARBALL_BASE: "${{ inputs.family == 'agent-state' && 'j1nn0-agent-state' || 'j1nn0-agent-context-guard' }}",
+    ADAPTER_TARBALL_BASE: "${{ inputs.family == 'agent-state' && 'j1nn0-agent-state-pi' || 'j1nn0-agent-context-guard-pi' }}",
+  };
+  if (isRecord(jobs)) {
+    exactMapping(jobs.validate?.env, expectedFamilyEnvironment, 'release.yml validate family environment');
+    exactMapping(jobs.publish?.env, expectedFamilyEnvironment, 'release.yml publish family environment');
+    exactMapping(
+      jobs['registry-smoke']?.env,
+      {
+        CORE_PKG_NAME: expectedFamilyEnvironment.CORE_PKG_NAME,
+        ADAPTER_PKG_NAME: expectedFamilyEnvironment.ADAPTER_PKG_NAME,
+      },
+      'release.yml registry-smoke family environment',
+    );
+  }
+
   for (const token of ['NPM_TOKEN', 'NODE_AUTH_TOKEN']) {
     if (raw.includes(token)) {
       addViolation(`release.yml must not contain ${token}.`);
@@ -336,8 +381,8 @@ function checkReleaseStructure(release) {
   }
 
   const releaseSteps = stepRecords(document);
-  const corePackage = '@j1nn0/agent-context-guard';
-  const adapterPackage = '@j1nn0/agent-context-guard-pi';
+  const corePackage = '"$CORE_PKG_NAME"';
+  const adapterPackage = '"$ADAPTER_PKG_NAME"';
   const hasCorePack = releaseSteps.some(
     ({ step }) => isRecord(step) && typeof step.run === 'string' && hasPnpmPackInvocation(step.run, corePackage),
   );
@@ -392,20 +437,23 @@ function checkReleaseStructure(release) {
   });
 
   const provenanceMarker = 'https://registry.npmjs.org/-/npm/v1/attestations/';
+  const provenanceEscape = String.fromCharCode(92);
+  const coreProvenancePackageReference = '$' + '{CORE_PKG_NAME/' + provenanceEscape + '//%2F}';
+  const adapterProvenancePackageReference = '$' + '{ADAPTER_PKG_NAME/' + provenanceEscape + '//%2F}';
   const coreProvenance = publishRecords.find(
     ({ step }) =>
       isRecord(step) &&
       typeof step.run === 'string' &&
       step.run.includes(provenanceMarker) &&
-      step.run.includes('/agent-context-guard@') &&
-      !step.run.includes('/agent-context-guard-pi@'),
+      step.run.includes(coreProvenancePackageReference) &&
+      !step.run.includes(adapterProvenancePackageReference),
   );
   const adapterProvenance = publishRecords.find(
     ({ step }) =>
       isRecord(step) &&
       typeof step.run === 'string' &&
       step.run.includes(provenanceMarker) &&
-      step.run.includes('/agent-context-guard-pi@'),
+      step.run.includes(adapterProvenancePackageReference),
   );
   if (!coreProvenance) {
     addViolation('release.yml must contain a core provenance verification step referencing the npm attestations endpoint.');
