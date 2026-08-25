@@ -1,6 +1,6 @@
 # Release procedure
 
-The release workflow uses one guarded path for two package families. It never bumps
+The release workflow uses one guarded path for three package families. It never bumps
 versions and it never publishes source directories: each release is packed with
 pnpm and the resulting tarballs are published with npm.
 
@@ -9,10 +9,12 @@ pnpm and the resulting tarballs are published with npm.
 | Family | Core package | Pi adapter package | Current registry status |
 | --- | --- | --- | --- |
 | `context-guard` | `packages/context-guard` → `@j1nn0/agent-context-guard` `0.1.1` | `packages/context-guard-pi` → `@j1nn0/agent-context-guard-pi` `0.1.1` | Published |
-| `agent-state` | `packages/agent-state` → `@j1nn0/agent-state` `0.1.0` | `packages/agent-state-pi` → `@j1nn0/agent-state-pi` `0.1.0` | Implemented, not published; npm currently returns 404 |
+| `agent-state` | `packages/agent-state` → `@j1nn0/agent-state` `0.1.0` | `packages/agent-state-pi` → `@j1nn0/agent-state-pi` `0.1.0` | Implemented and release-ready, not published; npm currently returns 404 |
+| `agent-progress` | `packages/agent-progress` → `@j1nn0/agent-progress` `0.1.0` | `packages/agent-progress-pi` → `@j1nn0/agent-progress-pi` `0.1.0` | Implemented and release-ready, not published; npm currently returns 404 |
 
-The Agent State pair is present in the repository, but it is not installable from
-npm today. Its first release must follow the bootstrap procedure below.
+The Agent State and Progress pairs are implemented in the repository, but neither
+pair is installable from npm today. Their first releases must follow the bootstrap
+procedure below.
 
 ## Primary path: GitHub Actions
 
@@ -23,8 +25,8 @@ filename is part of the npm Trusted Publisher identity and must remain exactly
 
 ### Dispatch inputs and target selection
 
-- `family` is required and selects exactly one family: `context-guard` or
-  `agent-state`. It defaults to `context-guard`.
+- `family` is required and selects exactly one family: `context-guard`,
+  `agent-state`, or `agent-progress`. It defaults to `context-guard`.
 - `mode` is required and is either `validate` or `publish`; it defaults to
   `validate`.
 - `core_version` is the manifest version of the selected family's core package.
@@ -38,8 +40,8 @@ filename is part of the npm Trusted Publisher identity and must remain exactly
   recovery when the requested core version already exists and the adapter does
   not.
 
-For the current Agent State manifests, select `family=agent-state` with
-`core_version=0.1.0` and `pi_version=0.1.0`. The workflow defaults remain
+For the current Agent State and Progress manifests, select the matching family
+with `core_version=0.1.0` and `pi_version=0.1.0`. The workflow defaults remain
 `0.1.1` so the already-published Context Guard release remains the safe default.
 
 ### Validate versus publish
@@ -49,7 +51,7 @@ literal. It installs dependencies from the frozen lockfile, rebuilds from clean
 `dist` directories, runs lint, typecheck, tests, package checks, and examples,
 performs pnpm dry runs, audits both packed tarballs, and runs the selected
 family's fresh-consumer smoke. The local smoke installs both tarballs by absolute
-path in one `npm install`; it does not resolve the Agent State core from npm.
+path in one `npm install`; it does not resolve an unpublished family core from npm.
 
 `publish` repeats the safety checks, reasserts the manifest versions, performs an
 anonymous registry preflight, and publishes only when the requested registry
@@ -72,24 +74,29 @@ The workflow uses job-level `contents: read` permissions everywhere, with
 
 Trusted Publishing cannot perform the first publish of a package that does not
 exist on the npm registry. Therefore the first versions of
-`@j1nn0/agent-state` and `@j1nn0/agent-state-pi` must each be published once by a
-human outside CI. This is documentation only; the workflow contains no bootstrap
-automation. After each package exists, configure its npm Trusted Publisher
-separately with:
+`@j1nn0/agent-state`, `@j1nn0/agent-state-pi`, `@j1nn0/agent-progress`, and
+`@j1nn0/agent-progress-pi` must each be published once by a human outside CI.
+The Progress pair is implemented and release-ready but not published; like Agent
+State before it, it needs this one-time bootstrap before Trusted Publishing can be
+configured. This is documentation only; the workflow contains no bootstrap
+automation. npm cannot configure a trusted publisher for a package that does not
+exist yet: `npm trust` requires "Package must exist", and npm/cli#8544 is still
+open. After each package exists, configure its npm Trusted Publisher separately
+with:
 
 - owner: `j1nn0`;
 - repository: `agent-primitives`;
 - workflow filename: `release.yml`; and
 - environment: none.
 
-Only after both per-package Trusted Publisher settings are configured can the
-Agent State pair use the normal publish dispatch. A bootstrap publish performed
+Only after all four per-package Trusted Publisher settings are configured can the
+Agent State or Progress pair use the normal publish dispatch. A bootstrap publish performed
 outside a supported CI provider cannot carry provenance, so it is not a
 substitute for the provenance checks on subsequent Trusted Publishing releases.
 
 ## Ordering and artifact integrity
 
-For either family, the required order is:
+For any family, the required order is:
 
 1. pack the core and adapter tarballs with pnpm;
 2. publish the core tarball with `npm publish --access public --provenance`;

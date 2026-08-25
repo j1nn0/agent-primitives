@@ -175,8 +175,8 @@ const mutations = [
     mutate: (source) =>
       replaceRequired(
         source,
-        "      CORE_PKG_DIR: ${{ inputs.family == 'agent-state' && 'packages/agent-state' || 'packages/context-guard' }}",
-        "      CORE_PKG_DIR: ${{ inputs.family == 'agent-state' && 'packages/context-guard' || 'packages/context-guard' }}",
+        "      CORE_PKG_DIR: ${{ inputs.family == 'agent-progress' && 'packages/agent-progress' || inputs.family == 'agent-state' && 'packages/agent-state' || 'packages/context-guard' }}\n",
+        "      CORE_PKG_DIR: ${{ inputs.family == 'agent-progress' && 'packages/context-guard' || inputs.family == 'agent-state' && 'packages/agent-state' || 'packages/context-guard' }}\n",
         'case H',
       ),
   },
@@ -189,8 +189,8 @@ const mutations = [
         '    steps:',
         (step) => replaceRequired(
           step,
-          "      ADAPTER_TARBALL_BASE: ${{ inputs.family == 'agent-state' && 'j1nn0-agent-state-pi' || 'j1nn0-agent-context-guard-pi' }}\n",
-          "      ADAPTER_TARBALL_BASE: ${{ inputs.family == 'agent-state' && 'j1nn0-agent-state-pi' || 'j1nn0-agent-context-guard-pi' }}\n      NPM_TOKEN: forbidden\n",
+          "      ADAPTER_TARBALL_BASE: ${{ inputs.family == 'agent-progress' && 'j1nn0-agent-progress-pi' || inputs.family == 'agent-state' && 'j1nn0-agent-state-pi' || 'j1nn0-agent-context-guard-pi' }}\n",
+          "      ADAPTER_TARBALL_BASE: ${{ inputs.family == 'agent-progress' && 'j1nn0-agent-progress-pi' || inputs.family == 'agent-state' && 'j1nn0-agent-state-pi' || 'j1nn0-agent-context-guard-pi' }}\n      NPM_TOKEN: forbidden\n",
           'case I',
         ),
         'case I job',
@@ -199,6 +199,41 @@ const mutations = [
   {
     name: 'J family input options change',
     mutate: (source) => replaceRequired(source, '          - agent-state\n', '          - other-family\n', 'case J'),
+  },
+  {
+    name: 'K family input removes the Progress option',
+    mutate: (source) =>
+      replaceRequired(source, '          - agent-progress\n', '          - other-family\n', 'case K'),
+  },
+  {
+    name: 'L Progress core maps to the wrong package directory',
+    mutate: (source) =>
+      replaceRequired(
+        source,
+        "      CORE_PKG_DIR: ${{ inputs.family == 'agent-progress' && 'packages/agent-progress' || inputs.family == 'agent-state' && 'packages/agent-state' || 'packages/context-guard' }}\n",
+        "      CORE_PKG_DIR: ${{ inputs.family == 'agent-progress' && 'packages/agent-state' || inputs.family == 'agent-state' && 'packages/agent-state' || 'packages/context-guard' }}\n",
+        'case L',
+      ),
+  },
+  {
+    name: 'M Progress adapter is paired with another core',
+    mutate: (source) =>
+      replaceRequired(
+        source,
+        "      ADAPTER_PKG_NAME: ${{ inputs.family == 'agent-progress' && '@j1nn0/agent-progress-pi' || inputs.family == 'agent-state' && '@j1nn0/agent-state-pi' || '@j1nn0/agent-context-guard-pi' }}\n",
+        "      ADAPTER_PKG_NAME: ${{ inputs.family == 'agent-progress' && '@j1nn0/agent-state-pi' || inputs.family == 'agent-state' && '@j1nn0/agent-state-pi' || '@j1nn0/agent-context-guard-pi' }}\n",
+        'case M',
+      ),
+  },
+  {
+    name: 'N Progress tarball base arm changes',
+    mutate: (source) =>
+      replaceRequired(
+        source,
+        "      CORE_TARBALL_BASE: ${{ inputs.family == 'agent-progress' && 'j1nn0-agent-progress' || inputs.family == 'agent-state' && 'j1nn0-agent-state' || 'j1nn0-agent-context-guard' }}\n",
+        "      CORE_TARBALL_BASE: ${{ inputs.family == 'agent-progress' && 'j1nn0-agent-state' || inputs.family == 'agent-state' && 'j1nn0-agent-state' || 'j1nn0-agent-context-guard' }}\n",
+        'case N',
+      ),
   },
 ];
 
