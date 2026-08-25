@@ -2,6 +2,14 @@
 
 This repository is a pnpm workspace of small, composable primitives for making AI agents more reliable.
 
+## Source of truth
+
+- Treat the current repository state, package manifests, tests, workflows, package documentation, and checked-in policies as authoritative.
+- Values stated in task prompts such as expected HEADs, versions, test counts, file layouts, or previously observed behavior are context, not authority; verify them before relying on them.
+- When prompt assumptions and the checked-out repository disagree, use the actual repository state and report the discrepancy.
+- Prefer primary sources when external behavior matters. For package managers, registries, CI systems, harness APIs, and providers, verify current official documentation or the installed implementation rather than relying on memory.
+- Do not copy historical implementation choices forward merely because they appeared in an earlier report; confirm they still match the current code and contract.
+
 ## Architecture
 
 - Keep core primitives harness-agnostic. They should accept explicit inputs and return plain, serializable data.
@@ -14,7 +22,7 @@ This repository is a pnpm workspace of small, composable primitives for making A
 
 - Preserve fail-safe behavior. Missing, malformed, contradictory, or unverifiable data must never be silently upgraded to a successful or preserved state.
 - Keep uncertainty visible rather than guessing or repairing state implicitly.
-- Do not weaken existing validation, authority, lifecycle, recovery, or privacy boundaries to make a feature easier to implement.
+- Do not weaken existing validation, authority, lifecycle, recovery, provenance, or privacy boundaries to make a feature easier to implement.
 - Prefer explicit user decisions over inferred destructive actions.
 - Do not automatically delete, merge, supersede, retire, or otherwise mutate durable state unless that behavior is an explicit part of the task and its safety contract.
 - Preserve historical and provenance information unless a deliberate retention policy says otherwise.
@@ -78,6 +86,7 @@ Build before commands that consume workspace build output:
     pnpm test
     pnpm check:package
     pnpm example
+    pnpm check:release
 
 During development, focused tests are fine, but run the complete validation sequence before considering a change finished.
 
@@ -85,10 +94,23 @@ For a clean-state validation, remove generated package build output first, then 
 
 Also verify packaging when package contents change:
 
-- `publint`
-- `attw` through `pnpm check:package`
-- `npm pack --dry-run` or the existing equivalent
-- no accidental inclusion of tests, benchmarks, live results, or temporary files
+- Run `publint` and `attw` through the repository's `pnpm check:package` path.
+- For workspace packages, validate the actual release artifact through the repository's pnpm pack path, for example `pnpm --filter <package> pack`.
+- Do not use plain source-directory `npm pack` or `npm publish` as the authoritative release-artifact path when workspace protocol rewriting is part of the package contract.
+- Confirm packed workspace dependencies are rewritten to the expected publishable semver ranges and that no `workspace:`, `file:`, `link:`, or local absolute paths remain.
+- Confirm there is no accidental inclusion of tests, benchmarks, live results, temporary files, local configuration, or `node_modules`.
+
+## Release work
+
+- Read `RELEASE.md`, `.github/workflows/release.yml`, and `scripts/guard-release-workflow.mjs` before changing release behavior.
+- Preserve the established tokenless Trusted Publishing and provenance path unless the task explicitly requires a researched change.
+- Keep release publishing based on pnpm-packed tarballs; do not switch to source-directory npm publishing or `pnpm publish` without explicit justification and validation.
+- Keep release triggers, permission boundaries, package ordering, provenance identity checks, and registry-smoke behavior fail-safe.
+- Do not add `NPM_TOKEN`, `NODE_AUTH_TOKEN`, registry secrets, or broader `id-token: write` permissions merely to simplify publishing.
+- Run `pnpm check:release` after any release-workflow, release-policy, or release-guard change.
+- When the release guard changes, verify the unchanged workflow as a positive control and exercise relevant negative controls against temporary mutated copies.
+- Do not publish packages, mutate dist-tags, create git tags, or create GitHub Releases unless the task explicitly requests that release action.
+- When working on a first publish or registry bootstrap, verify current official npm requirements instead of assuming an already-published package's Trusted Publishing flow applies unchanged.
 
 ## Git and repository hygiene
 
@@ -98,10 +120,12 @@ Also verify packaging when package contents change:
 - Never use `git push --force` or `git push --force-with-lease`.
 - Do not create tags, releases, or publish packages unless explicitly requested.
 - Do not commit temporary probes, generated live outputs, credentials, or experiment scratch files.
+- Do not add AI attribution or session metadata to commits, including `Co-Authored-By` entries for AI tools, model names, generated-by markers, or session identifiers.
 - After interrupted or timed-out commands, check both tracked and untracked files before continuing.
 
 ## Agent orchestration
 
+- Use the installed orchestration skill when the task calls for delegated multi-agent work; keep repository guidance focused on repository invariants rather than duplicating skill-specific model or lifecycle configuration here.
 - Treat delegated-agent reports as claims to verify, not as proof of completion.
 - Review the actual diff, tests, and repository state after delegated work.
 - Keep mutating agents serialized when they share a working tree.
@@ -117,6 +141,8 @@ Before reporting a task complete:
 - Confirm relevant regressions are covered.
 - Run the full validation sequence.
 - Confirm the working tree contains no unintended files or changes.
+- If packaging changed, inspect the actual packed artifact and its manifest rather than relying only on source files.
+- If release behavior changed, run `pnpm check:release` and the relevant positive/negative guard checks.
 - If the task requires a push, confirm local HEAD matches the remote branch and required CI jobs are green.
 - Report remaining risks and unverified assumptions explicitly.
 
@@ -125,6 +151,7 @@ When in doubt, prefer:
 - explicit over inferred
 - fail-safe over convenient repair
 - evidence over assumption
+- current repository state over stale prompt assumptions
 - focused changes over broad refactors
 - adapter-local behavior over premature core abstraction
 - preserving durable information over silently discarding it
