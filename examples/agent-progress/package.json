@@ -1,0 +1,8 @@
+{
+  "name": "@examples/agent-progress",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@j1nn0/agent-progress": "workspace:*"
+  }
+}

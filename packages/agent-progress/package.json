@@ -1,0 +1,40 @@
+{
+  "name": "@j1nn0/agent-progress",
+  "version": "0.1.0",
+  "description": "Judge whether caller-declared work is moving forward.",
+  "license": "MIT",
+  "author": "j1nn0",
+  "type": "module",
+  "sideEffects": false,
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "src", "README.md", "LICENSE"],
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/j1nn0/agent-primitives.git",
+    "directory": "packages/agent-progress"
+  },
+  "homepage": "https://github.com/j1nn0/agent-primitives/tree/main/packages/agent-progress#readme",
+  "bugs": {
+    "url": "https://github.com/j1nn0/agent-primitives/issues"
+  },
+  "keywords": ["ai", "agent", "progress", "reliability", "llm"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "check:package": "publint && attw --pack . --profile esm-only"
+  }
+}

@@ -53,6 +53,10 @@ moment, and that is the adapter's job.
 
 `@j1nn0/agent-state` records the caller-declared current position of work: an optional objective, insertion-ordered work items with explicit statuses, and decisions. It creates deterministic snapshots, restores validated plain data, and summarizes current status counts. See [`packages/agent-state/README.md`](packages/agent-state/README.md) for the package documentation.
 
+#### `@j1nn0/agent-progress`
+
+`@j1nn0/agent-progress` judges whether caller-declared work is moving forward by comparing a current milestone set with a cumulative baseline. It reports progress only when a genuinely new opaque identifier appears, preserves uncertainty when no baseline is supplied, and returns the cumulative set for the next round. See [`packages/agent-progress/README.md`](packages/agent-progress/README.md) for the package documentation.
+
 ### Harness adapters
 
 #### `@j1nn0/agent-context-guard-pi`
@@ -65,7 +69,8 @@ moment, and that is the adapter's job.
 
 ## Direction
 
-Both core primitives now have a Pi harness adapter. Future work can use those
+The context guard and Agent state core primitives now have Pi harness adapters.
+Progress is intentionally core-only for now. Future work can use those
 integrations' real lifecycle feedback before more primitives are built on top of
 them; adapters for other harnesses follow from what they teach.
 
@@ -74,14 +79,13 @@ them; adapters for other harnesses follow from what they teach.
 The following are **not implemented**. They describe a direction, not an API promise:
 
 - **Retry guard** — whether the same failure is being repeated.
-- **Progress** — whether the work is actually moving forward.
 - **Evidence** — whether a completion claim is backed by something.
 - **Handoff** — whether one agent can correctly take over from another.
 - **Budget** — limits on tool calls, attempts, time, and sub-agents.
 - **Tool policy** — allow, deny, and require-approval rules for tool invocation.
 - **MCP adapter** — exposing primitives to MCP-based agents, without the core packages depending on an MCP SDK.
 
-The context guard core, Agent state core, and Pi harness adapter are implemented in this repository.
+The context guard core, Agent state core, and Progress core are implemented in this repository. The context guard and Agent state also have Pi harness adapters.
 
 ## Development
 
@@ -97,11 +101,11 @@ pnpm check:package
 pnpm example
 ```
 
-`pnpm build` comes first: the Pi adapter and the example resolve
-`@j1nn0/agent-context-guard` through its built `dist`, so typecheck, test and
-the example need the workspace built at least once.
+`pnpm build` comes first: the Pi adapters and examples resolve workspace core
+packages through their built `dist`, so typecheck, test and examples need the
+workspace built at least once.
 
-The example is a private workspace package and runs after the context-guard package has been built.
+The examples are private workspace packages and run after the core packages have been built.
 
 ## Security
 

@@ -14,7 +14,7 @@
     "lint": "eslint .",
     "check:package": "pnpm -r --if-present run check:package",
     "check:release": "node scripts/guard-release-workflow.mjs",
-    "example": "node examples/context-guard/basic.ts && node examples/agent-state/basic.ts",
+    "example": "node examples/context-guard/basic.ts && node examples/agent-state/basic.ts && node examples/agent-progress/basic.ts",
     "test:release-guard": "node scripts/test-release-guard.mjs"
   },
   "devDependencies": {
