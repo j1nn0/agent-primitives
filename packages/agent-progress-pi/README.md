@@ -4,7 +4,6 @@
 
 `@j1nn0/agent-progress-pi` is a minimal Pi harness adapter for recording caller-declared milestone sets and asking the Progress core whether the declared work is moving forward. It provides one slash-command namespace for a human and four explicit tools for the model. The adapter keeps the complete current set, the cumulative baseline, and the distinction between an unestablished baseline and an established empty baseline.
 
-This package is currently unpublished. It is intended to validate the core API in a real Pi session before the adapter is published.
 
 ## Relationship to the core
 
@@ -12,9 +11,19 @@ This package is currently unpublished. It is intended to validate the core API i
 
 The adapter is tested against Pi `0.84.2`. Its Pi peer dependency intentionally remains wide.
 
-## Local installation
+## Installation
 
-Build from the repository root, then install the unpublished package by absolute path:
+Install the published adapter from the registry:
+
+```sh
+pi install npm:@j1nn0/agent-progress-pi
+```
+
+Add `-l` to install it project-locally instead of for your user.
+
+### From a local checkout
+
+Build from the repository root, then install the package by absolute path:
 
 ```sh
 PACKAGE_DIR=/abs/path/to/agent-primitives/packages/agent-progress-pi

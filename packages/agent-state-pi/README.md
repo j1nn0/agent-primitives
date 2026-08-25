@@ -4,7 +4,6 @@
 
 `@j1nn0/agent-state-pi` is a minimal Pi harness adapter for recording and inspecting Agent State during a real Pi session. It provides one slash-command namespace for a human and four explicit tools for the model. The adapter records only state that a caller explicitly supplies.
 
-This package is currently unpublished. It is intended to validate whether the core API is usable in a real session before the core is published.
 
 ## Relationship to the core
 
@@ -14,9 +13,19 @@ This package owns only the Pi integration: command and tool registration, Pi ses
 
 The adapter is tested against Pi `0.84.2`. Its Pi peer dependency intentionally remains wide.
 
-## Local installation
+## Installation
 
-Build from the repository root, then install the unpublished package by absolute path:
+Install the published adapter from the registry:
+
+```sh
+pi install npm:@j1nn0/agent-state-pi
+```
+
+Add `-l` to install it project-locally instead of for your user.
+
+### From a local checkout
+
+Build from the repository root, then install the package by absolute path:
 The local commands are `pi install <abs-path> -l` and `pi -e <abs-path>/dist/extension.js`; the examples below use a shell variable for the absolute path.
 
 ```sh

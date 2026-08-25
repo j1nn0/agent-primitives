@@ -14,7 +14,7 @@ The caller owns the observation boundary and the cumulative loop. The primitive 
 
 ## Installation
 
-Install this package from the registry (once a release is on npm) or from a local checkout. For a local checkout, build it, then install the built package by local path:
+Install this package from the registry or from a local checkout. For a local checkout, build it, then install the built package by local path:
 
 ```sh
 pnpm install

@@ -9,11 +9,10 @@ pnpm and the resulting tarballs are published with npm.
 | Family | Core package | Pi adapter package | Current registry status |
 | --- | --- | --- | --- |
 | `context-guard` | `packages/context-guard` → `@j1nn0/agent-context-guard` `0.1.1` | `packages/context-guard-pi` → `@j1nn0/agent-context-guard-pi` `0.1.1` | Published |
-| `agent-state` | `packages/agent-state` → `@j1nn0/agent-state` `0.1.0` | `packages/agent-state-pi` → `@j1nn0/agent-state-pi` `0.1.0` | Implemented and release-ready, not published; npm currently returns 404 |
-| `agent-progress` | `packages/agent-progress` → `@j1nn0/agent-progress` `0.1.0` | `packages/agent-progress-pi` → `@j1nn0/agent-progress-pi` `0.1.0` | Implemented and release-ready, not published; npm currently returns 404 |
+| `agent-state` | `packages/agent-state` → `@j1nn0/agent-state` `0.1.0` | `packages/agent-state-pi` → `@j1nn0/agent-state-pi` `0.1.0` | Published |
+| `agent-progress` | `packages/agent-progress` → `@j1nn0/agent-progress` `0.1.0` | `packages/agent-progress-pi` → `@j1nn0/agent-progress-pi` `0.1.0` | Published |
 
-The Agent State and Progress pairs are implemented in the repository, but neither
-pair is installable from npm today. Their first releases must follow the bootstrap
+All six packages are published. Each pair reached the registry through the bootstrap
 procedure below.
 
 ## Primary path: GitHub Actions
@@ -51,7 +50,7 @@ literal. It installs dependencies from the frozen lockfile, rebuilds from clean
 `dist` directories, runs lint, typecheck, tests, package checks, and examples,
 performs pnpm dry runs, audits both packed tarballs, and runs the selected
 family's fresh-consumer smoke. The local smoke installs both tarballs by absolute
-path in one `npm install`; it does not resolve an unpublished family core from npm.
+path in one `npm install`; it does not resolve the family core from the registry.
 
 `publish` repeats the safety checks, reasserts the manifest versions, performs an
 anonymous registry preflight, and publishes only when the requested registry
@@ -73,13 +72,26 @@ The workflow uses job-level `contents: read` permissions everywhere, with
 `environment:`. Do not add a token or an environment to the release path.
 
 Trusted Publishing cannot perform the first publish of a package that does not
-exist on the npm registry. Therefore the first versions of
-`@j1nn0/agent-state`, `@j1nn0/agent-state-pi`, `@j1nn0/agent-progress`, and
-`@j1nn0/agent-progress-pi` must each be published once by a human outside CI.
-The Progress pair is implemented and release-ready but not published; like Agent
-State before it, it needs this one-time bootstrap before Trusted Publishing can be
-configured. This is documentation only; the workflow contains no bootstrap
-automation. npm cannot configure a trusted publisher for a package that does not
+exist on the npm registry, so the first version of each package was published once
+by a human outside CI. Any future package added to this repository needs the same
+one-time bootstrap before Trusted Publishing can be configured for it. This is
+documentation only; the workflow contains no bootstrap automation.
+
+A manual bootstrap publishes an audited `pnpm pack` tarball, never a source
+directory, and publishes the core before its adapter. The registry read path lags
+the write path for a brand-new package, so a single `npm view` immediately after
+publishing can return 404 while the publish itself succeeded. Poll until the
+requested version is actually visible, then confirm its version, `latest` tag,
+metadata, and tarball shasum against the audited artifact before publishing the
+adapter. Do not skip that confirmation because one `npm view` returned 404, and do
+not substitute a fixed sleep: the observed delay varies. The GitHub Actions publish
+job already retries its registry and attestation reads, so this constraint applies
+to manual bootstraps only and is not a reason to change the workflow.
+
+A bootstrap publish cannot carry provenance, because provenance requires a
+supported cloud CI provider. Those first versions are therefore unattested, which
+is an accepted one-time gap; every subsequent release goes through OIDC with
+provenance. npm cannot configure a trusted publisher for a package that does not
 exist yet: `npm trust` requires "Package must exist", and npm/cli#8544 is still
 open. After each package exists, configure its npm Trusted Publisher separately
 with:

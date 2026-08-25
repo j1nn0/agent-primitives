@@ -20,7 +20,7 @@ The core guard does not know when a harness is about to compact, which messages 
 
 ## Installation
 
-Install this adapter from the registry (once a release is on npm) or from a local checkout. For local development, build it from the repository root and install the package by local path:
+Install this adapter from the registry or from a local checkout. For local development, build it from the repository root and install the package by local path:
 
 ```sh
 pnpm install
