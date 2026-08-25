@@ -81,6 +81,10 @@ recorded = { milestones: verdict.recordedMilestones };
 
 A present-but-empty baseline means that work started with no recorded milestones. It is valid information and can produce either `progress` or `no_progress`; it is not the same as a missing baseline.
 
+`current` is the complete set of identifiers the caller currently declares, not only the ones achieved since the last round. Carrying previously declared identifiers forward is what makes `withdrawnMilestones` meaningful: a caller that supplies only the round's new identifiers still gets correct `progress` and `no_progress` outcomes, because the baseline is cumulative, but every earlier identifier is then reported as withdrawn.
+
+Omit the `previous` property to signal that no baseline exists. Passing the property explicitly as `undefined` is rejected with `invalid_input` rather than treated as a missing baseline, so a malformed baseline can never be silently downgraded to `unknown`.
+
 Each observation must be a plain object with a `milestones` array. Every entry must be an original, non-empty string, and an observation cannot contain the same identifier twice. Whitespace is inspected only to reject empty or whitespace-only strings: accepted identifiers are retained exactly as supplied.
 
 ## Public API
@@ -150,3 +154,5 @@ The primitive returns only plain objects and arrays of strings. It has no runtim
 Version 0.1 deliberately judges only declared-set growth. It cannot tell you whether a milestone was worth reaching, whether the caller's observation is honest, or whether a completion claim is supported. A caller that declares meaningless new identifiers will register `progress`.
 
 The package does not observe lifecycle events, retain a history beyond the cumulative data the caller feeds back, persist observations, calculate completion percentages or confidence, or provide a retry policy, a CLI, a Pi adapter, or an MCP integration.
+
+The cumulative baseline only grows. Withdrawing an identifier reports it in `withdrawnMilestones` but does not remove it from `recordedMilestones`, which is what stops a withdrawn identifier from being re-earned later. Each call compares the two observations directly, so the cost grows with the size of the baseline: a single round is roughly 0.5 ms at 100 recorded identifiers and roughly 280 ms at 5000 on the machine used to measure it. That is immaterial for an agent session, but a long-lived process that accumulates identifiers indefinitely should start a new baseline rather than let one grow without bound.

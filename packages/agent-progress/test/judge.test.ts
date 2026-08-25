@@ -200,6 +200,10 @@ describe('agent progress public boundary', () => {
       },
       {
         current: { milestones: ['current'] },
+        previous: undefined,
+      },
+      {
+        current: { milestones: ['current'] },
         previous: {},
       },
       {
