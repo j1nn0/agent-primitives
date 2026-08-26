@@ -12,7 +12,17 @@ The adapter is tested against `@earendil-works/pi-coding-agent` `0.84.2`. Its Pi
 
 ## Installation
 
-This package is implemented in this repository and is not yet published to the npm registry. Build from the repository root, then install the package by absolute path:
+Install the published adapter from the registry:
+
+```sh
+pi install npm:@j1nn0/agent-retry-guard-pi
+```
+
+Add `-l` to install it project-locally instead of for your user.
+
+### From a local checkout (development)
+
+For development or local use, build from the repository root, then install the package by absolute path:
 
 ```sh
 PACKAGE_DIR=/abs/path/to/agent-primitives/packages/agent-retry-guard-pi

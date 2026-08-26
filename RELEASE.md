@@ -11,10 +11,11 @@ pnpm and the resulting tarballs are published with npm.
 | `context-guard` | `packages/context-guard` → `@j1nn0/agent-context-guard` `0.1.1` | `packages/context-guard-pi` → `@j1nn0/agent-context-guard-pi` `0.1.1` | Published |
 | `agent-state` | `packages/agent-state` → `@j1nn0/agent-state` `0.1.0` | `packages/agent-state-pi` → `@j1nn0/agent-state-pi` `0.1.0` | Published |
 | `agent-progress` | `packages/agent-progress` → `@j1nn0/agent-progress` `0.1.0` | `packages/agent-progress-pi` → `@j1nn0/agent-progress-pi` `0.1.0` | Published |
-| `agent-retry-guard` | `packages/agent-retry-guard` → `@j1nn0/agent-retry-guard` `0.1.0` | `packages/agent-retry-guard-pi` → `@j1nn0/agent-retry-guard-pi` `0.1.0` | Implemented and release-ready, not published; npm currently returns 404 |
+| `agent-retry-guard` | `packages/agent-retry-guard` → `@j1nn0/agent-retry-guard` `0.1.0` | `packages/agent-retry-guard-pi` → `@j1nn0/agent-retry-guard-pi` `0.1.0` | Published |
 
-The six published packages above reached the registry through the bootstrap procedure
-below; the Retry Guard pair is awaiting its one-time bootstrap.
+The published packages listed above reached the registry through the bootstrap procedure
+below. Each newly bootstrapped pair must have Trusted Publishing configured before its
+normal publish dispatch is used.
 
 ## Primary path: GitHub Actions
 
@@ -74,13 +75,12 @@ The workflow uses job-level `contents: read` permissions everywhere, with
 `environment:`. Do not add a token or an environment to the release path.
 
 Trusted Publishing cannot perform the first publish of a package that does not
-exist on the npm registry, so the first version of each package was published once
-by a human outside CI. Any future package added to this repository needs the same
-one-time bootstrap before Trusted Publishing can be configured for it. The
-`@j1nn0/agent-retry-guard` and `@j1nn0/agent-retry-guard-pi` packages are currently
-awaiting that bootstrap: publish the core before the adapter from exact `pnpm pack`
-tarballs only; bootstrap publishes carry no provenance. This is documentation only;
-the workflow contains no bootstrap automation.
+exist on the npm registry, so a new package must first be published once by a
+human outside CI. Any new package pair added to this repository needs the same
+one-time bootstrap before Trusted Publishing can be configured for it. Bootstrap
+the core before its adapter from exact `pnpm pack` tarballs only; bootstrap
+publishes carry no provenance. This is documentation only; the workflow contains
+no bootstrap automation.
 
 A manual bootstrap publishes an audited `pnpm pack` tarball, never a source
 directory, and publishes the core before its adapter. The registry read path lags
@@ -106,10 +106,11 @@ with:
 - workflow filename: `release.yml`; and
 - environment: none.
 
-Only after all four per-package Trusted Publisher settings are configured can the
-Agent State or Progress pair use the normal publish dispatch. A bootstrap publish performed
-outside a supported CI provider cannot carry provenance, so it is not a
-substitute for the provenance checks on subsequent Trusted Publishing releases.
+After a new package pair completes its manual bootstrap, configure npm Trusted
+Publisher for both its core and adapter before using that family's normal publish
+dispatch. A bootstrap publish performed outside a supported CI provider cannot
+carry provenance, so it is not a substitute for the provenance checks on
+subsequent Trusted Publishing releases.
 
 ## Ordering and artifact integrity
 

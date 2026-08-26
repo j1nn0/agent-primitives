@@ -14,19 +14,21 @@ The caller owns episode boundaries. Passing a fresh `attempts` array starts a fr
 
 ## Installation
 
-This package is not yet published to the npm registry. Use a local checkout today: build it, then install the built package by local path:
+Install the published package from the registry with your package manager:
+
+- pnpm: `pnpm add @j1nn0/agent-retry-guard`
+- npm: `npm install @j1nn0/agent-retry-guard`
+- Yarn: `yarn add @j1nn0/agent-retry-guard`
+
+### From a local checkout (development)
+
+For development or local use, build the package, then install the built package by local path:
 
 ```sh
 pnpm install
 pnpm --filter @j1nn0/agent-retry-guard build
 pnpm add file:/path/to/agent-primitives/packages/agent-retry-guard
 ```
-
-After the first publish, registry installation will be available with your package manager:
-
-- pnpm: `pnpm add @j1nn0/agent-retry-guard`
-- npm: `npm install @j1nn0/agent-retry-guard`
-- Yarn: `yarn add @j1nn0/agent-retry-guard`
 
 Requirements:
 
