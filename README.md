@@ -88,7 +88,7 @@ moment, and that is the adapter's job.
 
 ## Direction
 
-The context guard, Agent state, Progress, and Retry Guard core primitives now have Pi harness adapters. These integrations provide concrete lifecycle boundaries while keeping each core primitive independent and explicit.
+Every implemented core primitive now has a Pi harness adapter. These integrations provide concrete lifecycle boundaries while keeping each core primitive independent and explicit.
 
 ### Possible future primitives
 

@@ -13,6 +13,7 @@ on:
           - agent-state
           - agent-progress
           - agent-retry-guard
+          - agent-evidence
       mode:
         description: Release mode
         required: true
@@ -55,12 +56,12 @@ jobs:
       contents: read
     runs-on: ubuntu-latest
     env:
-      CORE_PKG_NAME: ${{ inputs.family == 'agent-retry-guard' && '@j1nn0/agent-retry-guard' || inputs.family == 'agent-progress' && '@j1nn0/agent-progress' || inputs.family == 'agent-state' && '@j1nn0/agent-state' || '@j1nn0/agent-context-guard' }}
-      ADAPTER_PKG_NAME: ${{ inputs.family == 'agent-retry-guard' && '@j1nn0/agent-retry-guard-pi' || inputs.family == 'agent-progress' && '@j1nn0/agent-progress-pi' || inputs.family == 'agent-state' && '@j1nn0/agent-state-pi' || '@j1nn0/agent-context-guard-pi' }}
-      CORE_PKG_DIR: ${{ inputs.family == 'agent-retry-guard' && 'packages/agent-retry-guard' || inputs.family == 'agent-progress' && 'packages/agent-progress' || inputs.family == 'agent-state' && 'packages/agent-state' || 'packages/context-guard' }}
-      ADAPTER_PKG_DIR: ${{ inputs.family == 'agent-retry-guard' && 'packages/agent-retry-guard-pi' || inputs.family == 'agent-progress' && 'packages/agent-progress-pi' || inputs.family == 'agent-state' && 'packages/agent-state-pi' || 'packages/context-guard-pi' }}
-      CORE_TARBALL_BASE: ${{ inputs.family == 'agent-retry-guard' && 'j1nn0-agent-retry-guard' || inputs.family == 'agent-progress' && 'j1nn0-agent-progress' || inputs.family == 'agent-state' && 'j1nn0-agent-state' || 'j1nn0-agent-context-guard' }}
-      ADAPTER_TARBALL_BASE: ${{ inputs.family == 'agent-retry-guard' && 'j1nn0-agent-retry-guard-pi' || inputs.family == 'agent-progress' && 'j1nn0-agent-progress-pi' || inputs.family == 'agent-state' && 'j1nn0-agent-state-pi' || 'j1nn0-agent-context-guard-pi' }}
+      CORE_PKG_NAME: ${{ inputs.family == 'agent-evidence' && '@j1nn0/agent-evidence' || inputs.family == 'agent-retry-guard' && '@j1nn0/agent-retry-guard' || inputs.family == 'agent-progress' && '@j1nn0/agent-progress' || inputs.family == 'agent-state' && '@j1nn0/agent-state' || '@j1nn0/agent-context-guard' }}
+      ADAPTER_PKG_NAME: ${{ inputs.family == 'agent-evidence' && '@j1nn0/agent-evidence-pi' || inputs.family == 'agent-retry-guard' && '@j1nn0/agent-retry-guard-pi' || inputs.family == 'agent-progress' && '@j1nn0/agent-progress-pi' || inputs.family == 'agent-state' && '@j1nn0/agent-state-pi' || '@j1nn0/agent-context-guard-pi' }}
+      CORE_PKG_DIR: ${{ inputs.family == 'agent-evidence' && 'packages/agent-evidence' || inputs.family == 'agent-retry-guard' && 'packages/agent-retry-guard' || inputs.family == 'agent-progress' && 'packages/agent-progress' || inputs.family == 'agent-state' && 'packages/agent-state' || 'packages/context-guard' }}
+      ADAPTER_PKG_DIR: ${{ inputs.family == 'agent-evidence' && 'packages/agent-evidence-pi' || inputs.family == 'agent-retry-guard' && 'packages/agent-retry-guard-pi' || inputs.family == 'agent-progress' && 'packages/agent-progress-pi' || inputs.family == 'agent-state' && 'packages/agent-state-pi' || 'packages/context-guard-pi' }}
+      CORE_TARBALL_BASE: ${{ inputs.family == 'agent-evidence' && 'j1nn0-agent-evidence' || inputs.family == 'agent-retry-guard' && 'j1nn0-agent-retry-guard' || inputs.family == 'agent-progress' && 'j1nn0-agent-progress' || inputs.family == 'agent-state' && 'j1nn0-agent-state' || 'j1nn0-agent-context-guard' }}
+      ADAPTER_TARBALL_BASE: ${{ inputs.family == 'agent-evidence' && 'j1nn0-agent-evidence-pi' || inputs.family == 'agent-retry-guard' && 'j1nn0-agent-retry-guard-pi' || inputs.family == 'agent-progress' && 'j1nn0-agent-progress-pi' || inputs.family == 'agent-state' && 'j1nn0-agent-state-pi' || 'j1nn0-agent-context-guard-pi' }}
     steps:
       - name: Check out dispatched commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -625,6 +626,101 @@ jobs:
           );
           console.log('Retry Guard packed artifact consumer smoke passed.');
           NODE
+      - name: Smoke-test Evidence packed artifacts in a fresh consumer
+        if: ${{ inputs.family == 'agent-evidence' }}
+        env:
+          CORE_VERSION: ${{ inputs.core_version }}
+          PI_VERSION: ${{ inputs.pi_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/release-artifacts"
+          consumer_dir="$RUNNER_TEMP/release-consumer"
+          core_tarball="$(find "$artifact_dir" -maxdepth 1 -type f -name "$CORE_TARBALL_BASE-*.tgz" ! -name "$ADAPTER_TARBALL_BASE-*.tgz" -print -quit)"
+          pi_tarball="$(find "$artifact_dir" -maxdepth 1 -type f -name "$ADAPTER_TARBALL_BASE-*.tgz" -print -quit)"
+          if [[ -z "$core_tarball" || -z "$pi_tarball" ]]; then
+            echo "Could not locate both packed release tarballs for the consumer smoke test." >&2
+            exit 1
+          fi
+
+          rm -rf "$consumer_dir"
+          mkdir -p "$consumer_dir"
+          cd "$consumer_dir"
+          npm init -y
+          npm install "$core_tarball" "$pi_tarball"
+          node --input-type=module <<'NODE'
+          import { judgeEvidence } from '@j1nn0/agent-evidence';
+          import { accessSync } from 'node:fs';
+          import { readFile } from 'node:fs/promises';
+
+          const assert = (condition, message) => {
+            if (!condition) {
+              throw new Error(message);
+            }
+          };
+
+          const supported = judgeEvidence({
+            claims: [
+              { id: 'alpha-works', requires: [{ evidenceId: 'check-alpha' }] },
+              { id: 'beta-works', requires: [{ evidenceId: 'check-beta' }] },
+            ],
+            evidence: [
+              { id: 'check-alpha', outcome: 'confirmed' },
+              { id: 'check-beta', outcome: 'confirmed', subject: 'rev-1' },
+            ],
+          });
+          assert(supported.claims[0]?.outcome === 'supported', 'supported alpha claim was not supported');
+          assert(supported.claims[1]?.outcome === 'supported', 'supported beta claim was not supported');
+
+          const mismatch = judgeEvidence({
+            claims: [{ id: 'stale-check', requires: [{ evidenceId: 'check-beta', subject: 'rev-2' }] }],
+            evidence: [{ id: 'check-beta', outcome: 'confirmed', subject: 'rev-1' }],
+          });
+          assert(
+            mismatch.claims[0]?.outcome === 'unsupported' &&
+              mismatch.claims[0]?.reason === 'subject_mismatch' &&
+              mismatch.claims[0]?.evidenceId === 'check-beta',
+            'subject mismatch judgment was incorrect',
+          );
+
+          const contradicted = judgeEvidence({
+            claims: [{ id: 'broken', requires: [{ evidenceId: 'check-broken' }] }],
+            evidence: [{ id: 'check-broken', outcome: 'refuted' }],
+          });
+          assert(
+            contradicted.claims[0]?.outcome === 'contradicted' &&
+              contradicted.claims[0]?.evidenceId === 'check-broken',
+            'contradicted judgment was incorrect',
+          );
+
+          const empty = judgeEvidence({ claims: [], evidence: [] });
+          assert(JSON.stringify(empty) === JSON.stringify({ claims: [] }), 'empty evidence judgment was incorrect');
+
+          const adapter = await import('@j1nn0/agent-evidence-pi');
+          assert(typeof adapter.default === 'function', 'Pi adapter default export is not a function');
+
+          const adapterManifestUrl = new URL(
+            import.meta.resolve('@j1nn0/agent-evidence-pi/package.json'),
+          );
+          const adapterManifest = JSON.parse(await readFile(adapterManifestUrl, 'utf8'));
+          const extensions = adapterManifest.pi?.extensions;
+          assert(Array.isArray(extensions) && extensions.length > 0, 'pi.extensions is missing');
+          for (const target of extensions) {
+            accessSync(new URL(target, adapterManifestUrl));
+          }
+          const dependency = adapterManifest.dependencies?.['@j1nn0/agent-evidence'];
+          assert(
+            dependency === `^${process.env.CORE_VERSION}`,
+            'packed adapter does not depend on the expected core version',
+          );
+          const dependencyText = JSON.stringify(adapterManifest.dependencies ?? {});
+          assert(
+            !/(?:workspace:|file:|link:)/.test(dependencyText),
+            'packed adapter dependencies contain workspace:, file:, or link:',
+          );
+          console.log('Evidence packed artifact consumer smoke passed.');
+          NODE
+
 
   publish:
     permissions:
@@ -634,12 +730,12 @@ jobs:
     needs: validate
     runs-on: ubuntu-latest
     env:
-      CORE_PKG_NAME: ${{ inputs.family == 'agent-retry-guard' && '@j1nn0/agent-retry-guard' || inputs.family == 'agent-progress' && '@j1nn0/agent-progress' || inputs.family == 'agent-state' && '@j1nn0/agent-state' || '@j1nn0/agent-context-guard' }}
-      ADAPTER_PKG_NAME: ${{ inputs.family == 'agent-retry-guard' && '@j1nn0/agent-retry-guard-pi' || inputs.family == 'agent-progress' && '@j1nn0/agent-progress-pi' || inputs.family == 'agent-state' && '@j1nn0/agent-state-pi' || '@j1nn0/agent-context-guard-pi' }}
-      CORE_PKG_DIR: ${{ inputs.family == 'agent-retry-guard' && 'packages/agent-retry-guard' || inputs.family == 'agent-progress' && 'packages/agent-progress' || inputs.family == 'agent-state' && 'packages/agent-state' || 'packages/context-guard' }}
-      ADAPTER_PKG_DIR: ${{ inputs.family == 'agent-retry-guard' && 'packages/agent-retry-guard-pi' || inputs.family == 'agent-progress' && 'packages/agent-progress-pi' || inputs.family == 'agent-state' && 'packages/agent-state-pi' || 'packages/context-guard-pi' }}
-      CORE_TARBALL_BASE: ${{ inputs.family == 'agent-retry-guard' && 'j1nn0-agent-retry-guard' || inputs.family == 'agent-progress' && 'j1nn0-agent-progress' || inputs.family == 'agent-state' && 'j1nn0-agent-state' || 'j1nn0-agent-context-guard' }}
-      ADAPTER_TARBALL_BASE: ${{ inputs.family == 'agent-retry-guard' && 'j1nn0-agent-retry-guard-pi' || inputs.family == 'agent-progress' && 'j1nn0-agent-progress-pi' || inputs.family == 'agent-state' && 'j1nn0-agent-state-pi' || 'j1nn0-agent-context-guard-pi' }}
+      CORE_PKG_NAME: ${{ inputs.family == 'agent-evidence' && '@j1nn0/agent-evidence' || inputs.family == 'agent-retry-guard' && '@j1nn0/agent-retry-guard' || inputs.family == 'agent-progress' && '@j1nn0/agent-progress' || inputs.family == 'agent-state' && '@j1nn0/agent-state' || '@j1nn0/agent-context-guard' }}
+      ADAPTER_PKG_NAME: ${{ inputs.family == 'agent-evidence' && '@j1nn0/agent-evidence-pi' || inputs.family == 'agent-retry-guard' && '@j1nn0/agent-retry-guard-pi' || inputs.family == 'agent-progress' && '@j1nn0/agent-progress-pi' || inputs.family == 'agent-state' && '@j1nn0/agent-state-pi' || '@j1nn0/agent-context-guard-pi' }}
+      CORE_PKG_DIR: ${{ inputs.family == 'agent-evidence' && 'packages/agent-evidence' || inputs.family == 'agent-retry-guard' && 'packages/agent-retry-guard' || inputs.family == 'agent-progress' && 'packages/agent-progress' || inputs.family == 'agent-state' && 'packages/agent-state' || 'packages/context-guard' }}
+      ADAPTER_PKG_DIR: ${{ inputs.family == 'agent-evidence' && 'packages/agent-evidence-pi' || inputs.family == 'agent-retry-guard' && 'packages/agent-retry-guard-pi' || inputs.family == 'agent-progress' && 'packages/agent-progress-pi' || inputs.family == 'agent-state' && 'packages/agent-state-pi' || 'packages/context-guard-pi' }}
+      CORE_TARBALL_BASE: ${{ inputs.family == 'agent-evidence' && 'j1nn0-agent-evidence' || inputs.family == 'agent-retry-guard' && 'j1nn0-agent-retry-guard' || inputs.family == 'agent-progress' && 'j1nn0-agent-progress' || inputs.family == 'agent-state' && 'j1nn0-agent-state' || 'j1nn0-agent-context-guard' }}
+      ADAPTER_TARBALL_BASE: ${{ inputs.family == 'agent-evidence' && 'j1nn0-agent-evidence-pi' || inputs.family == 'agent-retry-guard' && 'j1nn0-agent-retry-guard-pi' || inputs.family == 'agent-progress' && 'j1nn0-agent-progress-pi' || inputs.family == 'agent-state' && 'j1nn0-agent-state-pi' || 'j1nn0-agent-context-guard-pi' }}
     steps:
       - name: Check out dispatched commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1379,8 +1475,8 @@ jobs:
     needs: publish
     runs-on: ubuntu-latest
     env:
-      CORE_PKG_NAME: ${{ inputs.family == 'agent-retry-guard' && '@j1nn0/agent-retry-guard' || inputs.family == 'agent-progress' && '@j1nn0/agent-progress' || inputs.family == 'agent-state' && '@j1nn0/agent-state' || '@j1nn0/agent-context-guard' }}
-      ADAPTER_PKG_NAME: ${{ inputs.family == 'agent-retry-guard' && '@j1nn0/agent-retry-guard-pi' || inputs.family == 'agent-progress' && '@j1nn0/agent-progress-pi' || inputs.family == 'agent-state' && '@j1nn0/agent-state-pi' || '@j1nn0/agent-context-guard-pi' }}
+      CORE_PKG_NAME: ${{ inputs.family == 'agent-evidence' && '@j1nn0/agent-evidence' || inputs.family == 'agent-retry-guard' && '@j1nn0/agent-retry-guard' || inputs.family == 'agent-progress' && '@j1nn0/agent-progress' || inputs.family == 'agent-state' && '@j1nn0/agent-state' || '@j1nn0/agent-context-guard' }}
+      ADAPTER_PKG_NAME: ${{ inputs.family == 'agent-evidence' && '@j1nn0/agent-evidence-pi' || inputs.family == 'agent-retry-guard' && '@j1nn0/agent-retry-guard-pi' || inputs.family == 'agent-progress' && '@j1nn0/agent-progress-pi' || inputs.family == 'agent-state' && '@j1nn0/agent-state-pi' || '@j1nn0/agent-context-guard-pi' }}
     steps:
       - name: Check out dispatched commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1719,6 +1815,112 @@ jobs:
           );
           console.log(`Installed @earendil-works/pi-coding-agent peer dependency range: ${peerDependency}`);
           console.log('Public registry Retry Guard consumer smoke passed.');
+          NODE
+          signature_output_file="$RUNNER_TEMP/npm-audit-signatures"
+          if npm audit signatures > "$signature_output_file" 2>&1; then
+            cat "$signature_output_file"
+          else
+            cat "$signature_output_file"
+            echo "npm audit signatures failed." >&2
+            exit 1
+          fi
+          if ! grep -Eiq '[1-9][0-9]* packages? (has|have) (a )?verified attestations?' "$signature_output_file"; then
+            echo "npm audit signatures reported no verified attestations." >&2
+            exit 1
+          fi
+
+
+      - name: Smoke-test Evidence on the public registry anonymously
+        if: ${{ inputs.family == 'agent-evidence' }}
+        env:
+          CORE_VERSION: ${{ inputs.core_version }}
+          PI_VERSION: ${{ inputs.pi_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          consumer_dir="$RUNNER_TEMP/registry-consumer"
+          rm -rf "$consumer_dir"
+          mkdir -p "$consumer_dir"
+          cd "$consumer_dir"
+          npm init -y
+          npm install "$CORE_PKG_NAME@$CORE_VERSION" "$ADAPTER_PKG_NAME@$PI_VERSION"
+          node --input-type=module <<'NODE'
+          import { judgeEvidence } from '@j1nn0/agent-evidence';
+          import { accessSync } from 'node:fs';
+          import { readFile } from 'node:fs/promises';
+
+          const assert = (condition, message) => {
+            if (!condition) {
+              throw new Error(message);
+            }
+          };
+
+          const supported = judgeEvidence({
+            claims: [
+              { id: 'alpha-works', requires: [{ evidenceId: 'check-alpha' }] },
+              { id: 'beta-works', requires: [{ evidenceId: 'check-beta' }] },
+            ],
+            evidence: [
+              { id: 'check-alpha', outcome: 'confirmed' },
+              { id: 'check-beta', outcome: 'confirmed', subject: 'rev-1' },
+            ],
+          });
+          assert(supported.claims[0]?.outcome === 'supported', 'registry supported alpha claim was not supported');
+          assert(supported.claims[1]?.outcome === 'supported', 'registry supported beta claim was not supported');
+
+          const mismatch = judgeEvidence({
+            claims: [{ id: 'stale-check', requires: [{ evidenceId: 'check-beta', subject: 'rev-2' }] }],
+            evidence: [{ id: 'check-beta', outcome: 'confirmed', subject: 'rev-1' }],
+          });
+          assert(
+            mismatch.claims[0]?.outcome === 'unsupported' &&
+              mismatch.claims[0]?.reason === 'subject_mismatch' &&
+              mismatch.claims[0]?.evidenceId === 'check-beta',
+            'registry subject mismatch judgment was incorrect',
+          );
+
+          const contradicted = judgeEvidence({
+            claims: [{ id: 'broken', requires: [{ evidenceId: 'check-broken' }] }],
+            evidence: [{ id: 'check-broken', outcome: 'refuted' }],
+          });
+          assert(
+            contradicted.claims[0]?.outcome === 'contradicted' &&
+              contradicted.claims[0]?.evidenceId === 'check-broken',
+            'registry contradicted judgment was incorrect',
+          );
+
+          const empty = judgeEvidence({ claims: [], evidence: [] });
+          assert(JSON.stringify(empty) === JSON.stringify({ claims: [] }), 'registry empty evidence judgment was incorrect');
+
+          const adapter = await import('@j1nn0/agent-evidence-pi');
+          assert(typeof adapter.default === 'function', 'installed Pi adapter default export is not a function');
+
+          const adapterManifestUrl = new URL(
+            import.meta.resolve('@j1nn0/agent-evidence-pi/package.json'),
+          );
+          const adapterManifest = JSON.parse(await readFile(adapterManifestUrl, 'utf8'));
+          const extensions = adapterManifest.pi?.extensions;
+          assert(Array.isArray(extensions) && extensions.length > 0, 'pi.extensions is missing');
+          for (const target of extensions) {
+            accessSync(new URL(target, adapterManifestUrl));
+          }
+          const dependency = adapterManifest.dependencies?.['@j1nn0/agent-evidence'];
+          assert(
+            dependency === `^${process.env.CORE_VERSION}`,
+            'installed adapter does not depend on the expected core version',
+          );
+          const dependencyText = JSON.stringify(adapterManifest.dependencies ?? {});
+          assert(
+            !/(?:workspace:|file:|link:)/.test(dependencyText),
+            'installed adapter dependencies contain workspace:, file:, or link:',
+          );
+          const peerDependency = adapterManifest.peerDependencies?.['@earendil-works/pi-coding-agent'];
+          assert(
+            typeof peerDependency === 'string',
+            'installed adapter has no Pi peer dependency range',
+          );
+          console.log(`Installed @earendil-works/pi-coding-agent peer dependency range: ${peerDependency}`);
+          console.log('Public registry Evidence consumer smoke passed.');
           NODE
           signature_output_file="$RUNNER_TEMP/npm-audit-signatures"
           if npm audit signatures > "$signature_output_file" 2>&1; then

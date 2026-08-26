@@ -1,6 +1,6 @@
 # Release procedure
 
-The release workflow uses one guarded path for four package families. It never bumps
+The release workflow uses one guarded path for the package families listed below. It never bumps
 versions and it never publishes source directories: each release is packed with
 pnpm and the resulting tarballs are published with npm.
 
@@ -12,6 +12,7 @@ pnpm and the resulting tarballs are published with npm.
 | `agent-state` | `packages/agent-state` → `@j1nn0/agent-state` `0.1.0` | `packages/agent-state-pi` → `@j1nn0/agent-state-pi` `0.1.0` | Published |
 | `agent-progress` | `packages/agent-progress` → `@j1nn0/agent-progress` `0.1.0` | `packages/agent-progress-pi` → `@j1nn0/agent-progress-pi` `0.1.0` | Published |
 | `agent-retry-guard` | `packages/agent-retry-guard` → `@j1nn0/agent-retry-guard` `0.1.0` | `packages/agent-retry-guard-pi` → `@j1nn0/agent-retry-guard-pi` `0.1.0` | Published |
+| `agent-evidence` | `packages/agent-evidence` → `@j1nn0/agent-evidence` `0.1.0` | `packages/agent-evidence-pi` → `@j1nn0/agent-evidence-pi` `0.1.0` | Implemented and release-ready, not published; npm currently returns 404 |
 
 The published packages listed above reached the registry through the bootstrap procedure
 below. Each newly bootstrapped pair must have Trusted Publishing configured before its
@@ -45,6 +46,7 @@ For the current Agent State and Progress manifests, select the matching family
 with `core_version=0.1.0` and `pi_version=0.1.0`. The workflow defaults remain
 `0.1.1` so the already-published Context Guard release remains the safe default.
 For the current Retry Guard manifests, select family `agent-retry-guard` with `core_version=0.1.0` and `pi_version=0.1.0`. The workflow defaults remain `0.1.1` so the already-published Context Guard release remains the safe default.
+For the current Evidence manifests, select family `agent-evidence` with `core_version=0.1.0` and `pi_version=0.1.0`. The workflow defaults remain `0.1.1` so the already-published Context Guard release remains the safe default.
 
 ### Validate versus publish
 
