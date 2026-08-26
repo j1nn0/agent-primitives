@@ -45,6 +45,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/agent-progress
 
+  examples/agent-retry-guard:
+    dependencies:
+      '@j1nn0/agent-retry-guard':
+        specifier: workspace:*
+        version: link:../../packages/agent-retry-guard
+
   examples/agent-state:
     dependencies:
       '@j1nn0/agent-state':
@@ -67,6 +73,8 @@ importers:
       '@j1nn0/agent-progress':
         specifier: workspace:^
         version: link:../agent-progress
+
+  packages/agent-retry-guard: {}
 
   packages/agent-state: {}
 

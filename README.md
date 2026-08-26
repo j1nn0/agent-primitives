@@ -56,6 +56,9 @@ moment, and that is the adapter's job.
 #### `@j1nn0/agent-progress`
 
 `@j1nn0/agent-progress` judges whether caller-declared work is moving forward by comparing a current milestone set with a cumulative baseline. It reports progress only when a genuinely new opaque identifier appears, preserves uncertainty when no baseline is supplied, and returns the cumulative set for the next round. See [`packages/agent-progress/README.md`](packages/agent-progress/README.md) for the package documentation.
+#### `@j1nn0/agent-retry-guard`
+
+`@j1nn0/agent-retry-guard` judges the current retry episode: it counts trailing failures and no-progress outcomes, detects repeated identified strategies, and applies explicit attempt limits. See [`packages/agent-retry-guard/README.md`](packages/agent-retry-guard/README.md) for the package documentation.
 
 ### Harness adapters
 
@@ -79,7 +82,6 @@ The context guard, Agent state, and Progress core primitives now have Pi harness
 
 The following are **not implemented**. They describe a direction, not an API promise:
 
-- **Retry guard** — whether the same failure is being repeated.
 - **Evidence** — whether a completion claim is backed by something.
 - **Handoff** — whether one agent can correctly take over from another.
 - **Budget** — limits on tool calls, attempts, time, and sub-agents.

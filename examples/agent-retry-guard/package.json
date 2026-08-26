@@ -1,0 +1,8 @@
+{
+  "name": "@examples/agent-retry-guard",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@j1nn0/agent-retry-guard": "workspace:*"
+  }
+}
