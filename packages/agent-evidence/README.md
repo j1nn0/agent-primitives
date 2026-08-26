@@ -14,19 +14,21 @@ The result makes uncertainty and stale subject references explicit instead of si
 
 ## Installation
 
-This package is not published to the registry yet. For local development or use from a checkout, build it and install the built package by local path:
+Install the published package from the registry with your package manager:
+
+- pnpm: `pnpm add @j1nn0/agent-evidence`
+- npm: `npm install @j1nn0/agent-evidence`
+- Yarn: `yarn add @j1nn0/agent-evidence`
+
+### From a local checkout (development)
+
+For development or local use, build the package, then install the built package by local path:
 
 ```sh
 pnpm install
 pnpm --filter @j1nn0/agent-evidence build
 pnpm add file:/path/to/agent-primitives/packages/agent-evidence
 ```
-
-When `@j1nn0/agent-evidence` is published, install it from the registry with your package manager:
-
-- pnpm: `pnpm add @j1nn0/agent-evidence`
-- npm: `npm install @j1nn0/agent-evidence`
-- Yarn: `yarn add @j1nn0/agent-evidence`
 
 Requirements:
 

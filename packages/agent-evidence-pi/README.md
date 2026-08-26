@@ -14,7 +14,17 @@ The adapter is tested against `@earendil-works/pi-coding-agent` `0.84.2`. Its Pi
 
 ## Installation
 
-This package is implemented in this repository and is **not yet published** to the registry. Use the local checkout as the primary installation path:
+Install the published adapter from the registry:
+
+```sh
+pi install npm:@j1nn0/agent-evidence-pi
+```
+
+Add `-l` to install it project-locally instead of for your user.
+
+### From a local checkout (development)
+
+For development or local use, build from the repository root, then install the package by absolute path:
 
 ```sh
 PACKAGE_DIR=/abs/path/to/agent-primitives/packages/agent-evidence-pi
@@ -29,7 +39,7 @@ For a one-run load without installing it in Pi settings:
 pi -e "$PACKAGE_DIR/dist/extension.js"
 ```
 
-A registry installation command will be documented here only after a future publish. The package manifest advertises `./dist/extension.js` through Pi's `pi.extensions` entry.
+The package manifest also advertises `./dist/extension.js` through Pi's `pi.extensions` entry.
 
 ## Commands
 
