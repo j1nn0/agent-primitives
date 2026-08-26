@@ -82,6 +82,10 @@ moment, and that is the adapter's job.
 
 `@j1nn0/agent-retry-guard-pi` is implemented in this repository. The minimal Pi adapter provides explicit `/agent-retry` commands and five model-callable tools for recording caller-declared retry attempts and policy, delegates every judgment to `@j1nn0/agent-retry-guard`, and persists the current episode plus policy in the local Pi session. See [`packages/agent-retry-guard-pi/README.md`](packages/agent-retry-guard-pi/README.md) for the package documentation.
 
+#### `@j1nn0/agent-evidence-pi`
+
+`@j1nn0/agent-evidence-pi` is implemented in this repository. The minimal Pi adapter provides explicit `/agent-evidence` commands and seven model-callable tools for maintaining caller-declared claims and evidence, delegates every judgment to `@j1nn0/agent-evidence`, and persists the raw evidence snapshot in the local Pi session. See [`packages/agent-evidence-pi/README.md`](packages/agent-evidence-pi/README.md) for the package documentation.
+
 ## Direction
 
 The context guard, Agent state, Progress, and Retry Guard core primitives now have Pi harness adapters. These integrations provide concrete lifecycle boundaries while keeping each core primitive independent and explicit.
