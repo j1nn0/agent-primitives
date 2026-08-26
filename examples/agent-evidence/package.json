@@ -1,0 +1,8 @@
+{
+  "name": "@examples/agent-evidence",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@j1nn0/agent-evidence": "workspace:*"
+  }
+}

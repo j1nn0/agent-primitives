@@ -60,6 +60,10 @@ moment, and that is the adapter's job.
 
 `@j1nn0/agent-retry-guard` judges the current retry episode: it counts trailing failures and no-progress outcomes, detects repeated identified strategies, and applies explicit attempt limits. See [`packages/agent-retry-guard/README.md`](packages/agent-retry-guard/README.md) for the package documentation.
 
+#### `@j1nn0/agent-evidence`
+
+`@j1nn0/agent-evidence` judges whether caller-declared claims are backed by explicitly linked evidence records, applying deterministic outcome and subject-identity rules while preserving uncertainty and claim order. See [`packages/agent-evidence/README.md`](packages/agent-evidence/README.md) for the package documentation.
+
 ### Harness adapters
 
 #### `@j1nn0/agent-context-guard-pi`
@@ -86,7 +90,6 @@ The context guard, Agent state, Progress, and Retry Guard core primitives now ha
 
 The following are **not implemented**. They describe a direction, not an API promise:
 
-- **Evidence** — whether a completion claim is backed by something.
 - **Handoff** — whether one agent can correctly take over from another.
 - **Budget** — limits on tool calls, attempts, time, and sub-agents.
 - **Tool policy** — allow, deny, and require-approval rules for tool invocation.
