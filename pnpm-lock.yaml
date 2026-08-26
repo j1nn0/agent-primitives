@@ -76,6 +76,15 @@ importers:
 
   packages/agent-retry-guard: {}
 
+  packages/agent-retry-guard-pi:
+    dependencies:
+      '@earendil-works/pi-coding-agent':
+        specifier: '*'
+        version: 0.84.2(supports-color@7.2.0)(ws@8.21.3)
+      '@j1nn0/agent-retry-guard':
+        specifier: workspace:^
+        version: link:../agent-retry-guard
+
   packages/agent-state: {}
 
   packages/agent-state-pi:

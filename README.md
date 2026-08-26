@@ -74,9 +74,13 @@ moment, and that is the adapter's job.
 
 `@j1nn0/agent-progress-pi` is implemented in this repository. The minimal Pi adapter provides explicit `/agent-progress` commands and four model-callable tools for maintaining a caller-declared milestone set, delegates every verdict to `@j1nn0/agent-progress`, and persists the current set plus cumulative baseline in the local Pi session. See [`packages/agent-progress-pi/README.md`](packages/agent-progress-pi/README.md) for the package documentation.
 
+#### `@j1nn0/agent-retry-guard-pi`
+
+`@j1nn0/agent-retry-guard-pi` is implemented in this repository. The minimal Pi adapter provides explicit `/agent-retry` commands and five model-callable tools for recording caller-declared retry attempts and policy, delegates every judgment to `@j1nn0/agent-retry-guard`, and persists the current episode plus policy in the local Pi session. See [`packages/agent-retry-guard-pi/README.md`](packages/agent-retry-guard-pi/README.md) for the package documentation.
+
 ## Direction
 
-The context guard, Agent state, and Progress core primitives now have Pi harness adapters. These integrations provide concrete lifecycle boundaries while keeping each core primitive independent and explicit.
+The context guard, Agent state, Progress, and Retry Guard core primitives now have Pi harness adapters. These integrations provide concrete lifecycle boundaries while keeping each core primitive independent and explicit.
 
 ### Possible future primitives
 
