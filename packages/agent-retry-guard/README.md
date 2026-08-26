@@ -14,7 +14,7 @@ The caller owns episode boundaries. Passing a fresh `attempts` array starts a fr
 
 ## Installation
 
-Install this package from the registry or from a local checkout. For a local checkout, build it, then install the built package by local path:
+This package is not yet published to the npm registry. Use a local checkout today: build it, then install the built package by local path:
 
 ```sh
 pnpm install
@@ -22,7 +22,7 @@ pnpm --filter @j1nn0/agent-retry-guard build
 pnpm add file:/path/to/agent-primitives/packages/agent-retry-guard
 ```
 
-For a registry installation, add the package with your package manager:
+After the first publish, registry installation will be available with your package manager:
 
 - pnpm: `pnpm add @j1nn0/agent-retry-guard`
 - npm: `npm install @j1nn0/agent-retry-guard`
@@ -56,7 +56,7 @@ const verdict = judgeRetry({
 //   attempts: 2,
 //   consecutiveFailures: 0,
 //   consecutiveNoProgress: 1,
-//   repeatedStrategy: { strategyId: 'search-v1', attempts: 2 },
+//   strategyRun: { strategyId: 'search-v1', attempts: 2 },
 //   retryAllowed: true
 // }
 ```
@@ -90,17 +90,17 @@ The package root exports the runtime values `judgeRetry` and `RetryError`, plus 
 - `RetryAttempt` — one declared attempt;
 - `RetryPolicy` — optional `maxAttempts` and `maxStrategyAttempts` limits;
 - `RetryJudgeInput` — the current episode and optional policy;
-- `RepeatedStrategyRun` — the latest repeated strategy and its run length;
+- `StrategyRun` — the latest repeated strategy and its run length;
 - `RetryVerdict` — the deterministic judgment;
 - `RetryErrorCode` — currently only `invalid_input`.
 
-`judgeRetry(input: unknown): RetryVerdict` treats its input as untrusted. It throws `RetryError` with `code === 'invalid_input'` for malformed input. The error's `name` is `RetryError`.
+`judgeRetry(input: unknown): RetryVerdict` treats its input as untrusted. It throws `RetryError` with `code === 'invalid_input'` for malformed input. The error's `name` is `RetryError`. Its constructor signature is `new RetryError(code: RetryErrorCode, message: string)`; callers normally match on the thrown error rather than construct one.
 
 Inputs must be plain objects. `attempts` is required and must be an array. Each attempt must have an own `outcome` property with exactly one of the four literals. An own `strategyId` must be a non-empty, non-whitespace-only string; accepted strings are preserved verbatim rather than trimmed. An own `policy` must be a plain object, and each present limit must be a finite integer greater than or equal to one. Explicit `undefined` values on these optional properties are rejected rather than treated as absent. Unexpected extra keys are accepted and ignored, matching the validation precedent used by `@j1nn0/agent-progress`.
 
 ## What counts as a repeated retry
 
-`repeatedStrategy` is present exactly when the last attempt has a `strategyId` and its outcome is `failure` or `no_progress`.
+`strategyRun` is present exactly when the last attempt has a `strategyId` and its outcome is `failure` or `no_progress`.
 
 Its `attempts` value is the maximal trailing run in which every attempt:
 
@@ -108,10 +108,11 @@ Its `attempts` value is the maximal trailing run in which every attempt:
 - has outcome `failure` or `no_progress`.
 
 Failure and no-progress outcomes count together for this run. For example, `failure` → `no_progress` → `failure` under strategy `search-v1` is a run of three. Any success, unknown outcome, different identifier, or absent identifier terminates the scan. An absent `strategyId` means that identity is unknown: id-less attempts never join a run, and two id-less failures are never treated as repetitions of one another.
+Identifiers are matched exactly, so casing or spelling drift such as `fix-lint` versus `Fix-Lint` starts a new run; normalizing identifiers before calling is the caller's responsibility.
 
 Duplicate strategy identifiers anywhere in the history are valid and expected. Repetition detection is the purpose of the field; this differs deliberately from milestone-set primitives that reject duplicate identifiers.
 
-When the rule does not apply, `repeatedStrategy` is omitted. It is never `null` or an own property whose value is `undefined`.
+When the rule does not apply, `strategyRun` is omitted. It is never `null` or an own property whose value is `undefined`. The field reports the current trailing run, so `attempts === 1` already appears on the first identified unsuccessful outcome; one more attempt under the same identifier would be a repetition, and `maxStrategyAttempts: 1` blocks immediately.
 
 ## Policy semantics
 
@@ -121,24 +122,19 @@ An absent or empty policy imposes no limits. The `retryAllowed` decision is deri
 2. If the last outcome is `success`, it returns `false`: the episode ended successfully. This is not a budget-exhaustion signal.
 3. Otherwise it returns `false` if either applicable limit is reached:
    - `maxAttempts` is present and `attempts >= maxAttempts`; or
-   - `maxStrategyAttempts` is present, `repeatedStrategy` is present, and `repeatedStrategy.attempts >= maxStrategyAttempts`.
+   - `maxStrategyAttempts` is present, `strategyRun` is present, and `strategyRun.attempts >= maxStrategyAttempts`.
 4. If neither limit blocks, it returns `true`.
 
-The comparisons are inclusive. A `maxAttempts` value of `3` blocks when the episode contains exactly three attempts (and also after that). A `maxStrategyAttempts` value of `3` blocks exactly when the repeated run reaches three; a run of two remains allowed. A `maxStrategyAttempts` value of `1` blocks immediately after one unsuccessful identified attempt. The strategy limit does not apply when `repeatedStrategy` is absent, including for id-less attempts.
+The comparisons are inclusive. A `maxAttempts` value of `3` blocks when the episode contains exactly three attempts (and also after that). A `maxStrategyAttempts` value of `3` blocks exactly when the repeated run reaches three; a run of two remains allowed. A `maxStrategyAttempts` value of `1` blocks immediately after one unsuccessful identified attempt. The strategy limit does not apply when `strategyRun` is absent, including for id-less attempts.
+`maxStrategyAttempts` caps the **trailing run** of one identified strategy, not the total number of attempts made with that strategy during the episode: an episode such as `failure-A`, `failure-A`, `failure-B`, `failure-A` stays allowed with `maxStrategyAttempts: 3` because no trailing run reaches three. Attempts whose `strategyId` is absent never join or continue a run, so they escape the strategy limit; only `maxAttempts` and the streak counters see them.
 
 A success always wins before budget checks, but it still makes `retryAllowed` false because there is no unsuccessful result left to retry. An empty history returns `true` even when a policy contains limits.
 
 ## Relationship to Progress
 
-Retry Guard is independent of `@j1nn0/agent-progress` and has no Progress dependency or Progress types. Progress judges cumulative milestone-set growth; Retry Guard judges the outcome history that a caller supplies.
+A Progress verdict is an observation about milestone movement, not a retry attempt outcome, so there is no general one-to-one mapping. Declare each retry outcome from what the attempt was trying to achieve, deciding `success` only when the attempt goal itself was met. Treating every intermediate `progress` verdict as `success` ends the episode immediately (`retryAllowed` is `false` after each productive round) and mislabels unfinished work as done. Mapping `no_progress` and `unknown` is usually safe because the vocabularies share those meanings, while `progress` requires the caller judgment described above.
 
-A caller may map a Progress verdict to this package's generic outcome vocabulary. A suggested mapping is:
-
-- `progress` → `success`;
-- `no_progress` → `no_progress`;
-- `unknown` → `unknown`.
-
-That mapping is the caller's decision. Retry Guard does not import Progress, infer a mapping, or decide what a progress verdict means for a particular task.
+Retry Guard has no dependency on `@j1nn0/agent-progress` or its types, and the mapping decision belongs entirely to the caller.
 
 ## Relationship to Evidence
 

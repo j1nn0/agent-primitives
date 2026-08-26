@@ -35,7 +35,7 @@ export function judgeRetry(input: unknown): RetryVerdict {
       consecutiveNoProgress += 1;
     }
 
-    let repeatedStrategy: RetryVerdict['repeatedStrategy'];
+    let strategyRun: RetryVerdict['strategyRun'];
     if (
       lastAttempt !== undefined &&
       lastAttempt.strategyId !== undefined &&
@@ -58,7 +58,7 @@ export function judgeRetry(input: unknown): RetryVerdict {
         repeatedAttempts += 1;
       }
 
-      repeatedStrategy = { strategyId, attempts: repeatedAttempts };
+      strategyRun = { strategyId, attempts: repeatedAttempts };
     }
 
     const maxAttempts = validated.policy?.maxAttempts;
@@ -71,8 +71,8 @@ export function judgeRetry(input: unknown): RetryVerdict {
           : maxAttempts !== undefined && attemptCount >= maxAttempts
             ? false
             : maxStrategyAttempts !== undefined &&
-                repeatedStrategy !== undefined &&
-                repeatedStrategy.attempts >= maxStrategyAttempts
+                strategyRun !== undefined &&
+                strategyRun.attempts >= maxStrategyAttempts
               ? false
               : true;
 
@@ -80,7 +80,7 @@ export function judgeRetry(input: unknown): RetryVerdict {
       attempts: attemptCount,
       consecutiveFailures,
       consecutiveNoProgress,
-      ...(repeatedStrategy === undefined ? {} : { repeatedStrategy }),
+      ...(strategyRun === undefined ? {} : { strategyRun }),
       retryAllowed,
     };
   } catch (error) {

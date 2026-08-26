@@ -88,7 +88,7 @@ describe('agent retry guard public boundary', () => {
         consecutiveNoProgress: outcome === 'no_progress' ? 1 : 0,
         retryAllowed: outcome !== 'success',
       });
-      expect(Object.hasOwn(verdict, 'repeatedStrategy')).toBe(false);
+      expect(Object.hasOwn(verdict, 'strategyRun')).toBe(false);
     }
   });
 
@@ -101,7 +101,7 @@ describe('agent retry guard public boundary', () => {
       attempts: 2,
       consecutiveFailures: 2,
       consecutiveNoProgress: 0,
-      repeatedStrategy: { strategyId: 'alpha', attempts: 2 },
+      strategyRun: { strategyId: 'alpha', attempts: 2 },
       retryAllowed: true,
     });
 
@@ -113,7 +113,7 @@ describe('agent retry guard public boundary', () => {
       attempts: 1,
       consecutiveFailures: 1,
       consecutiveNoProgress: 0,
-      repeatedStrategy: { strategyId: 'alpha', attempts: 1 },
+      strategyRun: { strategyId: 'alpha', attempts: 1 },
       retryAllowed: true,
     });
   });
@@ -131,7 +131,7 @@ describe('agent retry guard public boundary', () => {
       attempts: 3,
       consecutiveFailures: 1,
       consecutiveNoProgress: 0,
-      repeatedStrategy: { strategyId: 'alpha', attempts: 3 },
+      strategyRun: { strategyId: 'alpha', attempts: 3 },
       retryAllowed: true,
     });
   });
@@ -149,7 +149,7 @@ describe('agent retry guard public boundary', () => {
       attempts: 3,
       consecutiveFailures: 0,
       consecutiveNoProgress: 3,
-      repeatedStrategy: { strategyId: 'alpha', attempts: 3 },
+      strategyRun: { strategyId: 'alpha', attempts: 3 },
       retryAllowed: true,
     });
   });
@@ -167,7 +167,7 @@ describe('agent retry guard public boundary', () => {
       attempts: 3,
       consecutiveFailures: 0,
       consecutiveNoProgress: 1,
-      repeatedStrategy: { strategyId: 'Alpha', attempts: 1 },
+      strategyRun: { strategyId: 'Alpha', attempts: 1 },
       retryAllowed: true,
     });
   });
@@ -184,7 +184,7 @@ describe('agent retry guard public boundary', () => {
       consecutiveNoProgress: 0,
       retryAllowed: true,
     });
-    expect(Object.hasOwn(verdict, 'repeatedStrategy')).toBe(false);
+    expect(Object.hasOwn(verdict, 'strategyRun')).toBe(false);
   });
 
   it('clears trailing state after success and does not permit a retry', () => {
@@ -203,7 +203,7 @@ describe('agent retry guard public boundary', () => {
       consecutiveNoProgress: 0,
       retryAllowed: false,
     });
-    expect(Object.hasOwn(verdict, 'repeatedStrategy')).toBe(false);
+    expect(Object.hasOwn(verdict, 'strategyRun')).toBe(false);
   });
 
   it('keeps failure and no-progress counters on separate axes', () => {
@@ -219,7 +219,7 @@ describe('agent retry guard public boundary', () => {
       attempts: 3,
       consecutiveFailures: 0,
       consecutiveNoProgress: 2,
-      repeatedStrategy: { strategyId: 'alpha', attempts: 3 },
+      strategyRun: { strategyId: 'alpha', attempts: 3 },
       retryAllowed: true,
     });
   });
@@ -238,7 +238,7 @@ describe('agent retry guard public boundary', () => {
       consecutiveNoProgress: 0,
       retryAllowed: true,
     });
-    expect(Object.hasOwn(endingUnknown, 'repeatedStrategy')).toBe(false);
+    expect(Object.hasOwn(endingUnknown, 'strategyRun')).toBe(false);
 
     const failureAfterUnknown = judgeRetry({
       attempts: [
@@ -251,7 +251,7 @@ describe('agent retry guard public boundary', () => {
       attempts: 3,
       consecutiveFailures: 1,
       consecutiveNoProgress: 0,
-      repeatedStrategy: { strategyId: 'alpha', attempts: 1 },
+      strategyRun: { strategyId: 'alpha', attempts: 1 },
       retryAllowed: true,
     });
   });
@@ -482,7 +482,7 @@ describe('agent retry guard public boundary', () => {
       attempts: 3,
       consecutiveFailures: 1,
       consecutiveNoProgress: 0,
-      repeatedStrategy: { strategyId: 'alpha', attempts: 1 },
+      strategyRun: { strategyId: 'alpha', attempts: 1 },
       retryAllowed: true,
     });
   });
@@ -499,7 +499,7 @@ describe('agent retry guard public boundary', () => {
       attempts: 2,
       consecutiveFailures: 0,
       consecutiveNoProgress: 1,
-      repeatedStrategy: { strategyId: '  alpha  ', attempts: 2 },
+      strategyRun: { strategyId: '  alpha  ', attempts: 2 },
       retryAllowed: true,
     });
   });
@@ -534,15 +534,15 @@ describe('agent retry guard public boundary', () => {
     const first = judgeRetry(input);
     const second = judgeRetry(input);
 
-    expect(first.repeatedStrategy).not.toBe(second.repeatedStrategy);
-    expect(first.repeatedStrategy).not.toBe(input.attempts[1]);
+    expect(first.strategyRun).not.toBe(second.strategyRun);
+    expect(first.strategyRun).not.toBe(input.attempts[1]);
     expect(JSON.stringify(input)).toBe(before);
 
     const mutableFirst = first as unknown as {
-      repeatedStrategy: { strategyId: string; attempts: number };
+      strategyRun: { strategyId: string; attempts: number };
     };
-    mutableFirst.repeatedStrategy.strategyId = 'mutated';
-    mutableFirst.repeatedStrategy.attempts = 99;
+    mutableFirst.strategyRun.strategyId = 'mutated';
+    mutableFirst.strategyRun.attempts = 99;
 
     expect(judgeRetry(input)).toEqual(second);
     expect(JSON.stringify(input)).toBe(before);
@@ -595,7 +595,7 @@ describe('agent retry guard public boundary', () => {
       attempts: 4,
       consecutiveFailures: 0,
       consecutiveNoProgress: 1,
-      repeatedStrategy: { strategyId: 'progress-loop', attempts: 1 },
+      strategyRun: { strategyId: 'progress-loop', attempts: 1 },
       retryAllowed: true,
     });
   });

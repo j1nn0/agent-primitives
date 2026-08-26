@@ -1,7 +1,7 @@
 export { RetryError } from './errors.js';
 export { judgeRetry } from './judge.js';
 export type {
-  RepeatedStrategyRun,
+  StrategyRun,
   RetryAttempt,
   RetryAttemptOutcome,
   RetryErrorCode,

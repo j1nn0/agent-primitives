@@ -21,7 +21,7 @@ export interface RetryJudgeInput {
   readonly policy?: RetryPolicy;
 }
 
-export interface RepeatedStrategyRun {
+export interface StrategyRun {
   readonly strategyId: string;
   readonly attempts: number;
 }
@@ -30,6 +30,6 @@ export interface RetryVerdict {
   readonly attempts: number;
   readonly consecutiveFailures: number;
   readonly consecutiveNoProgress: number;
-  readonly repeatedStrategy?: RepeatedStrategyRun;
+  readonly strategyRun?: StrategyRun;
   readonly retryAllowed: boolean;
 }
