@@ -1,6 +1,6 @@
 # Release procedure
 
-The release workflow uses one guarded path for three package families. It never bumps
+The release workflow uses one guarded path for four package families. It never bumps
 versions and it never publishes source directories: each release is packed with
 pnpm and the resulting tarballs are published with npm.
 
@@ -11,9 +11,10 @@ pnpm and the resulting tarballs are published with npm.
 | `context-guard` | `packages/context-guard` → `@j1nn0/agent-context-guard` `0.1.1` | `packages/context-guard-pi` → `@j1nn0/agent-context-guard-pi` `0.1.1` | Published |
 | `agent-state` | `packages/agent-state` → `@j1nn0/agent-state` `0.1.0` | `packages/agent-state-pi` → `@j1nn0/agent-state-pi` `0.1.0` | Published |
 | `agent-progress` | `packages/agent-progress` → `@j1nn0/agent-progress` `0.1.0` | `packages/agent-progress-pi` → `@j1nn0/agent-progress-pi` `0.1.0` | Published |
+| `agent-retry-guard` | `packages/agent-retry-guard` → `@j1nn0/agent-retry-guard` `0.1.0` | `packages/agent-retry-guard-pi` → `@j1nn0/agent-retry-guard-pi` `0.1.0` | Implemented and release-ready, not published; npm currently returns 404 |
 
-All six packages are published. Each pair reached the registry through the bootstrap
-procedure below.
+The six published packages above reached the registry through the bootstrap procedure
+below; the Retry Guard pair is awaiting its one-time bootstrap.
 
 ## Primary path: GitHub Actions
 
@@ -25,7 +26,7 @@ filename is part of the npm Trusted Publisher identity and must remain exactly
 ### Dispatch inputs and target selection
 
 - `family` is required and selects exactly one family: `context-guard`,
-  `agent-state`, or `agent-progress`. It defaults to `context-guard`.
+  `agent-state`, `agent-progress`, or `agent-retry-guard`. It defaults to `context-guard`.
 - `mode` is required and is either `validate` or `publish`; it defaults to
   `validate`.
 - `core_version` is the manifest version of the selected family's core package.
@@ -42,6 +43,7 @@ filename is part of the npm Trusted Publisher identity and must remain exactly
 For the current Agent State and Progress manifests, select the matching family
 with `core_version=0.1.0` and `pi_version=0.1.0`. The workflow defaults remain
 `0.1.1` so the already-published Context Guard release remains the safe default.
+For the current Retry Guard manifests, select family `agent-retry-guard` with `core_version=0.1.0` and `pi_version=0.1.0`. The workflow defaults remain `0.1.1` so the already-published Context Guard release remains the safe default.
 
 ### Validate versus publish
 
@@ -74,8 +76,11 @@ The workflow uses job-level `contents: read` permissions everywhere, with
 Trusted Publishing cannot perform the first publish of a package that does not
 exist on the npm registry, so the first version of each package was published once
 by a human outside CI. Any future package added to this repository needs the same
-one-time bootstrap before Trusted Publishing can be configured for it. This is
-documentation only; the workflow contains no bootstrap automation.
+one-time bootstrap before Trusted Publishing can be configured for it. The
+`@j1nn0/agent-retry-guard` and `@j1nn0/agent-retry-guard-pi` packages are currently
+awaiting that bootstrap: publish the core before the adapter from exact `pnpm pack`
+tarballs only; bootstrap publishes carry no provenance. This is documentation only;
+the workflow contains no bootstrap automation.
 
 A manual bootstrap publishes an audited `pnpm pack` tarball, never a source
 directory, and publishes the core before its adapter. The registry read path lags

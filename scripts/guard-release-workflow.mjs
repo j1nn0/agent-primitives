@@ -290,7 +290,7 @@ function checkReleaseStructure(release) {
   const workflowDispatch = isRecord(triggers) ? triggers.workflow_dispatch : undefined;
   const inputs = isRecord(workflowDispatch) ? workflowDispatch.inputs : undefined;
   const familyInput = isRecord(inputs) ? inputs.family : undefined;
-  const expectedFamilyOptions = ['context-guard', 'agent-state', 'agent-progress'];
+  const expectedFamilyOptions = ['context-guard', 'agent-state', 'agent-progress', 'agent-retry-guard'];
   if (!isRecord(familyInput)) {
     addViolation('release.yml workflow_dispatch must define a family input.');
   } else {
@@ -351,12 +351,12 @@ function checkReleaseStructure(release) {
   }
 
   const expectedFamilyEnvironment = {
-    CORE_PKG_NAME: "${{ inputs.family == 'agent-progress' && '@j1nn0/agent-progress' || inputs.family == 'agent-state' && '@j1nn0/agent-state' || '@j1nn0/agent-context-guard' }}",
-    ADAPTER_PKG_NAME: "${{ inputs.family == 'agent-progress' && '@j1nn0/agent-progress-pi' || inputs.family == 'agent-state' && '@j1nn0/agent-state-pi' || '@j1nn0/agent-context-guard-pi' }}",
-    CORE_PKG_DIR: "${{ inputs.family == 'agent-progress' && 'packages/agent-progress' || inputs.family == 'agent-state' && 'packages/agent-state' || 'packages/context-guard' }}",
-    ADAPTER_PKG_DIR: "${{ inputs.family == 'agent-progress' && 'packages/agent-progress-pi' || inputs.family == 'agent-state' && 'packages/agent-state-pi' || 'packages/context-guard-pi' }}",
-    CORE_TARBALL_BASE: "${{ inputs.family == 'agent-progress' && 'j1nn0-agent-progress' || inputs.family == 'agent-state' && 'j1nn0-agent-state' || 'j1nn0-agent-context-guard' }}",
-    ADAPTER_TARBALL_BASE: "${{ inputs.family == 'agent-progress' && 'j1nn0-agent-progress-pi' || inputs.family == 'agent-state' && 'j1nn0-agent-state-pi' || 'j1nn0-agent-context-guard-pi' }}",
+    CORE_PKG_NAME: "${{ inputs.family == 'agent-retry-guard' && '@j1nn0/agent-retry-guard' || inputs.family == 'agent-progress' && '@j1nn0/agent-progress' || inputs.family == 'agent-state' && '@j1nn0/agent-state' || '@j1nn0/agent-context-guard' }}",
+    ADAPTER_PKG_NAME: "${{ inputs.family == 'agent-retry-guard' && '@j1nn0/agent-retry-guard-pi' || inputs.family == 'agent-progress' && '@j1nn0/agent-progress-pi' || inputs.family == 'agent-state' && '@j1nn0/agent-state-pi' || '@j1nn0/agent-context-guard-pi' }}",
+    CORE_PKG_DIR: "${{ inputs.family == 'agent-retry-guard' && 'packages/agent-retry-guard' || inputs.family == 'agent-progress' && 'packages/agent-progress' || inputs.family == 'agent-state' && 'packages/agent-state' || 'packages/context-guard' }}",
+    ADAPTER_PKG_DIR: "${{ inputs.family == 'agent-retry-guard' && 'packages/agent-retry-guard-pi' || inputs.family == 'agent-progress' && 'packages/agent-progress-pi' || inputs.family == 'agent-state' && 'packages/agent-state-pi' || 'packages/context-guard-pi' }}",
+    CORE_TARBALL_BASE: "${{ inputs.family == 'agent-retry-guard' && 'j1nn0-agent-retry-guard' || inputs.family == 'agent-progress' && 'j1nn0-agent-progress' || inputs.family == 'agent-state' && 'j1nn0-agent-state' || 'j1nn0-agent-context-guard' }}",
+    ADAPTER_TARBALL_BASE: "${{ inputs.family == 'agent-retry-guard' && 'j1nn0-agent-retry-guard-pi' || inputs.family == 'agent-progress' && 'j1nn0-agent-progress-pi' || inputs.family == 'agent-state' && 'j1nn0-agent-state-pi' || 'j1nn0-agent-context-guard-pi' }}",
   };
   if (isRecord(jobs)) {
     exactMapping(jobs.validate?.env, expectedFamilyEnvironment, 'release.yml validate family environment');
