@@ -14,6 +14,7 @@ pnpm and the resulting tarballs are published with npm.
 | `agent-retry-guard` | `packages/agent-retry-guard` → `@j1nn0/agent-retry-guard` `0.1.0` | `packages/agent-retry-guard-pi` → `@j1nn0/agent-retry-guard-pi` `0.1.0` | Published |
 | `agent-evidence` | `packages/agent-evidence` → `@j1nn0/agent-evidence` `0.1.0` | `packages/agent-evidence-pi` → `@j1nn0/agent-evidence-pi` `0.1.0` | Published |
 | `agent-handoff` | `packages/agent-handoff` → `@j1nn0/agent-handoff` `0.1.0` | `packages/agent-handoff-pi` → `@j1nn0/agent-handoff-pi` `0.1.0` | Published |
+| `agent-budget` | `packages/agent-budget` → `@j1nn0/agent-budget` `0.1.0` | `packages/agent-budget-pi` → `@j1nn0/agent-budget-pi` `0.1.0` | Not published (bootstrap required)
 
 The published packages listed above reached the registry through the bootstrap procedure
 below. Each newly bootstrapped pair must have Trusted Publishing configured before its
@@ -29,8 +30,8 @@ filename is part of the npm Trusted Publisher identity and must remain exactly
 ### Dispatch inputs and target selection
 
 - `family` is required and selects exactly one family: `context-guard`,
-  `agent-state`, `agent-progress`, `agent-retry-guard`, `agent-evidence`, or
-  `agent-handoff`. It defaults to `context-guard`.
+  `agent-state`, `agent-progress`, `agent-retry-guard`, `agent-evidence`,
+  `agent-handoff`, or `agent-budget`. It defaults to `context-guard`.
 - `mode` is required and is either `validate` or `publish`; it defaults to
   `validate`.
 - `core_version` is the manifest version of the selected family's core package.
@@ -50,6 +51,7 @@ with `core_version=0.1.0` and `pi_version=0.1.0`. The workflow defaults remain
 For the current Retry Guard manifests, select family `agent-retry-guard` with `core_version=0.1.0` and `pi_version=0.1.0`. The workflow defaults remain `0.1.1` so the already-published Context Guard release remains the safe default.
 For the current Evidence manifests, select family `agent-evidence` with `core_version=0.1.0` and `pi_version=0.1.0`. The workflow defaults remain `0.1.1` so the already-published Context Guard release remains the safe default.
 For the current Agent Handoff manifests, select family `agent-handoff` with `core_version=0.1.0` and `pi_version=0.1.0`. The workflow defaults remain `0.1.1` so the already-published Context Guard release remains the safe default.
+For the current Agent Budget manifests, select family `agent-budget` with `core_version=0.1.0` and `pi_version=0.1.0`. The workflow defaults remain `0.1.1` so the already-published Context Guard release remains the safe default.
 
 ### Validate versus publish
 
