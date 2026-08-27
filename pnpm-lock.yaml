@@ -88,6 +88,15 @@ importers:
 
   packages/agent-handoff: {}
 
+  packages/agent-handoff-pi:
+    dependencies:
+      '@earendil-works/pi-coding-agent':
+        specifier: '*'
+        version: 0.84.2(supports-color@7.2.0)(ws@8.21.3)
+      '@j1nn0/agent-handoff':
+        specifier: workspace:^
+        version: link:../agent-handoff
+
   packages/agent-progress: {}
 
   packages/agent-progress-pi:
