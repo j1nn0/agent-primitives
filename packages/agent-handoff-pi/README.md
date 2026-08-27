@@ -14,30 +14,28 @@ The adapter is tested against `@earendil-works/pi-coding-agent` `0.84.2`. Its Pi
 
 ## Installation
 
-Install the published adapter from the registry:
+The package is not published to npm yet. From a local checkout, build it from the repository root:
 
 ```sh
-pi install npm:@j1nn0/agent-handoff-pi
-```
-
-Add `-l` to install it project-locally instead of for your user.
-
-### From a local checkout (development)
-
-For development or local use, build from the repository root, then install the package by absolute path:
-
-```sh
-PACKAGE_DIR=/abs/path/to/agent-primitives/packages/agent-handoff-pi
+cd /abs/path/to/agent-primitives
+PACKAGE_DIR=$PWD/packages/agent-handoff-pi
 pnpm install
 pnpm --filter @j1nn0/agent-handoff-pi build
+```
+
+Install it locally by absolute path for ongoing use:
+
+```sh
 pi install "$PACKAGE_DIR" -l
 ```
 
-For a one-run load without installing it in Pi settings:
+Or load the built extension directly for one run without installing it in Pi settings:
 
 ```sh
 pi -e "$PACKAGE_DIR/dist/extension.js"
 ```
+
+Registry-install instructions will be added after the package is published, as part of the registry bootstrap.
 
 The package manifest also advertises `./dist/extension.js` through Pi's `pi.extensions` entry.
 

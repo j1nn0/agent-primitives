@@ -65,7 +65,7 @@ moment, and that is the adapter's job.
 `@j1nn0/agent-evidence` judges whether caller-declared claims are backed by explicitly linked evidence records, applying deterministic outcome and subject-identity rules while preserving uncertainty and claim order. See [`packages/agent-evidence/README.md`](packages/agent-evidence/README.md) for the package documentation.
 #### `@j1nn0/agent-handoff`
 
-`@j1nn0/agent-handoff` validates caller-declared packets that pass work between agents and sessions, and returns a JSON-safe, opaque-reference-only document. A Pi harness adapter is **not** part of Phase 1; the `Future Pi adapter (sketch only)` section of [`packages/agent-handoff/README.md`](packages/agent-handoff/README.md) describes the lifecycle boundary without implementing it. See [`packages/agent-handoff/README.md`](packages/agent-handoff/README.md) for the package documentation.
+`@j1nn0/agent-handoff` validates caller-declared packets that pass work between agents and sessions, and returns a JSON-safe, opaque-reference-only document. A Pi harness adapter now exists in this repository (see the Harness adapters section). See [`packages/agent-handoff/README.md`](packages/agent-handoff/README.md) for the package documentation.
 
 ### Harness adapters
 
@@ -88,6 +88,10 @@ moment, and that is the adapter's job.
 #### `@j1nn0/agent-evidence-pi`
 
 `@j1nn0/agent-evidence-pi` is implemented in this repository. The minimal Pi adapter provides explicit `/agent-evidence` commands and seven model-callable tools for maintaining caller-declared claims and evidence, delegates every judgment to `@j1nn0/agent-evidence`, and persists the raw evidence snapshot in the local Pi session. See [`packages/agent-evidence-pi/README.md`](packages/agent-evidence-pi/README.md) for the package documentation.
+
+#### `@j1nn0/agent-handoff-pi`
+
+`@j1nn0/agent-handoff-pi` is implemented in this repository. The Pi adapter registers `/agent-handoff` commands and three model-callable tools (`agent_handoff_get`, `agent_handoff_create`, and `agent_handoff_remove`), persists packets in the local Pi session, and delegates all packet validation to `@j1nn0/agent-handoff`. See [`packages/agent-handoff-pi/README.md`](packages/agent-handoff-pi/README.md) for the package documentation.
 
 ## Direction
 
