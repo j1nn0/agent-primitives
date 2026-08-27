@@ -67,6 +67,10 @@ moment, and that is the adapter's job.
 
 `@j1nn0/agent-handoff` validates caller-declared packets that pass work between agents and sessions, and returns a JSON-safe, opaque-reference-only document. A Pi harness adapter now exists in this repository (see the Harness adapters section). See [`packages/agent-handoff/README.md`](packages/agent-handoff/README.md) for the package documentation.
 
+#### `@j1nn0/agent-budget`
+
+`@j1nn0/agent-budget` is implemented in this repository. The control primitive judges caller-declared numeric consumption against a caller-declared limit and reports `within_budget` or `exhausted` with the unclamped remaining quantity. Units are opaque to the core; policy about what counts toward `consumed` belongs entirely to the caller. See [`packages/agent-budget/README.md`](packages/agent-budget/README.md) for the package documentation.
+
 ### Harness adapters
 
 #### `@j1nn0/agent-context-guard-pi`
@@ -101,7 +105,6 @@ Harness adapters ship on a per-primitive basis where a concrete consumer justifi
 
 The following are **not implemented**. They describe a direction, not an API promise:
 
-- **Budget** — limits on tool calls, attempts, time, and sub-agents.
 - **Tool policy** — allow, deny, and require-approval rules for tool invocation.
 - **MCP adapter** — exposing primitives to MCP-based agents, without the core packages depending on an MCP SDK.
 

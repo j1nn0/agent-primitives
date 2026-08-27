@@ -39,6 +39,12 @@ importers:
         specifier: ^2.9.0
         version: 2.9.0
 
+  examples/agent-budget:
+    dependencies:
+      '@j1nn0/agent-budget':
+        specifier: workspace:*
+        version: link:../../packages/agent-budget
+
   examples/agent-evidence:
     dependencies:
       '@j1nn0/agent-evidence':
@@ -74,6 +80,8 @@ importers:
       '@j1nn0/agent-context-guard':
         specifier: workspace:*
         version: link:../../packages/context-guard
+
+  packages/agent-budget: {}
 
   packages/agent-evidence: {}
 

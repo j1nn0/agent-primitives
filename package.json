@@ -21,6 +21,7 @@
     "example:agent-retry-guard": "node examples/agent-retry-guard/basic.ts",
     "example:agent-evidence": "node examples/agent-evidence/basic.ts",
     "example:agent-handoff": "node examples/agent-handoff/basic.ts",
+    "example:agent-budget": "node examples/agent-budget/basic.ts",
     "test:release-guard": "node scripts/test-release-guard.mjs"
   },
   "devDependencies": {
