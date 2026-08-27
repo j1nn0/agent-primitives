@@ -45,6 +45,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/agent-evidence
 
+  examples/agent-handoff:
+    dependencies:
+      '@j1nn0/agent-handoff':
+        specifier: workspace:*
+        version: link:../../packages/agent-handoff
+
   examples/agent-progress:
     dependencies:
       '@j1nn0/agent-progress':
@@ -79,6 +85,8 @@ importers:
       '@j1nn0/agent-evidence':
         specifier: workspace:^
         version: link:../agent-evidence
+
+  packages/agent-handoff: {}
 
   packages/agent-progress: {}
 

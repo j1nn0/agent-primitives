@@ -63,6 +63,9 @@ moment, and that is the adapter's job.
 #### `@j1nn0/agent-evidence`
 
 `@j1nn0/agent-evidence` judges whether caller-declared claims are backed by explicitly linked evidence records, applying deterministic outcome and subject-identity rules while preserving uncertainty and claim order. See [`packages/agent-evidence/README.md`](packages/agent-evidence/README.md) for the package documentation.
+#### `@j1nn0/agent-handoff`
+
+`@j1nn0/agent-handoff` validates caller-declared packets that pass work between agents and sessions, and returns a JSON-safe, opaque-reference-only document. A Pi harness adapter is **not** part of Phase 1; the `Future Pi adapter (sketch only)` section of [`packages/agent-handoff/README.md`](packages/agent-handoff/README.md) describes the lifecycle boundary without implementing it. See [`packages/agent-handoff/README.md`](packages/agent-handoff/README.md) for the package documentation.
 
 ### Harness adapters
 
@@ -88,18 +91,17 @@ moment, and that is the adapter's job.
 
 ## Direction
 
-Every implemented core primitive now has a Pi harness adapter. These integrations provide concrete lifecycle boundaries while keeping each core primitive independent and explicit.
+Harness adapters ship on a per-primitive basis where a concrete consumer justifies the integration. They observe the lifecycle of a specific agent runtime and enforce or recover, while every core primitive stays independent and explicit.
 
 ### Possible future primitives
 
 The following are **not implemented**. They describe a direction, not an API promise:
 
-- **Handoff** — whether one agent can correctly take over from another.
 - **Budget** — limits on tool calls, attempts, time, and sub-agents.
 - **Tool policy** — allow, deny, and require-approval rules for tool invocation.
 - **MCP adapter** — exposing primitives to MCP-based agents, without the core packages depending on an MCP SDK.
 
-The context guard core, Agent state core, and Progress core are implemented in this repository, and each currently has a Pi harness adapter.
+All implemented core primitives are listed in the Core primitives section above; each core that ships with a Pi adapter is listed in the Harness adapters section.
 
 ## Development
 
