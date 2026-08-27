@@ -83,6 +83,15 @@ importers:
 
   packages/agent-budget: {}
 
+  packages/agent-budget-pi:
+    dependencies:
+      '@earendil-works/pi-coding-agent':
+        specifier: '*'
+        version: 0.84.2(supports-color@7.2.0)(ws@8.21.3)
+      '@j1nn0/agent-budget':
+        specifier: workspace:^
+        version: link:../agent-budget
+
   packages/agent-evidence: {}
 
   packages/agent-evidence-pi:

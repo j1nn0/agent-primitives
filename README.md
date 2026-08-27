@@ -97,6 +97,10 @@ moment, and that is the adapter's job.
 
 `@j1nn0/agent-handoff-pi` is implemented in this repository. The Pi adapter registers `/agent-handoff` commands and three model-callable tools (`agent_handoff_get`, `agent_handoff_create`, and `agent_handoff_remove`), persists packets in the local Pi session, and delegates all packet validation to `@j1nn0/agent-handoff`. See [`packages/agent-handoff-pi/README.md`](packages/agent-handoff-pi/README.md) for the package documentation.
 
+#### `@j1nn0/agent-budget-pi`
+
+`@j1nn0/agent-budget-pi` is implemented in this repository. The minimal Pi adapter provides `/agent-budget` commands and four model-callable tools (`agent_budget_get`, `agent_budget_set`, `agent_budget_remove`, `agent_budget_judge`) for storing caller-declared budget records ({id, consumed, limit} with exact preservation) and judging them on demand through `@j1nn0/agent-budget`; judgment results are never persisted and the adapter does no automatic accounting. See [`packages/agent-budget-pi/README.md`](packages/agent-budget-pi/README.md) for the package documentation.
+
 ## Direction
 
 Harness adapters ship on a per-primitive basis where a concrete consumer justifies the integration. They observe the lifecycle of a specific agent runtime and enforce or recover, while every core primitive stays independent and explicit.
