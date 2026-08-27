@@ -14,11 +14,7 @@ The result exposes overage instead of hiding it. A negative `remaining` value is
 
 ## Installation
 
-Install the published package from the npm registry with your package manager:
-
-- pnpm: `pnpm add @j1nn0/agent-budget`
-- npm: `npm install @j1nn0/agent-budget`
-- Yarn: `yarn add @j1nn0/agent-budget`
+The package is not published to npm yet. From a local checkout, build it from the repository root and install the built package by local path:
 
 ### From a local checkout (development)
 
