@@ -277,6 +277,55 @@ function checkProvenanceIdentityStep({ step }, packageLabel) {
   }
 }
 
+const SMOKE_CANDIDATE_PATTERNS = [
+  {
+    job: 'validate',
+    pattern: /^Smoke-test .+ packed artifacts in a fresh consumer$/,
+    label: 'packed artifact smoke',
+  },
+  {
+    job: 'registry-smoke',
+    pattern: /^Smoke-test .+ on the public registry anonymously$/,
+    label: 'registry smoke',
+  },
+];
+
+function familyFromIf(step) {
+  if (!isRecord(step) || typeof step.if !== 'string') {
+    return null;
+  }
+  return step.if.match(/inputs\.family == '([^']*)'/)?.[1] ?? null;
+}
+
+function checkFamilySmokeWiring(document, expectedFamilyOptions) {
+  for (const { job, pattern, label } of SMOKE_CANDIDATE_PATTERNS) {
+    const familyCounts = new Map(expectedFamilyOptions.map((family) => [family, 0]));
+    for (const { step } of stepRecords(document, job)) {
+      if (!isRecord(step) || typeof step.name !== 'string' || !pattern.test(step.name)) {
+        continue;
+      }
+
+      const family = familyFromIf(step);
+      if (family === null || !expectedFamilyOptions.includes(family)) {
+        addViolation(
+          `release.yml job ${job} smoke step ${describe(step.name)} must be gated on exactly one expected family via its if condition; found ${describe(step.if)}.`,
+        );
+        continue;
+      }
+      familyCounts.set(family, familyCounts.get(family) + 1);
+    }
+
+    for (const family of expectedFamilyOptions) {
+      const count = familyCounts.get(family) ?? 0;
+      if (count !== 1) {
+        addViolation(
+          `release.yml job ${job} must contain exactly one ${label} step gated on inputs.family == '${family}'; found ${count}.`,
+        );
+      }
+    }
+  }
+}
+
 function checkReleaseStructure(release) {
   const { raw, document } = release;
   if (!isRecord(document)) {
@@ -309,6 +358,7 @@ function checkReleaseStructure(release) {
       addViolation('release.yml family input must default to context-guard.');
     }
   }
+  checkFamilySmokeWiring(document, expectedFamilyOptions);
 
   const jobs = document.jobs;
   const expectedJobs = ['validate', 'publish', 'registry-smoke'];

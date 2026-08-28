@@ -20,6 +20,14 @@ function replaceRequired(source, oldText, newText, label) {
   return source.replace(oldText, newText);
 }
 
+function replaceUnique(source, oldText, newText, label) {
+  const first = source.indexOf(oldText);
+  if (first < 0 || source.indexOf(oldText, first + oldText.length) >= 0) {
+    throw new Error(`${label}: expected source text exactly once`);
+  }
+  return source.slice(0, first) + newText + source.slice(first + oldText.length);
+}
+
 function replaceStep(source, startMarker, endMarker, transform, label) {
   const start = source.indexOf(startMarker);
   const end = source.indexOf(endMarker, start + startMarker.length);
@@ -79,6 +87,17 @@ const adapterPublishBlock = [
   '          npm publish "${{ steps.publish_artifacts.outputs.pi_tarball }}" --access public --provenance',
   '',
   '',
+].join('\n');
+
+const toolPolicyPackedSmokeStart = '      - name: Smoke-test Tool Policy packed artifacts in a fresh consumer';
+const toolPolicyPackedSmokeEnd = '\n\n  publish:';
+const toolPolicyPackedSmokeIf = "        if: ${{ inputs.family == 'agent-tool-policy' }}\n";
+const runExampleStep = '      - name: Run example\n        run: pnpm example\n';
+const unrelatedFamilyGatedStep = [
+  '      - name: Audit family docs',
+  "        if: ${{ inputs.family == 'agent-budget' }}",
+  '        shell: bash',
+  '        run: echo "checking docs for $FAMILY"',
 ].join('\n');
 
 const mutations = [
@@ -411,6 +430,76 @@ const mutations = [
         'case AH',
       ),
   },
+
+  {
+    name: 'AI Tool Policy smoke step loses its if (unwired smoke)',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        toolPolicyPackedSmokeStart,
+        toolPolicyPackedSmokeEnd,
+        (step) => replaceUnique(step, toolPolicyPackedSmokeIf, '', 'case AI'),
+        'case AI step',
+      ),
+  },
+  {
+    name: 'AJ Tool Policy packed smoke is gated on the wrong family',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        toolPolicyPackedSmokeStart,
+        toolPolicyPackedSmokeEnd,
+        (step) =>
+          replaceUnique(
+            step,
+            "inputs.family == 'agent-tool-policy'",
+            "inputs.family == 'context-guard'",
+            'case AJ',
+          ),
+        'case AJ step',
+      ),
+  },
+  {
+    name: 'AK duplicate Tool Policy packed smoke step for the same family',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        toolPolicyPackedSmokeStart,
+        toolPolicyPackedSmokeEnd,
+        (step) => `${step}${step}`,
+        'case AK step',
+      ),
+  },
+  {
+    name: 'AL Tool Policy packed smoke references an unknown family',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        toolPolicyPackedSmokeStart,
+        toolPolicyPackedSmokeEnd,
+        (step) =>
+          replaceUnique(
+            step,
+            "inputs.family == 'agent-tool-policy'",
+            "inputs.family == 'agent-statte'",
+            'case AL',
+          ),
+        'case AL step',
+      ),
+  },
+];
+
+const positiveMutations = [
+  {
+    name: 'AP unrelated family-gated step is tolerated',
+    mutate: (source) =>
+      replaceUnique(
+        source,
+        runExampleStep,
+        `${runExampleStep}${unrelatedFamilyGatedStep}\n`,
+        'case AP',
+      ),
+  },
 ];
 
 let failures = 0;
@@ -423,6 +512,26 @@ try {
     failures += 1;
     console.error(`positive control: FAIL (expected exit 0, got ${positive.code})`);
     process.stderr.write(positive.stderr);
+  }
+
+  for (const testCase of positiveMutations) {
+    const root = await createWorkflowCopy();
+    const copiedReleasePath = join(root, '.github', 'workflows', 'release.yml');
+    try {
+      const source = await readFile(copiedReleasePath, 'utf8');
+      await writeFile(copiedReleasePath, testCase.mutate(source));
+      const result = await runGuard(root);
+      if (result.code === 0) {
+        console.log(`${testCase.name}: PASS (guard accepted mutation)`);
+      } else {
+        failures += 1;
+        console.error(`${testCase.name}: FAIL (expected exit 0, got ${result.code})`);
+        process.stderr.write(result.stderr);
+      }
+    } catch (error) {
+      failures += 1;
+      console.error(`${testCase.name}: FAIL (${error instanceof Error ? error.message : String(error)})`);
+    }
   }
 
   for (const testCase of mutations) {
@@ -449,8 +558,8 @@ try {
 }
 
 if (failures > 0) {
-  console.error(`release guard negative-control suite failed: ${failures} case(s)`);
+  console.error(`release guard suite failed: ${failures} case(s)`);
   process.exitCode = 1;
 } else {
-  console.log(`release guard negative-control suite passed: ${mutations.length + 1} cases`);
+  console.log(`release guard suite passed: ${mutations.length} negative controls and ${positiveMutations.length + 1} positive controls (${mutations.length + positiveMutations.length + 1} cases)`);
 }
