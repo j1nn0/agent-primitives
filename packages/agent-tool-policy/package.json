@@ -1,6 +1,6 @@
 {
   "name": "@j1nn0/agent-tool-policy",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Judge caller-declared tool invocations against a caller-declared allow/deny policy.",
   "license": "MIT",
   "author": "j1nn0",

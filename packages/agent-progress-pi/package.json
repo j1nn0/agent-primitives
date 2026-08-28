@@ -1,6 +1,6 @@
 {
   "name": "@j1nn0/agent-progress-pi",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Judge whether caller-declared work is moving forward in a Pi session.",
   "license": "MIT",
   "author": "j1nn0",

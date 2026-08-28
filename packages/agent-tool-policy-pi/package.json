@@ -1,6 +1,6 @@
 {
   "name": "@j1nn0/agent-tool-policy-pi",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Minimal Pi adapter that enforces caller-declared tool policy through @j1nn0/agent-tool-policy at the tool_call boundary.",
   "license": "MIT",
   "author": "j1nn0",

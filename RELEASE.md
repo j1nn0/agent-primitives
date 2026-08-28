@@ -10,12 +10,12 @@ pnpm and the resulting tarballs are published with npm.
 | --- | --- | --- | --- |
 | `context-guard` | `packages/context-guard` → `@j1nn0/agent-context-guard` `0.1.1` | `packages/context-guard-pi` → `@j1nn0/agent-context-guard-pi` `0.1.1` | Published |
 | `agent-state` | `packages/agent-state` → `@j1nn0/agent-state` `0.1.0` | `packages/agent-state-pi` → `@j1nn0/agent-state-pi` `0.1.0` | Published |
-| `agent-progress` | `packages/agent-progress` → `@j1nn0/agent-progress` `0.1.0` | `packages/agent-progress-pi` → `@j1nn0/agent-progress-pi` `0.1.0` | Published |
-| `agent-retry-guard` | `packages/agent-retry-guard` → `@j1nn0/agent-retry-guard` `0.1.0` | `packages/agent-retry-guard-pi` → `@j1nn0/agent-retry-guard-pi` `0.1.0` | Published |
+| `agent-progress` | `packages/agent-progress` → `@j1nn0/agent-progress` `0.1.1` | `packages/agent-progress-pi` → `@j1nn0/agent-progress-pi` `0.1.1` | Published |
+| `agent-retry-guard` | `packages/agent-retry-guard` → `@j1nn0/agent-retry-guard` `0.1.1` | `packages/agent-retry-guard-pi` → `@j1nn0/agent-retry-guard-pi` `0.1.1` | Published |
 | `agent-evidence` | `packages/agent-evidence` → `@j1nn0/agent-evidence` `0.1.0` | `packages/agent-evidence-pi` → `@j1nn0/agent-evidence-pi` `0.1.0` | Published |
-| `agent-handoff` | `packages/agent-handoff` → `@j1nn0/agent-handoff` `0.1.0` | `packages/agent-handoff-pi` → `@j1nn0/agent-handoff-pi` `0.1.0` | Published |
+| `agent-handoff` | `packages/agent-handoff` → `@j1nn0/agent-handoff` `0.1.1` | `packages/agent-handoff-pi` → `@j1nn0/agent-handoff-pi` `0.1.1` | Published |
 | `agent-budget` | `packages/agent-budget` → `@j1nn0/agent-budget` `0.1.0` | `packages/agent-budget-pi` → `@j1nn0/agent-budget-pi` `0.1.0` | Published
-| `agent-tool-policy` | `packages/agent-tool-policy` → `@j1nn0/agent-tool-policy` `0.1.0` | `packages/agent-tool-policy-pi` → `@j1nn0/agent-tool-policy-pi` `0.1.0` | Published |
+| `agent-tool-policy` | `packages/agent-tool-policy` → `@j1nn0/agent-tool-policy` `0.1.1` | `packages/agent-tool-policy-pi` → `@j1nn0/agent-tool-policy-pi` `0.1.1` | Published |
 
 The published packages listed above reached the registry through the bootstrap procedure
 below. Each newly bootstrapped pair must have Trusted Publishing configured before its
@@ -46,14 +46,17 @@ filename is part of the npm Trusted Publisher identity and must remain exactly
   recovery when the requested core version already exists and the adapter does
   not.
 
-For the current Agent State and Progress manifests, select the matching family
+For the current Agent State manifests, select the matching family
 with `core_version=0.1.0` and `pi_version=0.1.0`. The workflow defaults remain
 `0.1.1` so the already-published Context Guard release remains the safe default.
-For the current Retry Guard manifests, select family `agent-retry-guard` with `core_version=0.1.0` and `pi_version=0.1.0`. The workflow defaults remain `0.1.1` so the already-published Context Guard release remains the safe default.
+For the current Agent Progress manifests, select the matching family
+with `core_version=0.1.1` and `pi_version=0.1.1`. The workflow defaults remain
+`0.1.1` so the already-published Context Guard release remains the safe default.
+For the current Retry Guard manifests, select family `agent-retry-guard` with `core_version=0.1.1` and `pi_version=0.1.1`. The workflow defaults remain `0.1.1` so the already-published Context Guard release remains the safe default.
 For the current Evidence manifests, select family `agent-evidence` with `core_version=0.1.0` and `pi_version=0.1.0`. The workflow defaults remain `0.1.1` so the already-published Context Guard release remains the safe default.
-For the current Agent Handoff manifests, select family `agent-handoff` with `core_version=0.1.0` and `pi_version=0.1.0`. The workflow defaults remain `0.1.1` so the already-published Context Guard release remains the safe default.
+For the current Agent Handoff manifests, select family `agent-handoff` with `core_version=0.1.1` and `pi_version=0.1.1`. The workflow defaults remain `0.1.1` so the already-published Context Guard release remains the safe default.
 For the current Agent Budget manifests, select family `agent-budget` with `core_version=0.1.0` and `pi_version=0.1.0`. The workflow defaults remain `0.1.1` so the already-published Context Guard release remains the safe default.
-For the current Agent Tool Policy manifests, select family `agent-tool-policy` with `core_version=0.1.0` and `pi_version=0.1.0`. The workflow defaults remain `0.1.1` so the already-published Context Guard release remains the safe default.
+For the current Agent Tool Policy manifests, select family `agent-tool-policy` with `core_version=0.1.1` and `pi_version=0.1.1`. The workflow defaults remain `0.1.1` so the already-published Context Guard release remains the safe default.
 
 ### Validate versus publish
 

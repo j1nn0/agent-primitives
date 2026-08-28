@@ -1,6 +1,6 @@
 {
   "name": "@j1nn0/agent-retry-guard-pi",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Minimal Retry Guard Pi adapter for recording and judging caller-declared retry attempts.",
   "license": "MIT",
   "author": "j1nn0",

@@ -1,6 +1,6 @@
 {
   "name": "@j1nn0/agent-handoff-pi",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Minimal Pi adapter for persisting and inspecting caller-declared handoff packets.",
   "license": "MIT",
   "author": "j1nn0",

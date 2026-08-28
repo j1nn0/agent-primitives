@@ -1,6 +1,6 @@
 {
   "name": "@j1nn0/agent-handoff",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Validate caller-declared handoff packets that pass work between agents.",
   "license": "MIT",
   "author": "j1nn0",
