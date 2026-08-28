@@ -16,6 +16,7 @@ on:
           - agent-evidence
           - agent-handoff
           - agent-budget
+          - agent-tool-policy
       mode:
         description: Release mode
         required: true
@@ -58,12 +59,12 @@ jobs:
       contents: read
     runs-on: ubuntu-latest
     env:
-      CORE_PKG_NAME: ${{ inputs.family == 'agent-budget' && '@j1nn0/agent-budget' || inputs.family == 'agent-handoff' && '@j1nn0/agent-handoff' || inputs.family == 'agent-evidence' && '@j1nn0/agent-evidence' || inputs.family == 'agent-retry-guard' && '@j1nn0/agent-retry-guard' || inputs.family == 'agent-progress' && '@j1nn0/agent-progress' || inputs.family == 'agent-state' && '@j1nn0/agent-state' || '@j1nn0/agent-context-guard' }}
-      ADAPTER_PKG_NAME: ${{ inputs.family == 'agent-budget' && '@j1nn0/agent-budget-pi' || inputs.family == 'agent-handoff' && '@j1nn0/agent-handoff-pi' || inputs.family == 'agent-evidence' && '@j1nn0/agent-evidence-pi' || inputs.family == 'agent-retry-guard' && '@j1nn0/agent-retry-guard-pi' || inputs.family == 'agent-progress' && '@j1nn0/agent-progress-pi' || inputs.family == 'agent-state' && '@j1nn0/agent-state-pi' || '@j1nn0/agent-context-guard-pi' }}
-      CORE_PKG_DIR: ${{ inputs.family == 'agent-budget' && 'packages/agent-budget' || inputs.family == 'agent-handoff' && 'packages/agent-handoff' || inputs.family == 'agent-evidence' && 'packages/agent-evidence' || inputs.family == 'agent-retry-guard' && 'packages/agent-retry-guard' || inputs.family == 'agent-progress' && 'packages/agent-progress' || inputs.family == 'agent-state' && 'packages/agent-state' || 'packages/context-guard' }}
-      ADAPTER_PKG_DIR: ${{ inputs.family == 'agent-budget' && 'packages/agent-budget-pi' || inputs.family == 'agent-handoff' && 'packages/agent-handoff-pi' || inputs.family == 'agent-evidence' && 'packages/agent-evidence-pi' || inputs.family == 'agent-retry-guard' && 'packages/agent-retry-guard-pi' || inputs.family == 'agent-progress' && 'packages/agent-progress-pi' || inputs.family == 'agent-state' && 'packages/agent-state-pi' || 'packages/context-guard-pi' }}
-      CORE_TARBALL_BASE: ${{ inputs.family == 'agent-budget' && 'j1nn0-agent-budget' || inputs.family == 'agent-handoff' && 'j1nn0-agent-handoff' || inputs.family == 'agent-evidence' && 'j1nn0-agent-evidence' || inputs.family == 'agent-retry-guard' && 'j1nn0-agent-retry-guard' || inputs.family == 'agent-progress' && 'j1nn0-agent-progress' || inputs.family == 'agent-state' && 'j1nn0-agent-state' || 'j1nn0-agent-context-guard' }}
-      ADAPTER_TARBALL_BASE: ${{ inputs.family == 'agent-budget' && 'j1nn0-agent-budget-pi' || inputs.family == 'agent-handoff' && 'j1nn0-agent-handoff-pi' || inputs.family == 'agent-evidence' && 'j1nn0-agent-evidence-pi' || inputs.family == 'agent-retry-guard' && 'j1nn0-agent-retry-guard-pi' || inputs.family == 'agent-progress' && 'j1nn0-agent-progress-pi' || inputs.family == 'agent-state' && 'j1nn0-agent-state-pi' || 'j1nn0-agent-context-guard-pi' }}
+      CORE_PKG_NAME: ${{ inputs.family == 'agent-tool-policy' && '@j1nn0/agent-tool-policy' || inputs.family == 'agent-budget' && '@j1nn0/agent-budget' || inputs.family == 'agent-handoff' && '@j1nn0/agent-handoff' || inputs.family == 'agent-evidence' && '@j1nn0/agent-evidence' || inputs.family == 'agent-retry-guard' && '@j1nn0/agent-retry-guard' || inputs.family == 'agent-progress' && '@j1nn0/agent-progress' || inputs.family == 'agent-state' && '@j1nn0/agent-state' || '@j1nn0/agent-context-guard' }}
+      ADAPTER_PKG_NAME: ${{ inputs.family == 'agent-tool-policy' && '@j1nn0/agent-tool-policy-pi' || inputs.family == 'agent-budget' && '@j1nn0/agent-budget-pi' || inputs.family == 'agent-handoff' && '@j1nn0/agent-handoff-pi' || inputs.family == 'agent-evidence' && '@j1nn0/agent-evidence-pi' || inputs.family == 'agent-retry-guard' && '@j1nn0/agent-retry-guard-pi' || inputs.family == 'agent-progress' && '@j1nn0/agent-progress-pi' || inputs.family == 'agent-state' && '@j1nn0/agent-state-pi' || '@j1nn0/agent-context-guard-pi' }}
+      CORE_PKG_DIR: ${{ inputs.family == 'agent-tool-policy' && 'packages/agent-tool-policy' || inputs.family == 'agent-budget' && 'packages/agent-budget' || inputs.family == 'agent-handoff' && 'packages/agent-handoff' || inputs.family == 'agent-evidence' && 'packages/agent-evidence' || inputs.family == 'agent-retry-guard' && 'packages/agent-retry-guard' || inputs.family == 'agent-progress' && 'packages/agent-progress' || inputs.family == 'agent-state' && 'packages/agent-state' || 'packages/context-guard' }}
+      ADAPTER_PKG_DIR: ${{ inputs.family == 'agent-tool-policy' && 'packages/agent-tool-policy-pi' || inputs.family == 'agent-budget' && 'packages/agent-budget-pi' || inputs.family == 'agent-handoff' && 'packages/agent-handoff-pi' || inputs.family == 'agent-evidence' && 'packages/agent-evidence-pi' || inputs.family == 'agent-retry-guard' && 'packages/agent-retry-guard-pi' || inputs.family == 'agent-progress' && 'packages/agent-progress-pi' || inputs.family == 'agent-state' && 'packages/agent-state-pi' || 'packages/context-guard-pi' }}
+      CORE_TARBALL_BASE: ${{ inputs.family == 'agent-tool-policy' && 'j1nn0-agent-tool-policy' || inputs.family == 'agent-budget' && 'j1nn0-agent-budget' || inputs.family == 'agent-handoff' && 'j1nn0-agent-handoff' || inputs.family == 'agent-evidence' && 'j1nn0-agent-evidence' || inputs.family == 'agent-retry-guard' && 'j1nn0-agent-retry-guard' || inputs.family == 'agent-progress' && 'j1nn0-agent-progress' || inputs.family == 'agent-state' && 'j1nn0-agent-state' || 'j1nn0-agent-context-guard' }}
+      ADAPTER_TARBALL_BASE: ${{ inputs.family == 'agent-tool-policy' && 'j1nn0-agent-tool-policy-pi' || inputs.family == 'agent-budget' && 'j1nn0-agent-budget-pi' || inputs.family == 'agent-handoff' && 'j1nn0-agent-handoff-pi' || inputs.family == 'agent-evidence' && 'j1nn0-agent-evidence-pi' || inputs.family == 'agent-retry-guard' && 'j1nn0-agent-retry-guard-pi' || inputs.family == 'agent-progress' && 'j1nn0-agent-progress-pi' || inputs.family == 'agent-state' && 'j1nn0-agent-state-pi' || 'j1nn0-agent-context-guard-pi' }}
     steps:
       - name: Check out dispatched commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1121,6 +1122,234 @@ jobs:
           console.log('Budget packed artifact consumer smoke passed.');
           NODE
 
+      - name: Smoke-test Tool Policy packed artifacts in a fresh consumer
+        if: ${{ inputs.family == 'agent-tool-policy' }}
+        env:
+          CORE_VERSION: ${{ inputs.core_version }}
+          PI_VERSION: ${{ inputs.pi_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/release-artifacts"
+          consumer_dir="$RUNNER_TEMP/release-consumer"
+          core_tarball="$(find "$artifact_dir" -maxdepth 1 -type f -name "$CORE_TARBALL_BASE-*.tgz" ! -name "$ADAPTER_TARBALL_BASE-*.tgz" -print -quit)"
+          pi_tarball="$(find "$artifact_dir" -maxdepth 1 -type f -name "$ADAPTER_TARBALL_BASE-*.tgz" -print -quit)"
+          if [[ -z "$core_tarball" || -z "$pi_tarball" ]]; then
+            echo "Could not locate both packed release tarballs for the consumer smoke test." >&2
+            exit 1
+          fi
+
+          rm -rf "$consumer_dir"
+          mkdir -p "$consumer_dir"
+          cd "$consumer_dir"
+          npm init -y
+          npm install "$core_tarball" "$pi_tarball"
+          node --input-type=module <<'NODE'
+          import { judgeToolPolicy, ToolPolicyError } from '@j1nn0/agent-tool-policy';
+          import { deepStrictEqual } from 'node:assert/strict';
+          import { accessSync } from 'node:fs';
+          import { readFile } from 'node:fs/promises';
+
+          const assert = (condition, message) => {
+            if (!condition) {
+              throw new Error(message);
+            }
+          };
+
+          deepStrictEqual(
+            judgeToolPolicy({
+              tool: 'read',
+              policy: { default: 'deny', allow: ['read'], deny: [] },
+            }),
+            { outcome: 'allowed', source: 'rule' },
+          );
+          deepStrictEqual(
+            judgeToolPolicy({
+              tool: 'bash',
+              policy: { default: 'allow', allow: [], deny: ['bash'] },
+            }),
+            { outcome: 'denied', source: 'rule' },
+          );
+          deepStrictEqual(
+            judgeToolPolicy({
+              tool: 'edit',
+              policy: { default: 'deny', allow: [], deny: [], requiresApproval: ['edit'] },
+            }),
+            { outcome: 'requires_approval', source: 'rule' },
+          );
+          deepStrictEqual(
+            judgeToolPolicy({
+              tool: 'write',
+              policy: { default: 'allow', allow: [], deny: [] },
+            }),
+            { outcome: 'allowed', source: 'default' },
+          );
+          deepStrictEqual(
+            judgeToolPolicy({
+              tool: 'write',
+              policy: { default: 'deny', allow: [], deny: [] },
+            }),
+            { outcome: 'denied', source: 'default' },
+          );
+          deepStrictEqual(
+            judgeToolPolicy({
+              tool: 'write',
+              policy: { default: 'requires_approval', allow: [], deny: [] },
+            }),
+            { outcome: 'requires_approval', source: 'default' },
+          );
+
+          let invalidError;
+          try {
+            judgeToolPolicy({ tool: 'bash' });
+          } catch (error) {
+            invalidError = error;
+          }
+          assert(
+            invalidError instanceof ToolPolicyError &&
+              invalidError.name === 'ToolPolicyError' &&
+              invalidError.code === 'invalid_input' &&
+              invalidError.message === 'Invalid tool policy input.',
+            'invalid input did not throw the expected ToolPolicyError shape',
+          );
+
+          let overlapError;
+          try {
+            judgeToolPolicy({
+              tool: 'tool',
+              policy: { default: 'deny', allow: ['tool'], deny: ['tool'] },
+            });
+          } catch (error) {
+            overlapError = error;
+          }
+          assert(
+            overlapError instanceof ToolPolicyError &&
+              overlapError.name === 'ToolPolicyError' &&
+              overlapError.code === 'invalid_input' &&
+              overlapError.message === 'Invalid tool policy input.',
+            'cross-list overlap did not throw the expected ToolPolicyError shape',
+          );
+
+          const adapterModule = await import('@j1nn0/agent-tool-policy-pi');
+          const adapterDefault = adapterModule.default;
+          assert(typeof adapterDefault === 'function', 'Pi adapter default export is not a function');
+
+          const createShim = (seed = []) => {
+            const handlers = new Map();
+            const commands = new Map();
+            const tools = [];
+            const branch = structuredClone(seed);
+            const api = {
+              on: (event, handler) => handlers.set(event, handler),
+              registerCommand: (name, def) => commands.set(name, def),
+              registerTool: (def) => tools.push(def),
+              appendEntry: (customType, data) => branch.push({ type: 'custom', customType, data }),
+            };
+            adapterDefault(api);
+            return { handlers, commands, tools, branch };
+          };
+
+          const joinedText = (result) =>
+            result.content
+              .filter((content) => content.type === 'text')
+              .map((content) => content.text)
+              .join('');
+
+          const first = createShim();
+          const ctx = {
+            ui: { notify() {} },
+            sessionManager: { getBranch: () => first.branch },
+          };
+          assert(first.commands.has('agent-tool-policy'), 'agent-tool-policy command was not registered');
+          deepStrictEqual(first.tools, []);
+
+          const toolCall = first.handlers.get('tool_call');
+          assert(typeof toolCall === 'function', 'tool_call handler was not registered');
+          const sessionStart = first.handlers.get('session_start');
+          assert(typeof sessionStart === 'function', 'session_start handler was not registered');
+
+          const unconfigured = await toolCall(
+            { type: 'tool_call', toolName: 'read', toolCallId: 's1', input: {} },
+            ctx,
+          );
+          assert(
+            unconfigured?.block === true &&
+              typeof unconfigured.reason === 'string' &&
+              unconfigured.reason.includes('no policy configured'),
+            'unconfigured tool call did not block with the expected reason',
+          );
+
+          first.branch.push({
+            type: 'custom',
+            customType: 'agent-tool-policy-state',
+            data: { schemaVersion: 1, policy: { default: 'deny', allow: ['read'], deny: [] } },
+          });
+          await sessionStart({ type: 'session_start' }, ctx);
+          assert(
+            (await toolCall({ type: 'tool_call', toolName: 'read', toolCallId: 's2', input: {} }, ctx)) === undefined,
+            'allowed tool call was blocked by the configured policy',
+          );
+          const denied = await toolCall(
+            { type: 'tool_call', toolName: 'bash', toolCallId: 's3', input: {} },
+            ctx,
+          );
+          assert(
+            denied?.block === true &&
+              typeof denied.reason === 'string' &&
+              denied.reason.includes('denied by tool policy'),
+            'denied tool call did not block with the expected reason',
+          );
+
+          first.branch.push({
+            type: 'custom',
+            customType: 'agent-tool-policy-state',
+            data: { schemaVersion: 1, policy: null },
+          });
+          await sessionStart({ type: 'session_start' }, ctx);
+          assert(
+            (await toolCall({ type: 'tool_call', toolName: 'bash', toolCallId: 's4', input: {} }, ctx)) === undefined,
+            'explicitly disabled policy did not pass the tool call through',
+          );
+
+          first.branch.push({
+            type: 'custom',
+            customType: 'agent-tool-policy-state',
+            data: { schemaVersion: 99, policy: 'garbage' },
+          });
+          await sessionStart({ type: 'session_start' }, ctx);
+          const corrupt = await toolCall(
+            { type: 'tool_call', toolName: 'read', toolCallId: 's5', input: {} },
+            ctx,
+          );
+          assert(
+            corrupt?.block === true &&
+              typeof corrupt.reason === 'string' &&
+              corrupt.reason.includes('policy configuration'),
+            'corrupt newest policy did not block with a configuration reason',
+          );
+
+          const adapterManifestUrl = new URL(
+            import.meta.resolve('@j1nn0/agent-tool-policy-pi/package.json'),
+          );
+          const adapterManifest = JSON.parse(await readFile(adapterManifestUrl, 'utf8'));
+          const dependency = adapterManifest.dependencies?.['@j1nn0/agent-tool-policy'];
+          assert(
+            dependency === `^${process.env.CORE_VERSION}`,
+            'packed adapter does not depend on the expected core version',
+          );
+          const dependencyText = JSON.stringify(adapterManifest.dependencies ?? {});
+          assert(
+            !/(?:workspace:|file:|link:)/.test(dependencyText),
+            'packed adapter dependencies contain workspace:, file:, or link:',
+          );
+          const extensions = adapterManifest.pi?.extensions;
+          assert(Array.isArray(extensions) && extensions.length > 0, 'pi.extensions is missing');
+          for (const target of extensions) {
+            accessSync(new URL(target, adapterManifestUrl));
+          }
+          console.log('Tool Policy packed artifact consumer smoke passed.');
+          NODE
+
 
   publish:
     permissions:
@@ -1130,12 +1359,12 @@ jobs:
     needs: validate
     runs-on: ubuntu-latest
     env:
-      CORE_PKG_NAME: ${{ inputs.family == 'agent-budget' && '@j1nn0/agent-budget' || inputs.family == 'agent-handoff' && '@j1nn0/agent-handoff' || inputs.family == 'agent-evidence' && '@j1nn0/agent-evidence' || inputs.family == 'agent-retry-guard' && '@j1nn0/agent-retry-guard' || inputs.family == 'agent-progress' && '@j1nn0/agent-progress' || inputs.family == 'agent-state' && '@j1nn0/agent-state' || '@j1nn0/agent-context-guard' }}
-      ADAPTER_PKG_NAME: ${{ inputs.family == 'agent-budget' && '@j1nn0/agent-budget-pi' || inputs.family == 'agent-handoff' && '@j1nn0/agent-handoff-pi' || inputs.family == 'agent-evidence' && '@j1nn0/agent-evidence-pi' || inputs.family == 'agent-retry-guard' && '@j1nn0/agent-retry-guard-pi' || inputs.family == 'agent-progress' && '@j1nn0/agent-progress-pi' || inputs.family == 'agent-state' && '@j1nn0/agent-state-pi' || '@j1nn0/agent-context-guard-pi' }}
-      CORE_PKG_DIR: ${{ inputs.family == 'agent-budget' && 'packages/agent-budget' || inputs.family == 'agent-handoff' && 'packages/agent-handoff' || inputs.family == 'agent-evidence' && 'packages/agent-evidence' || inputs.family == 'agent-retry-guard' && 'packages/agent-retry-guard' || inputs.family == 'agent-progress' && 'packages/agent-progress' || inputs.family == 'agent-state' && 'packages/agent-state' || 'packages/context-guard' }}
-      ADAPTER_PKG_DIR: ${{ inputs.family == 'agent-budget' && 'packages/agent-budget-pi' || inputs.family == 'agent-handoff' && 'packages/agent-handoff-pi' || inputs.family == 'agent-evidence' && 'packages/agent-evidence-pi' || inputs.family == 'agent-retry-guard' && 'packages/agent-retry-guard-pi' || inputs.family == 'agent-progress' && 'packages/agent-progress-pi' || inputs.family == 'agent-state' && 'packages/agent-state-pi' || 'packages/context-guard-pi' }}
-      CORE_TARBALL_BASE: ${{ inputs.family == 'agent-budget' && 'j1nn0-agent-budget' || inputs.family == 'agent-handoff' && 'j1nn0-agent-handoff' || inputs.family == 'agent-evidence' && 'j1nn0-agent-evidence' || inputs.family == 'agent-retry-guard' && 'j1nn0-agent-retry-guard' || inputs.family == 'agent-progress' && 'j1nn0-agent-progress' || inputs.family == 'agent-state' && 'j1nn0-agent-state' || 'j1nn0-agent-context-guard' }}
-      ADAPTER_TARBALL_BASE: ${{ inputs.family == 'agent-budget' && 'j1nn0-agent-budget-pi' || inputs.family == 'agent-handoff' && 'j1nn0-agent-handoff-pi' || inputs.family == 'agent-evidence' && 'j1nn0-agent-evidence-pi' || inputs.family == 'agent-retry-guard' && 'j1nn0-agent-retry-guard-pi' || inputs.family == 'agent-progress' && 'j1nn0-agent-progress-pi' || inputs.family == 'agent-state' && 'j1nn0-agent-state-pi' || 'j1nn0-agent-context-guard-pi' }}
+      CORE_PKG_NAME: ${{ inputs.family == 'agent-tool-policy' && '@j1nn0/agent-tool-policy' || inputs.family == 'agent-budget' && '@j1nn0/agent-budget' || inputs.family == 'agent-handoff' && '@j1nn0/agent-handoff' || inputs.family == 'agent-evidence' && '@j1nn0/agent-evidence' || inputs.family == 'agent-retry-guard' && '@j1nn0/agent-retry-guard' || inputs.family == 'agent-progress' && '@j1nn0/agent-progress' || inputs.family == 'agent-state' && '@j1nn0/agent-state' || '@j1nn0/agent-context-guard' }}
+      ADAPTER_PKG_NAME: ${{ inputs.family == 'agent-tool-policy' && '@j1nn0/agent-tool-policy-pi' || inputs.family == 'agent-budget' && '@j1nn0/agent-budget-pi' || inputs.family == 'agent-handoff' && '@j1nn0/agent-handoff-pi' || inputs.family == 'agent-evidence' && '@j1nn0/agent-evidence-pi' || inputs.family == 'agent-retry-guard' && '@j1nn0/agent-retry-guard-pi' || inputs.family == 'agent-progress' && '@j1nn0/agent-progress-pi' || inputs.family == 'agent-state' && '@j1nn0/agent-state-pi' || '@j1nn0/agent-context-guard-pi' }}
+      CORE_PKG_DIR: ${{ inputs.family == 'agent-tool-policy' && 'packages/agent-tool-policy' || inputs.family == 'agent-budget' && 'packages/agent-budget' || inputs.family == 'agent-handoff' && 'packages/agent-handoff' || inputs.family == 'agent-evidence' && 'packages/agent-evidence' || inputs.family == 'agent-retry-guard' && 'packages/agent-retry-guard' || inputs.family == 'agent-progress' && 'packages/agent-progress' || inputs.family == 'agent-state' && 'packages/agent-state' || 'packages/context-guard' }}
+      ADAPTER_PKG_DIR: ${{ inputs.family == 'agent-tool-policy' && 'packages/agent-tool-policy-pi' || inputs.family == 'agent-budget' && 'packages/agent-budget-pi' || inputs.family == 'agent-handoff' && 'packages/agent-handoff-pi' || inputs.family == 'agent-evidence' && 'packages/agent-evidence-pi' || inputs.family == 'agent-retry-guard' && 'packages/agent-retry-guard-pi' || inputs.family == 'agent-progress' && 'packages/agent-progress-pi' || inputs.family == 'agent-state' && 'packages/agent-state-pi' || 'packages/context-guard-pi' }}
+      CORE_TARBALL_BASE: ${{ inputs.family == 'agent-tool-policy' && 'j1nn0-agent-tool-policy' || inputs.family == 'agent-budget' && 'j1nn0-agent-budget' || inputs.family == 'agent-handoff' && 'j1nn0-agent-handoff' || inputs.family == 'agent-evidence' && 'j1nn0-agent-evidence' || inputs.family == 'agent-retry-guard' && 'j1nn0-agent-retry-guard' || inputs.family == 'agent-progress' && 'j1nn0-agent-progress' || inputs.family == 'agent-state' && 'j1nn0-agent-state' || 'j1nn0-agent-context-guard' }}
+      ADAPTER_TARBALL_BASE: ${{ inputs.family == 'agent-tool-policy' && 'j1nn0-agent-tool-policy-pi' || inputs.family == 'agent-budget' && 'j1nn0-agent-budget-pi' || inputs.family == 'agent-handoff' && 'j1nn0-agent-handoff-pi' || inputs.family == 'agent-evidence' && 'j1nn0-agent-evidence-pi' || inputs.family == 'agent-retry-guard' && 'j1nn0-agent-retry-guard-pi' || inputs.family == 'agent-progress' && 'j1nn0-agent-progress-pi' || inputs.family == 'agent-state' && 'j1nn0-agent-state-pi' || 'j1nn0-agent-context-guard-pi' }}
     steps:
       - name: Check out dispatched commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1875,8 +2104,8 @@ jobs:
     needs: publish
     runs-on: ubuntu-latest
     env:
-      CORE_PKG_NAME: ${{ inputs.family == 'agent-budget' && '@j1nn0/agent-budget' || inputs.family == 'agent-handoff' && '@j1nn0/agent-handoff' || inputs.family == 'agent-evidence' && '@j1nn0/agent-evidence' || inputs.family == 'agent-retry-guard' && '@j1nn0/agent-retry-guard' || inputs.family == 'agent-progress' && '@j1nn0/agent-progress' || inputs.family == 'agent-state' && '@j1nn0/agent-state' || '@j1nn0/agent-context-guard' }}
-      ADAPTER_PKG_NAME: ${{ inputs.family == 'agent-budget' && '@j1nn0/agent-budget-pi' || inputs.family == 'agent-handoff' && '@j1nn0/agent-handoff-pi' || inputs.family == 'agent-evidence' && '@j1nn0/agent-evidence-pi' || inputs.family == 'agent-retry-guard' && '@j1nn0/agent-retry-guard-pi' || inputs.family == 'agent-progress' && '@j1nn0/agent-progress-pi' || inputs.family == 'agent-state' && '@j1nn0/agent-state-pi' || '@j1nn0/agent-context-guard-pi' }}
+      CORE_PKG_NAME: ${{ inputs.family == 'agent-tool-policy' && '@j1nn0/agent-tool-policy' || inputs.family == 'agent-budget' && '@j1nn0/agent-budget' || inputs.family == 'agent-handoff' && '@j1nn0/agent-handoff' || inputs.family == 'agent-evidence' && '@j1nn0/agent-evidence' || inputs.family == 'agent-retry-guard' && '@j1nn0/agent-retry-guard' || inputs.family == 'agent-progress' && '@j1nn0/agent-progress' || inputs.family == 'agent-state' && '@j1nn0/agent-state' || '@j1nn0/agent-context-guard' }}
+      ADAPTER_PKG_NAME: ${{ inputs.family == 'agent-tool-policy' && '@j1nn0/agent-tool-policy-pi' || inputs.family == 'agent-budget' && '@j1nn0/agent-budget-pi' || inputs.family == 'agent-handoff' && '@j1nn0/agent-handoff-pi' || inputs.family == 'agent-evidence' && '@j1nn0/agent-evidence-pi' || inputs.family == 'agent-retry-guard' && '@j1nn0/agent-retry-guard-pi' || inputs.family == 'agent-progress' && '@j1nn0/agent-progress-pi' || inputs.family == 'agent-state' && '@j1nn0/agent-state-pi' || '@j1nn0/agent-context-guard-pi' }}
     steps:
       - name: Check out dispatched commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -2742,6 +2971,244 @@ jobs:
           );
           console.log(`Installed @earendil-works/pi-coding-agent peer dependency range: ${peerDependency}`);
           console.log('Public registry Budget consumer smoke passed.');
+          NODE
+          signature_output_file="$RUNNER_TEMP/npm-audit-signatures"
+          if npm audit signatures > "$signature_output_file" 2>&1; then
+            cat "$signature_output_file"
+          else
+            cat "$signature_output_file"
+            echo "npm audit signatures failed." >&2
+            exit 1
+          fi
+          if ! grep -Eiq '[1-9][0-9]* packages? (has|have) (a )?verified attestations?' "$signature_output_file"; then
+            echo "npm audit signatures reported no verified attestations." >&2
+            exit 1
+          fi
+
+      - name: Smoke-test Tool Policy on the public registry anonymously
+        if: ${{ inputs.family == 'agent-tool-policy' }}
+        env:
+          CORE_VERSION: ${{ inputs.core_version }}
+          PI_VERSION: ${{ inputs.pi_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          consumer_dir="$RUNNER_TEMP/registry-consumer"
+          rm -rf "$consumer_dir"
+          mkdir -p "$consumer_dir"
+          cd "$consumer_dir"
+          npm init -y
+          npm install "$CORE_PKG_NAME@$CORE_VERSION" "$ADAPTER_PKG_NAME@$PI_VERSION"
+          node --input-type=module <<'NODE'
+          import { judgeToolPolicy, ToolPolicyError } from '@j1nn0/agent-tool-policy';
+          import { deepStrictEqual } from 'node:assert/strict';
+          import { accessSync } from 'node:fs';
+          import { readFile } from 'node:fs/promises';
+
+          const assert = (condition, message) => {
+            if (!condition) {
+              throw new Error(message);
+            }
+          };
+
+          deepStrictEqual(
+            judgeToolPolicy({
+              tool: 'read',
+              policy: { default: 'deny', allow: ['read'], deny: [] },
+            }),
+            { outcome: 'allowed', source: 'rule' },
+          );
+          deepStrictEqual(
+            judgeToolPolicy({
+              tool: 'bash',
+              policy: { default: 'allow', allow: [], deny: ['bash'] },
+            }),
+            { outcome: 'denied', source: 'rule' },
+          );
+          deepStrictEqual(
+            judgeToolPolicy({
+              tool: 'edit',
+              policy: { default: 'deny', allow: [], deny: [], requiresApproval: ['edit'] },
+            }),
+            { outcome: 'requires_approval', source: 'rule' },
+          );
+          deepStrictEqual(
+            judgeToolPolicy({
+              tool: 'write',
+              policy: { default: 'allow', allow: [], deny: [] },
+            }),
+            { outcome: 'allowed', source: 'default' },
+          );
+          deepStrictEqual(
+            judgeToolPolicy({
+              tool: 'write',
+              policy: { default: 'deny', allow: [], deny: [] },
+            }),
+            { outcome: 'denied', source: 'default' },
+          );
+          deepStrictEqual(
+            judgeToolPolicy({
+              tool: 'write',
+              policy: { default: 'requires_approval', allow: [], deny: [] },
+            }),
+            { outcome: 'requires_approval', source: 'default' },
+          );
+
+          let invalidError;
+          try {
+            judgeToolPolicy({ tool: 'bash' });
+          } catch (error) {
+            invalidError = error;
+          }
+          assert(
+            invalidError instanceof ToolPolicyError &&
+              invalidError.name === 'ToolPolicyError' &&
+              invalidError.code === 'invalid_input' &&
+              invalidError.message === 'Invalid tool policy input.',
+            'registry invalid input did not throw the expected ToolPolicyError shape',
+          );
+
+          let overlapError;
+          try {
+            judgeToolPolicy({
+              tool: 'tool',
+              policy: { default: 'deny', allow: ['tool'], deny: ['tool'] },
+            });
+          } catch (error) {
+            overlapError = error;
+          }
+          assert(
+            overlapError instanceof ToolPolicyError &&
+              overlapError.name === 'ToolPolicyError' &&
+              overlapError.code === 'invalid_input' &&
+              overlapError.message === 'Invalid tool policy input.',
+            'registry cross-list overlap did not throw the expected ToolPolicyError shape',
+          );
+
+          const adapterModule = await import('@j1nn0/agent-tool-policy-pi');
+          const adapterDefault = adapterModule.default;
+          assert(typeof adapterDefault === 'function', 'registry installed Pi adapter default export is not a function');
+
+          const createShim = (seed = []) => {
+            const handlers = new Map();
+            const commands = new Map();
+            const tools = [];
+            const branch = structuredClone(seed);
+            const api = {
+              on: (event, handler) => handlers.set(event, handler),
+              registerCommand: (name, def) => commands.set(name, def),
+              registerTool: (def) => tools.push(def),
+              appendEntry: (customType, data) => branch.push({ type: 'custom', customType, data }),
+            };
+            adapterDefault(api);
+            return { handlers, commands, tools, branch };
+          };
+
+          const joinedText = (result) =>
+            result.content
+              .filter((content) => content.type === 'text')
+              .map((content) => content.text)
+              .join('');
+
+          const first = createShim();
+          const ctx = {
+            ui: { notify() {} },
+            sessionManager: { getBranch: () => first.branch },
+          };
+          assert(first.commands.has('agent-tool-policy'), 'registry agent-tool-policy command was not registered');
+          deepStrictEqual(first.tools, []);
+
+          const toolCall = first.handlers.get('tool_call');
+          assert(typeof toolCall === 'function', 'registry tool_call handler was not registered');
+          const sessionStart = first.handlers.get('session_start');
+          assert(typeof sessionStart === 'function', 'registry session_start handler was not registered');
+
+          const unconfigured = await toolCall(
+            { type: 'tool_call', toolName: 'read', toolCallId: 'registry-s1', input: {} },
+            ctx,
+          );
+          assert(
+            unconfigured?.block === true &&
+              typeof unconfigured.reason === 'string' &&
+              unconfigured.reason.includes('no policy configured'),
+            'registry unconfigured tool call did not block with the expected reason',
+          );
+
+          first.branch.push({
+            type: 'custom',
+            customType: 'agent-tool-policy-state',
+            data: { schemaVersion: 1, policy: { default: 'deny', allow: ['read'], deny: [] } },
+          });
+          await sessionStart({ type: 'session_start' }, ctx);
+          assert(
+            (await toolCall({ type: 'tool_call', toolName: 'read', toolCallId: 'registry-s2', input: {} }, ctx)) === undefined,
+            'registry allowed tool call was blocked by the configured policy',
+          );
+          const denied = await toolCall(
+            { type: 'tool_call', toolName: 'bash', toolCallId: 'registry-s3', input: {} },
+            ctx,
+          );
+          assert(
+            denied?.block === true &&
+              typeof denied.reason === 'string' &&
+              denied.reason.includes('denied by tool policy'),
+            'registry denied tool call did not block with the expected reason',
+          );
+
+          first.branch.push({
+            type: 'custom',
+            customType: 'agent-tool-policy-state',
+            data: { schemaVersion: 1, policy: null },
+          });
+          await sessionStart({ type: 'session_start' }, ctx);
+          assert(
+            (await toolCall({ type: 'tool_call', toolName: 'bash', toolCallId: 'registry-s4', input: {} }, ctx)) === undefined,
+            'registry explicitly disabled policy did not pass the tool call through',
+          );
+
+          first.branch.push({
+            type: 'custom',
+            customType: 'agent-tool-policy-state',
+            data: { schemaVersion: 99, policy: 'garbage' },
+          });
+          await sessionStart({ type: 'session_start' }, ctx);
+          const corrupt = await toolCall(
+            { type: 'tool_call', toolName: 'read', toolCallId: 'registry-s5', input: {} },
+            ctx,
+          );
+          assert(
+            corrupt?.block === true &&
+              typeof corrupt.reason === 'string' &&
+              corrupt.reason.includes('policy configuration'),
+            'registry corrupt newest policy did not block with a configuration reason',
+          );
+
+          const adapterManifestUrl = new URL(
+            import.meta.resolve('@j1nn0/agent-tool-policy-pi/package.json'),
+          );
+          const adapterManifest = JSON.parse(await readFile(adapterManifestUrl, 'utf8'));
+          const dependency = adapterManifest.dependencies?.['@j1nn0/agent-tool-policy'];
+          assert(
+            dependency === `^${process.env.CORE_VERSION}`,
+            'registry installed adapter does not depend on the expected core version',
+          );
+          const dependencyText = JSON.stringify(adapterManifest.dependencies ?? {});
+          assert(
+            !/(?:workspace:|file:|link:)/.test(dependencyText),
+            'registry installed adapter dependencies contain workspace:, file:, or link:',
+          );
+          const extensions = adapterManifest.pi?.extensions;
+          assert(Array.isArray(extensions) && extensions.length > 0, 'registry pi.extensions is missing');
+          for (const target of extensions) {
+            accessSync(new URL(target, adapterManifestUrl));
+          }
+          const peerDependency = adapterManifest.peerDependencies?.['@earendil-works/pi-coding-agent'];
+          assert(
+            typeof peerDependency === 'string',
+            'registry adapter has no Pi peer dependency range',
+          );
+          console.log(`Installed @earendil-works/pi-coding-agent peer dependency range: ${peerDependency}`);
+          console.log('Public registry Tool Policy consumer smoke passed.');
           NODE
           signature_output_file="$RUNNER_TEMP/npm-audit-signatures"
           if npm audit signatures > "$signature_output_file" 2>&1; then
