@@ -94,6 +94,7 @@ When the core returns `requires_approval`, the adapter:
 - blocks when confirmation is `false`, `undefined`, or throws.
 
 The current `ctx.signal` is forwarded to the confirmation dialog. Aborting the turn therefore cancels the dialog rather than turning an unresolved approval into an allow.
+Approval dialogs may include a bounded, allowlisted operand summary for known built-in tools. This summary is a human decision aid only and is never used for policy matching; unknown or custom tools and any preview failure fall back to the name-only prompt.
 
 ## Persistence
 
@@ -117,7 +118,7 @@ The disabled marker has the same envelope shape with `"policy": null`. Verdicts 
 
 - It has no model-callable tools, so the model can never change its own policy.
 - It does not support patterns, globs, prefixes, regular expressions, or other matching semantics.
-- It does not inspect tool arguments.
+- It does not inspect tool arguments for policy matching; approval previews are limited to allowlisted built-in operands.
 - It does not write an audit log or persist verdicts or approvals.
 - It does not implement session-once approvals; that is a future candidate.
 - It never uses Pi's `terminate` result.

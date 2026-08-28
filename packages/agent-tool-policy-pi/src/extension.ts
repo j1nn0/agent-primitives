@@ -15,7 +15,7 @@ import {
   NO_UI_APPROVAL_REASON,
   UNCONFIGURED_BLOCK_REASON,
   UNCONFIGURED_WARNING,
-  approvalMessage,
+  approvalMessageWithPreview,
   approvalTitle,
 } from './messages.js';
 import {
@@ -53,10 +53,11 @@ export async function enforceToolCall(
             }
 
             try {
+              const message = approvalMessageWithPreview(event.toolName, event.input);
               const options = ctx.signal === undefined ? {} : { signal: ctx.signal };
               const approved = await ctx.ui.confirm(
                 approvalTitle(event.toolName),
-                approvalMessage(event.toolName),
+                message,
                 options,
               );
               if (approved === true) {

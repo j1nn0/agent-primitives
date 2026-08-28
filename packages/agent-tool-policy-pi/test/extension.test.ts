@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { COMMAND_NAME } from '../src/command.js';
 import { STATE_CUSTOM_TYPE, ADAPTER_SCHEMA_VERSION } from '../src/state.js';
+import {
+  APPROVAL_DENIED_REASON,
+  NO_UI_APPROVAL_REASON,
+} from '../src/messages.js';
 import { FakePiHarness, type AppendedEntry } from './harness.js';
 
 const VALID_POLICY = {
@@ -16,6 +20,23 @@ function customEntry(data: unknown, customType: string = STATE_CUSTOM_TYPE): unk
 
 function envelope(policy: unknown): unknown {
   return { schemaVersion: ADAPTER_SCHEMA_VERSION, policy };
+}
+
+function approvalHarness(toolName: string): FakePiHarness {
+  return new FakePiHarness([
+    customEntry(
+      envelope({
+        default: 'deny',
+        allow: [],
+        deny: [],
+        requiresApproval: [toolName],
+      }),
+    ),
+  ]);
+}
+
+function nameOnlyApprovalMessage(toolName: string): string {
+  return `Allow tool call "${toolName}"? This tool requires approval under the active policy.`;
 }
 
 function lastAppended(harness: FakePiHarness): AppendedEntry {
@@ -111,8 +132,10 @@ describe('Agent Tool Policy Pi enforcement', () => {
     harness.setConfirm(async () => true);
     await harness.start();
 
-    expect(await harness.executeToolCall('dangerous')).toBeUndefined();
+    const result = await harness.executeToolCall('dangerous');
+    expect(result).toBeUndefined();
     expect(harness.confirmationCalls).toHaveLength(1);
+    expect(harness.confirmationCalls[0]?.message).toBe(nameOnlyApprovalMessage('dangerous'));
   });
 
   it('blocks an approval-required tool when confirmation resolves false', async () => {
@@ -135,6 +158,143 @@ describe('Agent Tool Policy Pi enforcement', () => {
     const reason = blockReason(await harness.executeToolCall('dangerous'));
     expect(reason).toContain('approval');
     expect(reason).toContain('not granted');
+  });
+
+  it('renders allowlisted operand previews and keeps the decision fail-safe', async () => {
+    const cases: readonly {
+      toolName: string;
+      input: Record<string, unknown>;
+      lines: readonly string[];
+    }[] = [
+      { toolName: 'bash', input: { command: 'rm -rf x' }, lines: ['command: rm -rf x'] },
+      { toolName: 'powershell', input: { command: 'Get-Item x' }, lines: ['command: Get-Item x'] },
+      { toolName: 'read', input: { path: '/a/b.ts' }, lines: ['path: /a/b.ts'] },
+      { toolName: 'edit', input: { path: '/a.ts', edits: [{ oldText: 'SECRET_OLD', newText: 'SECRET_NEW' }] }, lines: ['path: /a.ts'] },
+      { toolName: 'write', input: { path: '/a.ts', content: 'WHOLE_FILE_SECRET' }, lines: ['path: /a.ts'] },
+      { toolName: 'grep', input: { pattern: 'foo', path: 'src', glob: '*.ts' }, lines: ['pattern: foo', 'path: src', 'glob: *.ts'] },
+      { toolName: 'find', input: { pattern: '*.ts', path: 'src' }, lines: ['pattern: *.ts', 'path: src'] },
+      { toolName: 'ls', input: { path: '/tmp' }, lines: ['path: /tmp'] },
+    ];
+
+    for (const testCase of cases) {
+      const harness = approvalHarness(testCase.toolName);
+      await harness.start();
+      const result = await harness.executeToolCall(testCase.toolName, testCase.input);
+      expect(blockReason(result)).toBe(APPROVAL_DENIED_REASON);
+      const message = harness.confirmationCalls[0]?.message ?? '';
+      expect(message.split('\n').slice(-testCase.lines.length)).toEqual(testCase.lines);
+      expect(harness.confirmationCalls).toHaveLength(1);
+      if (testCase.toolName === 'edit') {
+        expect(message).not.toContain('SECRET_OLD');
+        expect(message).not.toContain('SECRET_NEW');
+      }
+      if (testCase.toolName === 'write') {
+        expect(message).not.toContain('WHOLE_FILE_SECRET');
+      }
+    }
+  });
+
+  it('falls back to the exact name-only approval message for unknown and invalid operands', async () => {
+    const unknown = approvalHarness('mcp__srv__thing');
+    await unknown.start();
+    await unknown.executeToolCall('mcp__srv__thing', { command: 'SECRET' });
+    expect(unknown.confirmationCalls[0]?.message).toBe(nameOnlyApprovalMessage('mcp__srv__thing'));
+    expect(unknown.confirmationCalls[0]?.message).not.toContain('SECRET');
+
+    const invalid = approvalHarness('ls');
+    await invalid.start();
+    await invalid.executeToolCall('ls', { path: 42 });
+    expect(invalid.confirmationCalls[0]?.message).toBe(nameOnlyApprovalMessage('ls'));
+
+    const empty = approvalHarness('ls');
+    await empty.start();
+    await empty.executeToolCall('ls', {});
+    expect(empty.confirmationCalls[0]?.message).toBe(nameOnlyApprovalMessage('ls'));
+  });
+
+  it('skips accessor operands without invoking getters', async () => {
+    let invoked = false;
+    const input = {};
+    Object.defineProperty(input, 'path', {
+      enumerable: true,
+      get: () => {
+        invoked = true;
+        throw new Error('getter invoked');
+      },
+    });
+
+    const harness = approvalHarness('read');
+    await harness.start();
+    await harness.executeToolCall('read', input);
+    expect(invoked).toBe(false);
+    expect(harness.confirmationCalls[0]?.message).toBe(nameOnlyApprovalMessage('read'));
+  });
+
+  it('normalizes multiline controls and truncates long operands', async () => {
+    const multiline = approvalHarness('bash');
+    await multiline.start();
+    await multiline.executeToolCall('bash', { command: 'cd a\nrm -rf b\tsomething\x01' });
+    const multilineMessage = multiline.confirmationCalls[0]?.message ?? '';
+    expect(multilineMessage).toContain('command: cd a ⏎ rm -rf b something');
+    expect(multilineMessage).not.toContain('\x01');
+    expect(multilineMessage.split('\n')).toHaveLength(2);
+
+    const truncation = approvalHarness('bash');
+    await truncation.start();
+    await truncation.executeToolCall('bash', { command: 'x'.repeat(200) });
+    const truncationMessage = truncation.confirmationCalls[0]?.message ?? '';
+    expect(truncationMessage).toContain(`command: ${'x'.repeat(120)}... [truncated]`);
+    expect(truncationMessage).not.toContain('x'.repeat(121));
+  });
+
+  it('uses confirmation only for the decision and keeps headless calls before preview work', async () => {
+    const approved = approvalHarness('bash');
+    approved.setConfirm(async () => true);
+    await approved.start();
+    expect(await approved.executeToolCall('bash', { command: 'echo approved' })).toBeUndefined();
+    expect(approved.confirmationCalls[0]?.message).toContain('command: echo approved');
+
+    const denied = approvalHarness('bash');
+    denied.setConfirm(async () => false);
+    await denied.start();
+    expect(blockReason(await denied.executeToolCall('bash', { command: 'echo denied' }))).toBe(
+      APPROVAL_DENIED_REASON,
+    );
+
+    let headlessGetterInvoked = false;
+    const toxicInput = {};
+    Object.defineProperty(toxicInput, 'command', {
+      enumerable: true,
+      get: () => {
+        headlessGetterInvoked = true;
+        throw new Error('headless preview invoked');
+      },
+    });
+    const headless = approvalHarness('bash');
+    await headless.start();
+    expect(
+      blockReason(await headless.executeToolCall('bash', toxicInput, { hasUI: false })),
+    ).toBe(NO_UI_APPROVAL_REASON);
+    expect(headlessGetterInvoked).toBe(false);
+    expect(headless.confirmationCalls).toHaveLength(0);
+  });
+
+  it('uses only the tool name for core policy matching', async () => {
+    const harness = new FakePiHarness([
+      customEntry(
+        envelope({
+          default: 'deny',
+          allow: ['bash'],
+          deny: [],
+          requiresApproval: [],
+        }),
+      ),
+    ]);
+    await harness.start();
+
+    expect(await harness.executeToolCall('bash', { command: 'SAFE' })).toBeUndefined();
+    expect(await harness.executeToolCall('bash', { command: 'DIFFERENT' })).toBeUndefined();
+    expect(harness.confirmationCalls).toHaveLength(0);
   });
 
   it('forwards the active abort signal to the approval dialog', async () => {
