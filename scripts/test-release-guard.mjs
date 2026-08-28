@@ -92,7 +92,8 @@ const adapterPublishBlock = [
 const toolPolicyPackedSmokeStart = '      - name: Smoke-test Tool Policy packed artifacts in a fresh consumer';
 const toolPolicyPackedSmokeEnd = '\n\n  publish:';
 const toolPolicyPackedSmokeIf = "        if: ${{ inputs.family == 'agent-tool-policy' }}\n";
-const runExampleStep = '      - name: Run example\n        run: pnpm example\n';
+const packageSetAssertLine = '          pnpm list -r --filter "$ADAPTER_PKG_NAME..." --depth -1 --json | node -e \'const fs=require("node:fs");const actual=JSON.parse(fs.readFileSync(0,"utf8")).map((entry)=>entry.name).sort();const expected=[process.env.CORE_PKG_NAME,process.env.ADAPTER_PKG_NAME].sort();if(actual.length!==expected.length||actual.some((name,index)=>name!==expected[index])){console.error("Family package set mismatch: "+JSON.stringify(actual)+" instead of "+JSON.stringify(expected));process.exit(1);}\'\n';
+const runExampleStep = '      - name: Run example\n        env:\n          FAMILY: ${{ inputs.family }}\n        shell: bash\n        run: |\n          set -euo pipefail\n          node -e \'const scripts=JSON.parse(require("node:fs").readFileSync("package.json","utf8")).scripts||{};const name="example:"+process.env.FAMILY;if(typeof scripts[name]!=="string"||scripts[name].length===0){console.error("No root example script for family "+process.env.FAMILY);process.exit(1);}\'\n          pnpm run "example:${FAMILY}"\n';
 const unrelatedFamilyGatedStep = [
   '      - name: Audit family docs',
   "        if: ${{ inputs.family == 'agent-budget' }}",
@@ -485,6 +486,167 @@ const mutations = [
             'case AL',
           ),
         'case AL step',
+      ),
+  },
+  {
+    name: 'AM validate build reverts to repo-wide build',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        '      - name: Build from a clean dist',
+        '\n\n      - name: Typecheck',
+        (step) =>
+          replaceRequired(
+            step,
+            `${packageSetAssertLine}          pnpm -r --filter "$ADAPTER_PKG_NAME..." run build`,
+            '          pnpm build',
+            'case AM',
+          ),
+        'case AM step',
+      ),
+  },
+  {
+    name: 'AN validate build loses the package-set assertion',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        '      - name: Build from a clean dist',
+        '\n\n      - name: Typecheck',
+        (step) => replaceRequired(step, packageSetAssertLine, '', 'case AN'),
+        'case AN step',
+      ),
+  },
+  {
+    name: 'AO validate typecheck loses the family filter',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        '      - name: Typecheck',
+        '\n\n      - name: Test',
+        (step) =>
+          replaceRequired(
+            step,
+            '          pnpm -r --filter "$ADAPTER_PKG_NAME..." run typecheck',
+            '          pnpm typecheck',
+            'case AO',
+          ),
+        'case AO step',
+      ),
+  },
+  {
+    name: 'AQ validate test loses the family filter',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        '      - name: Test',
+        '\n\n      - name: Check package quality',
+        (step) =>
+          replaceRequired(
+            step,
+            '          pnpm -r --filter "$ADAPTER_PKG_NAME..." run test',
+            '          pnpm test',
+            'case AQ',
+          ),
+        'case AQ step',
+      ),
+  },
+  {
+    name: 'AR validate package check loses the family filter',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        '      - name: Check package quality',
+        '\n\n      - name: Run example',
+        (step) =>
+          replaceRequired(
+            step,
+            '          pnpm -r --filter "$ADAPTER_PKG_NAME..." run check:package',
+            '          pnpm check:package',
+            'case AR',
+          ),
+        'case AR step',
+      ),
+  },
+  {
+    name: 'AS validate example reverts to the repo-wide example',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        '      - name: Run example',
+        '\n\n      - name: Dry-run pnpm package publication',
+        () => '      - name: Run example\n        run: pnpm example',
+        'case AS step',
+      ),
+  },
+  {
+    name: 'AT publish build reverts to repo-wide build',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        '  publish:\n',
+        '\n  registry-smoke:',
+        (job) =>
+          replaceRequired(
+            job,
+            `${packageSetAssertLine}          pnpm -r --filter "$ADAPTER_PKG_NAME..." run build`,
+            '          pnpm build',
+            'case AT',
+          ),
+        'case AT job',
+      ),
+  },
+  {
+    name: 'AU publish build loses the package-set assertion',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        '  publish:\n',
+        '\n  registry-smoke:',
+        (job) => replaceRequired(job, packageSetAssertLine, '', 'case AU'),
+        'case AU job',
+      ),
+  },
+  {
+    name: 'AV CI preflight step is removed',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        '      - name: Require successful CI on the dispatched commit',
+        '\n\n      - name: Set up pnpm',
+        () => '',
+        'case AV step',
+      ),
+  },
+  {
+    name: 'AW validate permissions lose actions read',
+    mutate: (source) =>
+      replaceRequired(
+        source,
+        '    permissions:\n      actions: read\n      contents: read\n',
+        '    permissions:\n      contents: read\n',
+        'case AW',
+      ),
+  },
+  {
+    name: 'AX CI preflight loses the exact SHA constraint',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        '      - name: Require successful CI on the dispatched commit',
+        '\n\n      - name: Set up pnpm',
+        (step) => replaceUnique(step, 'head_sha=${DISPATCH_SHA}', 'head_sha=', 'case AX'),
+        'case AX step',
+      ),
+  },
+  {
+    name: 'AY CI preflight loses its fail-closed exit',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        '      - name: Require successful CI on the dispatched commit',
+        '\n\n      - name: Set up pnpm',
+        (step) => replaceRequired(step, '            exit 1\n          fi', '            exit 0\n          fi', 'case AY'),
+        'case AY step',
       ),
   },
 ];

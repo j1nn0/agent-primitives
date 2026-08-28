@@ -61,11 +61,12 @@ For the current Agent Tool Policy manifests, select family `agent-tool-policy` w
 ### Validate versus publish
 
 `validate` performs no registry publication and does not require the confirmation
-literal. It installs dependencies from the frozen lockfile, rebuilds from clean
-`dist` directories, runs lint, typecheck, tests, package checks, and examples,
-performs pnpm dry runs, audits both packed tarballs, and runs the selected
-family's fresh-consumer smoke. The local smoke installs both tarballs by absolute
-path in one `npm install`; it does not resolve the family core from the registry.
+literal. It installs dependencies from the frozen lockfile, validates only the selected
+family's core and Pi adapter for build, typecheck, test, and `check:package`, runs the
+family-specific root example script, retains repo-wide lint, and requires a successful
+CI run for the dispatched commit with a `push` event on `main` and the same SHA before
+proceeding, failing closed otherwise. It performs pnpm dry runs, audits both packed
+tarballs, and runs the selected family's fresh-consumer smoke.
 
 `publish` repeats the safety checks, reasserts the manifest versions, performs an
 anonymous registry preflight, and publishes only when the requested registry
@@ -150,7 +151,8 @@ SLSA statement must identify:
 - the dispatched commit (`github.sha`).
 
 The guard in `scripts/guard-release-workflow.mjs` checks these static invariants,
-including the family pairing, permissions, trigger, action pins, tokenless
+including the family pairing, family-scoped build/typecheck/test/`check:package` validation,
+family-specific examples, exact-SHA CI preflight, permissions, trigger, action pins, tokenless
 policy, tarball operands, and core-before-adapter provenance ordering. The
 negative-control suite is available as `pnpm test:release-guard`.
 

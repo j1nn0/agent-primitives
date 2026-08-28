@@ -326,6 +326,161 @@ function checkFamilySmokeWiring(document, expectedFamilyOptions) {
   }
 }
 
+const FAMILY_SCOPED_VALIDATION_STEPS = [
+  ['Build from a clean dist', 'build'],
+  ['Typecheck', 'typecheck'],
+  ['Test', 'test'],
+  ['Check package quality', 'check:package'],
+];
+const packageSetAssertPrefix = 'pnpm list -r --filter "$ADAPTER_PKG_NAME..." --depth -1 --json';
+const packageSetMarkers = ['actual.length!==expected.length', 'name!==expected[index]'];
+
+function checkFamilyScopedStep(record, jobName, stepName, script) {
+  const step = record?.step;
+  if (!isRecord(step) || typeof step.run !== 'string') {
+    addViolation(`release.yml job ${jobName} step ${stepName} must have a string run script.`);
+    return;
+  }
+
+  const expectedInvocation = `pnpm -r --filter "$ADAPTER_PKG_NAME..." run ${script}`;
+  if (!step.run.includes(expectedInvocation)) {
+    addViolation(`release.yml job ${jobName} step ${stepName} must invoke ${expectedInvocation}.`);
+  }
+  if (!step.run.includes(packageSetAssertPrefix)) {
+    addViolation(`release.yml job ${jobName} step ${stepName} must assert its exact family package set.`);
+  }
+  for (const marker of packageSetMarkers) {
+    if (!step.run.includes(marker)) {
+      addViolation(`release.yml job ${jobName} step ${stepName} must contain the exact package-set marker ${marker}.`);
+    }
+  }
+}
+
+function checkFamilyScopedValidation(document) {
+  const validateRecords = stepRecords(document, 'validate');
+  for (const [stepName, script] of FAMILY_SCOPED_VALIDATION_STEPS) {
+    const matches = validateRecords.filter(({ step }) => isRecord(step) && step.name === stepName);
+    if (matches.length !== 1) {
+      addViolation(`release.yml validate job must contain exactly one ${stepName} step; found ${matches.length}.`);
+    } else {
+      checkFamilyScopedStep(matches[0], 'validate', stepName, script);
+    }
+  }
+
+  const exampleMatches = validateRecords.filter(({ step }) => isRecord(step) && step.name === 'Run example');
+  if (exampleMatches.length !== 1) {
+    addViolation(`release.yml validate job must contain exactly one Run example step; found ${exampleMatches.length}.`);
+  } else {
+    const step = exampleMatches[0].step;
+    exactMapping(step.env, { FAMILY: '${{ inputs.family }}' }, 'release.yml validate Run example environment');
+    if (typeof step.run !== 'string') {
+      addViolation('release.yml validate Run example step must have a string run script.');
+    } else {
+      if (!step.run.includes('pnpm run "example:${FAMILY}"')) {
+        addViolation('release.yml validate Run example step must invoke the family-specific root example script.');
+      }
+      if (!step.run.includes('No root example script for family')) {
+        addViolation('release.yml validate Run example step must check that the family-specific root example script exists.');
+      }
+    }
+  }
+
+  if (!validateRecords.some(({ step }) => isRecord(step) && step.name === 'Lint' && step.run === 'pnpm lint')) {
+    addViolation('release.yml validate job must retain a repo-wide Lint step running pnpm lint.');
+  }
+
+  const forbiddenValidateCommands = new Set(['pnpm build', 'pnpm typecheck', 'pnpm test', 'pnpm check:package', 'pnpm example']);
+  for (const { step } of validateRecords) {
+    if (!isRecord(step) || typeof step.run !== 'string') {
+      continue;
+    }
+    for (const command of commandSegments(step.run)) {
+      if (forbiddenValidateCommands.has(command)) {
+        addViolation(`release.yml validate job must not contain the repo-wide command ${command}.`);
+      }
+    }
+  }
+
+  const publishRecords = stepRecords(document, 'publish');
+  const publishBuildMatches = publishRecords.filter(({ step }) => isRecord(step) && step.name === 'Build from a clean dist');
+  if (publishBuildMatches.length !== 1) {
+    addViolation(`release.yml publish job must contain exactly one Build from a clean dist step; found ${publishBuildMatches.length}.`);
+  } else {
+    checkFamilyScopedStep(publishBuildMatches[0], 'publish', 'Build from a clean dist', 'build');
+  }
+  for (const { step } of publishRecords) {
+    if (!isRecord(step) || typeof step.run !== 'string') {
+      continue;
+    }
+    for (const command of commandSegments(step.run)) {
+      if (command === 'pnpm build') {
+        addViolation('release.yml publish job must not contain the repo-wide command pnpm build.');
+      }
+    }
+  }
+}
+
+function checkCiPreflight(document) {
+  const validateRecords = stepRecords(document, 'validate');
+  const preflightName = 'Require successful CI on the dispatched commit';
+  const preflightMatches = validateRecords.filter(({ step }) => isRecord(step) && step.name === preflightName);
+  if (preflightMatches.length !== 1) {
+    addViolation(`release.yml validate job must contain exactly one ${preflightName} step; found ${preflightMatches.length}.`);
+    return;
+  }
+
+  const setupMatches = validateRecords.filter(({ step }) => isRecord(step) && step.name === 'Set up pnpm');
+  if (setupMatches.length !== 1) {
+    addViolation(`release.yml validate job must contain exactly one Set up pnpm step; found ${setupMatches.length}.`);
+  } else if (preflightMatches[0].index >= setupMatches[0].index) {
+    addViolation(`release.yml ${preflightName} step must appear before Set up pnpm.`);
+  }
+
+  const step = preflightMatches[0].step;
+  if (hasOwn(step, 'uses')) {
+    addViolation(`release.yml ${preflightName} step must be a run step, not a uses step.`);
+  }
+  exactMapping(
+    step.env,
+    {
+      DISPATCH_SHA: '${{ github.sha }}',
+      REPOSITORY: '${{ github.repository }}',
+      GH_TOKEN: '${{ github.token }}',
+    },
+    `release.yml ${preflightName} environment`,
+  );
+  if (typeof step.run !== 'string') {
+    addViolation(`release.yml ${preflightName} step must have a string run script.`);
+    return;
+  }
+
+  const run = step.run;
+  for (const marker of [
+    'head_sha=${DISPATCH_SHA}',
+    'workflow=.github/workflows/ci.yml',
+    'head_branch=main',
+    'event=push',
+    'r.get("status") == "completed"',
+    'r.get("conclusion") == "success"',
+    'r.get("head_sha") == sha',
+    'r.get("event") == "push"',
+    'r.get("head_branch") == "main"',
+    'r.get("path") == ".github/workflows/ci.yml"',
+    'max_attempts=30',
+    'failing closed',
+  ]) {
+    if (!run.includes(marker)) {
+      addViolation(`release.yml ${preflightName} step is missing the required marker ${marker}.`);
+    }
+  }
+  if (run.includes('checks') || run.includes('/check-runs')) {
+    addViolation(`release.yml ${preflightName} step must not use the Checks API.`);
+  }
+  if (!/failing closed[\s\S]*\bexit 1\b/.test(run)) {
+    addViolation(`release.yml ${preflightName} step must fail closed with exit 1.`);
+  }
+}
+
 function checkReleaseStructure(release) {
   const { raw, document } = release;
   if (!isRecord(document)) {
@@ -359,6 +514,8 @@ function checkReleaseStructure(release) {
     }
   }
   checkFamilySmokeWiring(document, expectedFamilyOptions);
+  checkFamilyScopedValidation(document);
+  checkCiPreflight(document);
 
   const jobs = document.jobs;
   const expectedJobs = ['validate', 'publish', 'registry-smoke'];
@@ -387,7 +544,7 @@ function checkReleaseStructure(release) {
 
   exactMapping(document.permissions, { contents: 'read' }, 'release.yml workflow permissions');
   if (isRecord(jobs)) {
-    exactMapping(jobs.validate?.permissions, { contents: 'read' }, 'release.yml validate permissions');
+    exactMapping(jobs.validate?.permissions, { actions: 'read', contents: 'read' }, 'release.yml validate permissions');
     exactMapping(
       jobs.publish?.permissions,
       { contents: 'read', 'id-token': 'write' },

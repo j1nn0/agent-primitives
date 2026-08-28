@@ -56,6 +56,7 @@ concurrency:
 jobs:
   validate:
     permissions:
+      actions: read
       contents: read
     runs-on: ubuntu-latest
     env:
@@ -120,6 +121,75 @@ jobs:
             fi
           fi
 
+      - name: Require successful CI on the dispatched commit
+        env:
+          DISPATCH_SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          max_attempts=30
+          ci_success=false
+          for ((attempt=1; attempt<=max_attempts; attempt++)); do
+            ci_runs_file="$RUNNER_TEMP/ci-runs-${attempt}.json"
+            if ! gh api "repos/${REPOSITORY}/actions/runs?head_sha=${DISPATCH_SHA}&workflow=.github/workflows/ci.yml&head_branch=main&event=push&per_page=100" > "$ci_runs_file" 2>/dev/null; then
+              echo "CI runs API request failed on attempt ${attempt}/${max_attempts}; retrying." >&2
+            elif python3 - "$ci_runs_file" "$DISPATCH_SHA" <<'PY'
+          import json, sys
+
+          try:
+              data = json.load(open(sys.argv[1], encoding="utf-8"))
+          except (OSError, json.JSONDecodeError):
+              print("CI runs response was not valid JSON.", file=sys.stderr)
+              raise SystemExit(1)
+
+          sha = sys.argv[2]
+          if not isinstance(data, dict):
+              print("CI runs response had an unexpected shape.", file=sys.stderr)
+              raise SystemExit(1)
+
+          runs = data.get("workflow_runs", [])
+          if (
+              not isinstance(runs, list)
+              or not isinstance(data.get("total_count"), int)
+              or isinstance(data.get("total_count"), bool)
+              or any(not isinstance(run, dict) for run in runs)
+          ):
+              print("CI runs response had an unexpected shape.", file=sys.stderr)
+              raise SystemExit(1)
+
+          if data["total_count"] > len(runs):
+              print("CI runs result window truncated.", file=sys.stderr)
+              raise SystemExit(1)
+
+          candidates = [r for r in runs if r.get("status") == "completed" and r.get("conclusion") == "success" and r.get("head_sha") == sha and r.get("event") == "push" and r.get("head_branch") == "main" and r.get("path") == ".github/workflows/ci.yml"]
+
+          if candidates:
+              print(f"Found successful CI run for {sha}.")
+              raise SystemExit(0)
+
+          observed = sorted({f"{r.get('status')}/{r.get('conclusion')}" for r in runs})
+          print(f"No successful CI run for {sha}; observed states: {', '.join(observed) or 'none'}.", file=sys.stderr)
+          raise SystemExit(1)
+          PY
+            then
+              echo "Successful CI run verified for ${DISPATCH_SHA}."
+              ci_success=true
+              break
+            else
+              echo "CI preflight attempt ${attempt}/${max_attempts} did not find a qualifying run." >&2
+            fi
+            if (( attempt < max_attempts )); then
+              sleep 10
+            fi
+          done
+
+          if [[ "$ci_success" != true ]]; then
+            echo "CI preflight exhausted ${max_attempts} attempts; failing closed." >&2
+            exit 1
+          fi
+
       - name: Set up pnpm
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
 
@@ -140,19 +210,38 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf "$CORE_PKG_DIR/dist" "$ADAPTER_PKG_DIR/dist"
-          pnpm build
+          pnpm list -r --filter "$ADAPTER_PKG_NAME..." --depth -1 --json | node -e 'const fs=require("node:fs");const actual=JSON.parse(fs.readFileSync(0,"utf8")).map((entry)=>entry.name).sort();const expected=[process.env.CORE_PKG_NAME,process.env.ADAPTER_PKG_NAME].sort();if(actual.length!==expected.length||actual.some((name,index)=>name!==expected[index])){console.error("Family package set mismatch: "+JSON.stringify(actual)+" instead of "+JSON.stringify(expected));process.exit(1);}'
+          pnpm -r --filter "$ADAPTER_PKG_NAME..." run build
 
       - name: Typecheck
-        run: pnpm typecheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm list -r --filter "$ADAPTER_PKG_NAME..." --depth -1 --json | node -e 'const fs=require("node:fs");const actual=JSON.parse(fs.readFileSync(0,"utf8")).map((entry)=>entry.name).sort();const expected=[process.env.CORE_PKG_NAME,process.env.ADAPTER_PKG_NAME].sort();if(actual.length!==expected.length||actual.some((name,index)=>name!==expected[index])){console.error("Family package set mismatch: "+JSON.stringify(actual)+" instead of "+JSON.stringify(expected));process.exit(1);}'
+          pnpm -r --filter "$ADAPTER_PKG_NAME..." run typecheck
 
       - name: Test
-        run: pnpm test
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm list -r --filter "$ADAPTER_PKG_NAME..." --depth -1 --json | node -e 'const fs=require("node:fs");const actual=JSON.parse(fs.readFileSync(0,"utf8")).map((entry)=>entry.name).sort();const expected=[process.env.CORE_PKG_NAME,process.env.ADAPTER_PKG_NAME].sort();if(actual.length!==expected.length||actual.some((name,index)=>name!==expected[index])){console.error("Family package set mismatch: "+JSON.stringify(actual)+" instead of "+JSON.stringify(expected));process.exit(1);}'
+          pnpm -r --filter "$ADAPTER_PKG_NAME..." run test
 
       - name: Check package quality
-        run: pnpm check:package
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm list -r --filter "$ADAPTER_PKG_NAME..." --depth -1 --json | node -e 'const fs=require("node:fs");const actual=JSON.parse(fs.readFileSync(0,"utf8")).map((entry)=>entry.name).sort();const expected=[process.env.CORE_PKG_NAME,process.env.ADAPTER_PKG_NAME].sort();if(actual.length!==expected.length||actual.some((name,index)=>name!==expected[index])){console.error("Family package set mismatch: "+JSON.stringify(actual)+" instead of "+JSON.stringify(expected));process.exit(1);}'
+          pnpm -r --filter "$ADAPTER_PKG_NAME..." run check:package
 
       - name: Run example
-        run: pnpm example
+        env:
+          FAMILY: ${{ inputs.family }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -e 'const scripts=JSON.parse(require("node:fs").readFileSync("package.json","utf8")).scripts||{};const name="example:"+process.env.FAMILY;if(typeof scripts[name]!=="string"||scripts[name].length===0){console.error("No root example script for family "+process.env.FAMILY);process.exit(1);}'
+          pnpm run "example:${FAMILY}"
 
       - name: Dry-run pnpm package publication
         shell: bash
@@ -1423,7 +1512,8 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf "$CORE_PKG_DIR/dist" "$ADAPTER_PKG_DIR/dist"
-          pnpm build
+          pnpm list -r --filter "$ADAPTER_PKG_NAME..." --depth -1 --json | node -e 'const fs=require("node:fs");const actual=JSON.parse(fs.readFileSync(0,"utf8")).map((entry)=>entry.name).sort();const expected=[process.env.CORE_PKG_NAME,process.env.ADAPTER_PKG_NAME].sort();if(actual.length!==expected.length||actual.some((name,index)=>name!==expected[index])){console.error("Family package set mismatch: "+JSON.stringify(actual)+" instead of "+JSON.stringify(expected));process.exit(1);}'
+          pnpm -r --filter "$ADAPTER_PKG_NAME..." run build
 
       - name: Re-assert manifest versions
         env:
