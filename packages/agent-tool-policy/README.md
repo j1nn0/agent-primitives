@@ -202,4 +202,4 @@ The judge is a pure function:
 
 ## Limitations
 
-Version 0.1 judges one caller-declared tool name per call. Matching is exact-name only: there are no patterns, globs, prefixes, argument rules, tool discovery, or automatic policy construction. `requires_approval` is only a declared outcome; integrations own prompts and enforcement. Phase 1 ships no Pi adapter and no other harness adapter.
+Version 0.1 judges one caller-declared tool name per call. Matching is exact-name only: there are no patterns, globs, prefixes, argument rules, tool discovery, or automatic policy construction. `requires_approval` is only a declared outcome; integrations own prompts and enforcement. A minimal Pi adapter that enforces this contract at the `tool_call` boundary is published as @j1nn0/agent-tool-policy-pi.
