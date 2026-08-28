@@ -14,7 +14,7 @@ pnpm and the resulting tarballs are published with npm.
 | `agent-retry-guard` | `packages/agent-retry-guard` → `@j1nn0/agent-retry-guard` `0.1.0` | `packages/agent-retry-guard-pi` → `@j1nn0/agent-retry-guard-pi` `0.1.0` | Published |
 | `agent-evidence` | `packages/agent-evidence` → `@j1nn0/agent-evidence` `0.1.0` | `packages/agent-evidence-pi` → `@j1nn0/agent-evidence-pi` `0.1.0` | Published |
 | `agent-handoff` | `packages/agent-handoff` → `@j1nn0/agent-handoff` `0.1.0` | `packages/agent-handoff-pi` → `@j1nn0/agent-handoff-pi` `0.1.0` | Published |
-| `agent-budget` | `packages/agent-budget` → `@j1nn0/agent-budget` `0.1.0` | `packages/agent-budget-pi` → `@j1nn0/agent-budget-pi` `0.1.0` | Not published (bootstrap required)
+| `agent-budget` | `packages/agent-budget` → `@j1nn0/agent-budget` `0.1.0` | `packages/agent-budget-pi` → `@j1nn0/agent-budget-pi` `0.1.0` | Published
 
 The published packages listed above reached the registry through the bootstrap procedure
 below. Each newly bootstrapped pair must have Trusted Publishing configured before its

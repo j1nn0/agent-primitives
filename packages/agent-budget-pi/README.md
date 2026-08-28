@@ -12,7 +12,13 @@ The adapter adds only session storage, identifier and envelope validation, comma
 
 ## Installation
 
-The package is not published to npm yet.
+Install the published adapter from the registry:
+
+```sh
+pi install npm:@j1nn0/agent-budget-pi
+```
+
+Add `-l` to install it project-locally instead of for your user.
 
 ### From a local checkout (development)
 
