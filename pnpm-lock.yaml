@@ -155,6 +155,15 @@ importers:
 
   packages/agent-tool-policy: {}
 
+  packages/agent-tool-policy-pi:
+    dependencies:
+      '@earendil-works/pi-coding-agent':
+        specifier: '*'
+        version: 0.84.2(supports-color@7.2.0)(ws@8.21.3)
+      '@j1nn0/agent-tool-policy':
+        specifier: workspace:^
+        version: link:../agent-tool-policy
+
   packages/context-guard: {}
 
   packages/context-guard-pi:

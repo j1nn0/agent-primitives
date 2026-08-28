@@ -105,6 +105,10 @@ moment, and that is the adapter's job.
 
 `@j1nn0/agent-budget-pi` is implemented in this repository. The minimal Pi adapter provides `/agent-budget` commands and four model-callable tools (`agent_budget_get`, `agent_budget_set`, `agent_budget_remove`, `agent_budget_judge`) for storing caller-declared budget records ({id, consumed, limit} with exact preservation) and judging them on demand through `@j1nn0/agent-budget`; judgment results are never persisted and the adapter does no automatic accounting. See [`packages/agent-budget-pi/README.md`](packages/agent-budget-pi/README.md) for the package documentation.
 
+#### `@j1nn0/agent-tool-policy-pi`
+
+`@j1nn0/agent-tool-policy-pi` is implemented in this repository. The Pi adapter enforces caller-declared tool policy at the pre-execution `tool_call` boundary: unconfigured or corrupted policy blocks tool calls, `denied` blocks, `requires_approval` passes only through an interactive confirmation, and only an explicit disable marker allows everything through. It registers `/agent-tool-policy` human commands and no model-callable tools. See [`packages/agent-tool-policy-pi/README.md`](packages/agent-tool-policy-pi/README.md) for the package documentation.
+
 ## Direction
 
 Harness adapters ship on a per-primitive basis where a concrete consumer justifies the integration. They observe the lifecycle of a specific agent runtime and enforce or recover, while every core primitive stays independent and explicit.
