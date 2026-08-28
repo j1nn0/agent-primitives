@@ -66,13 +66,30 @@ family's core and Pi adapter for build, typecheck, test, and `check:package`, ru
 family-specific root example script, retains repo-wide lint, and requires a successful
 CI run for the dispatched commit with a `push` event on `main` and the same SHA before
 proceeding, failing closed otherwise. It performs pnpm dry runs, audits both packed
-tarballs, and runs the selected family's fresh-consumer smoke.
+tarballs, and runs the selected family's fresh-consumer smoke. Validate mode always
+runs this inline validation and rejects a non-empty `validated_run_id`.
 
 `publish` repeats the safety checks, reasserts the manifest versions, performs an
-anonymous registry preflight, and publishes only when the requested registry
-state is safe. The publish job then verifies the core on the registry and verifies
-its provenance before publishing the adapter. Finally it verifies the adapter and
-its provenance, and the anonymous `registry-smoke` job exercises both packages.
+anonymous registry preflight, and publishes only when the requested registry state is
+safe. Its validate job may skip duplicated validation only after a referenced validated
+run passes every reuse check; without that input it performs the full inline validation.
+The publish job then verifies the core on the registry and verifies its provenance before
+publishing the adapter. Finally it verifies the adapter and its provenance, and the
+anonymous `registry-smoke` job exercises both packages.
+
+### Validated-run reuse
+
+In `publish` mode, the operator may pass `validated_run_id` for an earlier successful
+validate-mode run of the same workflow, commit, family, and requested versions. The
+workflow verifies the reference through the Actions API: the same SHA on `main`, the
+`release.yml` `workflow_dispatch` workflow, successful completion, an older run number,
+validate-mode job states, every required validation step, and the selected family's
+smoke binding. It skips duplicated validation steps only after full verification succeeds;
+an empty input keeps full inline validation, and any anomaly hard-fails. Validate mode
+rejects the input. No artifacts or tarballs are reused (Phase 2).
+
+The CI preflight exits immediately on a terminal non-success CI conclusion; queued or
+in-progress runs continue through the existing bounded polling window.
 
 ## Trusted Publishing and first-publish bootstrap
 

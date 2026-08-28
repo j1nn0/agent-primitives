@@ -466,6 +466,15 @@ function checkCiPreflight(document) {
     'r.get("event") == "push"',
     'r.get("head_branch") == "main"',
     'r.get("path") == ".github/workflows/ci.yml"',
+    'latest = max(candidates',
+    'terminal_conclusions',
+    'failure',
+    'cancelled',
+    'timed_out',
+    'startup_failure',
+    'in terminal_conclusions',
+    'raise SystemExit(2)',
+    'parser_status == 2',
     'max_attempts=30',
     'failing closed',
   ]) {
@@ -473,11 +482,222 @@ function checkCiPreflight(document) {
       addViolation(`release.yml ${preflightName} step is missing the required marker ${marker}.`);
     }
   }
+  const exhaustion = 'echo "CI preflight exhausted ${max_attempts} attempts; failing closed." >&2\n  exit 1\nfi';
+  if (!run.includes(exhaustion)) {
+    addViolation(`release.yml ${preflightName} step must keep its bounded exhaustion exit 1.`);
+  }
   if (run.includes('checks') || run.includes('/check-runs')) {
     addViolation(`release.yml ${preflightName} step must not use the Checks API.`);
   }
   if (!/failing closed[\s\S]*\bexit 1\b/.test(run)) {
     addViolation(`release.yml ${preflightName} step must fail closed with exit 1.`);
+  }
+}
+function checkValidationReuse(document) {
+  const triggers = triggerMapping(document);
+  const workflowDispatch = isRecord(triggers) ? triggers.workflow_dispatch : undefined;
+  const inputs = isRecord(workflowDispatch) ? workflowDispatch.inputs : undefined;
+  const validatedRunInput = isRecord(inputs) ? inputs.validated_run_id : undefined;
+  if (!isRecord(validatedRunInput)) {
+    addViolation('release.yml workflow_dispatch must define a validated_run_id input.');
+  } else {
+    if (validatedRunInput.required !== false) {
+      addViolation('release.yml validated_run_id input must not be required.');
+    }
+    if (validatedRunInput.default !== '') {
+      addViolation('release.yml validated_run_id input must default to an empty string.');
+    }
+    if (validatedRunInput.type !== 'string') {
+      addViolation('release.yml validated_run_id input must have type string.');
+    }
+  }
+
+  const validateRecords = stepRecords(document, 'validate');
+  const inputValidationName = 'Validate release inputs and manifests';
+  const inputValidationMatches = validateRecords.filter(
+    ({ step }) => isRecord(step) && step.name === inputValidationName,
+  );
+  if (inputValidationMatches.length !== 1) {
+    addViolation(`release.yml validate job must contain exactly one ${inputValidationName} step; found ${inputValidationMatches.length}.`);
+  } else {
+    const inputValidationRun = inputValidationMatches[0].step.run;
+    if (typeof inputValidationRun !== 'string') {
+      addViolation(`release.yml ${inputValidationName} step must have a string run script.`);
+    } else {
+      const modeGate = 'if [[ "$MODE" != "publish" ]]; then';
+      if (!inputValidationRun.includes('if [[ -n "$VALIDATED_RUN_ID" ]]; then') || !inputValidationRun.includes(modeGate)) {
+        addViolation(`release.yml ${inputValidationName} step must reject validated_run_id outside publish mode.`);
+      }
+      if (!inputValidationRun.includes('^[0-9]{1,19}$')) {
+        addViolation(`release.yml ${inputValidationName} step must sanitize validated_run_id as a numeric run ID.`);
+      }
+      const confirmationPosition = inputValidationRun.indexOf('expected_confirmation');
+      const modeGatePosition = inputValidationRun.indexOf(modeGate);
+      if (confirmationPosition >= 0 && modeGatePosition <= confirmationPosition) {
+        addViolation(`release.yml ${inputValidationName} validated_run_id checks must follow confirmation validation.`);
+      }
+    }
+  }
+
+  const verifyName = 'Verify the referenced validated run';
+  const verifyMatches = validateRecords.filter(({ step }) => isRecord(step) && step.name === verifyName);
+  if (verifyMatches.length !== 1) {
+    addViolation(`release.yml validate job must contain exactly one ${verifyName} step; found ${verifyMatches.length}.`);
+  } else {
+    const verifyRecord = verifyMatches[0];
+    const verifyStep = verifyRecord.step;
+    if (verifyStep.id !== 'validate_reuse') {
+      addViolation(`release.yml ${verifyName} step must have id validate_reuse.`);
+    }
+    if (hasOwn(verifyStep, 'uses')) {
+      addViolation(`release.yml ${verifyName} step must be a run step, not a uses step.`);
+    }
+    exactMapping(
+      verifyStep.env,
+      {
+        VALIDATED_RUN_ID: '${{ inputs.validated_run_id }}',
+        DISPATCH_SHA: '${{ github.sha }}',
+        REPOSITORY: '${{ github.repository }}',
+        CURRENT_RUN_NUMBER: '${{ github.run_number }}',
+        FAMILY: '${{ inputs.family }}',
+      },
+      `release.yml ${verifyName} environment`,
+    );
+
+    const preflightMatches = validateRecords.filter(({ step }) => isRecord(step) && step.name === 'Require successful CI on the dispatched commit');
+    const lintMatches = validateRecords.filter(({ step }) => isRecord(step) && step.name === 'Lint');
+    if (inputValidationMatches.length === 1 && preflightMatches.length === 1 && lintMatches.length === 1) {
+      if (verifyRecord.index <= inputValidationMatches[0].index || verifyRecord.index <= preflightMatches[0].index || verifyRecord.index >= lintMatches[0].index) {
+        addViolation(`release.yml ${verifyName} step must appear after input validation and CI preflight, before Lint.`);
+      }
+    }
+
+    if (typeof verifyStep.run !== 'string') {
+      addViolation(`release.yml ${verifyName} step must have a string run script.`);
+    } else {
+      const run = verifyStep.run;
+      for (const marker of [
+        'if not isinstance(data, dict):',
+        'required_fields = {',
+        'if any(field not in data for field in required_fields):',
+        'isinstance(data[field], int)',
+        'isinstance(data[field], str)',
+        'if not (r.id == int(sys.argv[4])):',
+        'if not (r.path == ".github/workflows/release.yml"):',
+        'if not (r.event == "workflow_dispatch"):',
+        'if not (r.status == "completed"):',
+        'if not (r.conclusion == "success"):',
+        'if not (r.head_sha == dispatch_sha):',
+        'if not (r.head_branch == "main"):',
+        'if not (r.run_number < current_run_number):',
+        '/attempts/',
+        'attempts/${RUN_ATTEMPT}/jobs',
+        'if not (total_count == len(jobs)):',
+        'expected_job_names = {"validate", "publish", "registry-smoke"}',
+        'if len(matches) != 1:',
+        'unexpected extra job names',
+        'if not (run_attempt == job_attempt):',
+        'if not (jobs_by_name["validate"]["conclusion"] == "success"):',
+        'if not (jobs_by_name["publish"]["conclusion"] == "skipped"):',
+        'if not (jobs_by_name["registry-smoke"]["conclusion"] == "skipped"):',
+        'if len(required_matches) != 1:',
+        'if not (required_matches[0].get("conclusion") == "success"):',
+        'smoke_steps = {',
+        'if family not in smoke_steps:',
+        'if len(smoke_matches) != 1:',
+        'selected_smoke = smoke_steps[family]',
+        'if len(selected_matches) != 1:',
+        'if not (selected_matches[0].get("conclusion") == "success"):',
+        'if not (smoke_matches_by_name[smoke_name].get("conclusion") == "skipped"):',
+        'echo "reuse=false" >> "$GITHUB_OUTPUT"',
+        'echo "reuse=true" >> "$GITHUB_OUTPUT"',
+        'failing closed',
+      ]) {
+        if (!run.includes(marker)) {
+          addViolation(`release.yml ${verifyName} step is missing the required marker ${marker}.`);
+        }
+      }
+
+      for (const stepName of [
+        'Validate release inputs and manifests',
+        'Require successful CI on the dispatched commit',
+        'Lint',
+        'Build from a clean dist',
+        'Typecheck',
+        'Test',
+        'Check package quality',
+        'Run example',
+        'Dry-run pnpm package publication',
+        'Pack release artifacts',
+        'Extract and audit release artifacts',
+      ]) {
+        if (!run.includes(stepName)) {
+          addViolation(`release.yml ${verifyName} step must check validate step ${stepName}.`);
+        }
+      }
+
+      for (const smokeName of [
+        'Smoke-test Context Guard packed artifacts in a fresh consumer',
+        'Smoke-test Agent State packed artifacts in a fresh consumer',
+        'Smoke-test Progress packed artifacts in a fresh consumer',
+        'Smoke-test Retry Guard packed artifacts in a fresh consumer',
+        'Smoke-test Evidence packed artifacts in a fresh consumer',
+        'Smoke-test Handoff packed artifacts in a fresh consumer',
+        'Smoke-test Budget packed artifacts in a fresh consumer',
+        'Smoke-test Tool Policy packed artifacts in a fresh consumer',
+      ]) {
+        if (!run.includes(smokeName)) {
+          addViolation(`release.yml ${verifyName} step must check family smoke step ${smokeName}.`);
+        }
+      }
+
+      if (!/failing closed[\s\S]*(?:\bexit [12]\b|SystemExit\([12]\))/.test(run)) {
+        addViolation(`release.yml ${verifyName} step must fail closed on every verification anomaly.`);
+      }
+    }
+  }
+
+  const reuseMarker = "steps.validate_reuse.outputs.reuse != 'true'";
+  const nonSmokeCandidates = [
+    'Lint',
+    'Build from a clean dist',
+    'Typecheck',
+    'Test',
+    'Check package quality',
+    'Run example',
+    'Dry-run pnpm package publication',
+    'Pack release artifacts',
+    'Extract and audit release artifacts',
+  ];
+  for (const stepName of nonSmokeCandidates) {
+    const matches = validateRecords.filter(({ step }) => isRecord(step) && step.name === stepName);
+    if (matches.length !== 1) {
+      addViolation(`release.yml validate job must contain exactly one ${stepName} reuse candidate; found ${matches.length}.`);
+    } else if (typeof matches[0].step.if !== 'string' || !matches[0].step.if.includes(reuseMarker)) {
+      addViolation(`release.yml validate ${stepName} step must skip when validated-run reuse is verified.`);
+    }
+  }
+
+  const smokeCandidates = [
+    ['context-guard', 'Smoke-test Context Guard packed artifacts in a fresh consumer'],
+    ['agent-state', 'Smoke-test Agent State packed artifacts in a fresh consumer'],
+    ['agent-progress', 'Smoke-test Progress packed artifacts in a fresh consumer'],
+    ['agent-retry-guard', 'Smoke-test Retry Guard packed artifacts in a fresh consumer'],
+    ['agent-evidence', 'Smoke-test Evidence packed artifacts in a fresh consumer'],
+    ['agent-handoff', 'Smoke-test Handoff packed artifacts in a fresh consumer'],
+    ['agent-budget', 'Smoke-test Budget packed artifacts in a fresh consumer'],
+    ['agent-tool-policy', 'Smoke-test Tool Policy packed artifacts in a fresh consumer'],
+  ];
+  for (const [family, stepName] of smokeCandidates) {
+    const matches = validateRecords.filter(({ step }) => isRecord(step) && step.name === stepName);
+    if (matches.length !== 1) {
+      addViolation(`release.yml validate job must contain exactly one ${stepName} reuse candidate; found ${matches.length}.`);
+      continue;
+    }
+    const ifText = matches[0].step.if;
+    if (typeof ifText !== 'string' || !ifText.includes(reuseMarker) || !ifText.includes(`inputs.family == '${family}'`)) {
+      addViolation(`release.yml validate ${stepName} step must retain both reuse and ${family} predicates.`);
+    }
   }
 }
 
@@ -516,6 +736,7 @@ function checkReleaseStructure(release) {
   checkFamilySmokeWiring(document, expectedFamilyOptions);
   checkFamilyScopedValidation(document);
   checkCiPreflight(document);
+  checkValidationReuse(document);
 
   const jobs = document.jobs;
   const expectedJobs = ['validate', 'publish', 'registry-smoke'];

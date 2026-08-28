@@ -91,9 +91,121 @@ const adapterPublishBlock = [
 
 const toolPolicyPackedSmokeStart = '      - name: Smoke-test Tool Policy packed artifacts in a fresh consumer';
 const toolPolicyPackedSmokeEnd = '\n\n  publish:';
-const toolPolicyPackedSmokeIf = "        if: ${{ inputs.family == 'agent-tool-policy' }}\n";
+const toolPolicyPackedSmokeIf = "        if: ${{ steps.validate_reuse.outputs.reuse != 'true' && inputs.family == 'agent-tool-policy' }}\n";
 const packageSetAssertLine = '          pnpm list -r --filter "$ADAPTER_PKG_NAME..." --depth -1 --json | node -e \'const fs=require("node:fs");const actual=JSON.parse(fs.readFileSync(0,"utf8")).map((entry)=>entry.name).sort();const expected=[process.env.CORE_PKG_NAME,process.env.ADAPTER_PKG_NAME].sort();if(actual.length!==expected.length||actual.some((name,index)=>name!==expected[index])){console.error("Family package set mismatch: "+JSON.stringify(actual)+" instead of "+JSON.stringify(expected));process.exit(1);}\'\n';
-const runExampleStep = '      - name: Run example\n        env:\n          FAMILY: ${{ inputs.family }}\n        shell: bash\n        run: |\n          set -euo pipefail\n          node -e \'const scripts=JSON.parse(require("node:fs").readFileSync("package.json","utf8")).scripts||{};const name="example:"+process.env.FAMILY;if(typeof scripts[name]!=="string"||scripts[name].length===0){console.error("No root example script for family "+process.env.FAMILY);process.exit(1);}\'\n          pnpm run "example:${FAMILY}"\n';
+const runExampleStep = [
+  '      - name: Run example',
+  "        if: ${{ steps.validate_reuse.outputs.reuse != 'true' }}",
+  '        env:',
+  '          FAMILY: ${{ inputs.family }}',
+  '        shell: bash',
+  '        run: |',
+  '          set -euo pipefail',
+  "          node -e 'const scripts=JSON.parse(require(\"node:fs\").readFileSync(\"package.json\",\"utf8\")).scripts||{};const name=\"example:\"+process.env.FAMILY;if(typeof scripts[name]!==\"string\"||scripts[name].length===0){console.error(\"No root example script for family \"+process.env.FAMILY);process.exit(1);}'",
+  '          pnpm run "example:${FAMILY}"',
+].join('\n') + '\n';
+const validatedRunInputBlock = [
+  '      validated_run_id:',
+  "        description: 'Optional in publish mode: run ID of a successful validate-mode run for the same family, versions, and commit'",
+  '        required: false',
+  "        default: ''",
+  '        type: string',
+].join('\n') + '\n';
+const validatedRunModeOnly = [
+  '            if [[ "$MODE" != "publish" ]]; then',
+  '              echo "validated_run_id is only allowed in publish mode." >&2',
+  '              exit 1',
+  '            fi',
+].join('\n') + '\n';
+const validatedRunNumericCheck = [
+  '            if [[ ! "$VALIDATED_RUN_ID" =~ ^[0-9]{1,19}$ ]]; then',
+  '              echo "Invalid validated_run_id: must be a numeric Actions run ID with at most 19 digits." >&2',
+  '              exit 1',
+  '            fi',
+].join('\n') + '\n';
+const validationReuseStepStart = '      - name: Verify the referenced validated run';
+const validationReuseStepEnd = '\n\n      - name: Set up pnpm';
+const verifyHeadShaCheck = [
+  '          if not (r.head_sha == dispatch_sha):',
+  '              fail("r.head_sha == dispatch_sha")',
+].join('\n') + '\n';
+const verifyHeadBranchCheck = [
+  '          if not (r.head_branch == "main"):',
+  '              fail(\'r.head_branch == "main"\')',
+].join('\n') + '\n';
+const verifyPathCheck = [
+  '          if not (r.path == ".github/workflows/release.yml"):',
+  '              fail(\'r.path == ".github/workflows/release.yml"\')',
+].join('\n') + '\n';
+const verifyEventCheck = [
+  '          if not (r.event == "workflow_dispatch"):',
+  '              fail(\'r.event == "workflow_dispatch"\')',
+].join('\n') + '\n';
+const verifyStatusConclusionChecks = [
+  '          if not (r.status == "completed"):',
+  '              fail(\'r.status == "completed"\')',
+  '          if not (r.conclusion == "success"):',
+  '              fail(\'r.conclusion == "success"\')',
+].join('\n') + '\n';
+const verifyRunNumberCheck = [
+  '          if not (r.run_number < current_run_number):',
+  '              fail("r.run_number < current_run_number")',
+].join('\n') + '\n';
+const verifyRunAttemptCheck = [
+  '              if not (run_attempt == job_attempt):',
+  '                  fail("run_attempt == job[\'run_attempt\']")',
+].join('\n') + '\n';
+const verifyTotalCountCheck = [
+  '          if not (total_count == len(jobs)):',
+  '              fail("total_count == len(jobs)")',
+].join('\n') + '\n';
+const verifyValidateModeProof = [
+  '          if not (jobs_by_name["validate"]["conclusion"] == "success"):',
+  '              fail(\'validate job conclusion == "success"\')',
+  '          if not (jobs_by_name["publish"]["conclusion"] == "skipped"):',
+  '              fail(\'publish job conclusion == "skipped"\')',
+  '          if not (jobs_by_name["registry-smoke"]["conclusion"] == "skipped"):',
+  '              fail(\'registry-smoke job conclusion == "skipped"\')',
+].join('\n') + '\n';
+const verifyRequiredStepSuccessChecks = [
+  '              if not (required_matches[0].get("conclusion") == "success"):',
+  '                  fail(f"required validate step {required_name!r} conclusion == \\"success\\"")',
+].join('\n') + '\n';
+const verifySmokeMap = [
+  '          smoke_steps = {',
+  '              "context-guard": "Smoke-test Context Guard packed artifacts in a fresh consumer",',
+  '              "agent-state": "Smoke-test Agent State packed artifacts in a fresh consumer",',
+  '              "agent-progress": "Smoke-test Progress packed artifacts in a fresh consumer",',
+  '              "agent-retry-guard": "Smoke-test Retry Guard packed artifacts in a fresh consumer",',
+  '              "agent-evidence": "Smoke-test Evidence packed artifacts in a fresh consumer",',
+  '              "agent-handoff": "Smoke-test Handoff packed artifacts in a fresh consumer",',
+  '              "agent-budget": "Smoke-test Budget packed artifacts in a fresh consumer",',
+  '              "agent-tool-policy": "Smoke-test Tool Policy packed artifacts in a fresh consumer",',
+  '          }',
+].join('\n') + '\n';
+const verifySelectedSmokeChecks = [
+  '          selected_smoke = smoke_steps[family]',
+  '          selected_matches = [step for step in validate_steps if step.get("name") == selected_smoke]',
+  '          if len(selected_matches) != 1:',
+  '              fail("selected family smoke step appears exactly once")',
+  '          if not (selected_matches[0].get("conclusion") == "success"):',
+  '              fail(\'selected family smoke step conclusion == "success"\')',
+].join('\n') + '\n';
+const ciTerminalBranch = [
+  '              terminal_conclusions = {"failure", "cancelled", "timed_out", "startup_failure"}',
+  '              r = latest',
+  '              if r.get("status") == "completed":',
+  '                  if r.get("conclusion") == "success":',
+  '                      print(f"Found successful CI run for {sha}.")',
+  '                      raise SystemExit(0)',
+  '                  if r.get("conclusion") in terminal_conclusions or r.get("conclusion") != "success":',
+  '                      print(',
+  '                          f"Latest matching CI run is terminal CI: {r.get(\'conclusion\')}.",',
+  '                          file=sys.stderr,',
+  '                      )',
+  '                      raise SystemExit(2)',
+].join('\n') + '\n';
+const ciExhaustion = '            echo "CI preflight exhausted ${max_attempts} attempts; failing closed." >&2\n            exit 1\n          fi';
 const unrelatedFamilyGatedStep = [
   '      - name: Audit family docs',
   "        if: ${{ inputs.family == 'agent-budget' }}",
@@ -645,9 +757,97 @@ const mutations = [
         source,
         '      - name: Require successful CI on the dispatched commit',
         '\n\n      - name: Set up pnpm',
-        (step) => replaceRequired(step, '            exit 1\n          fi', '            exit 0\n          fi', 'case AY'),
+        (step) => replaceRequired(step, ciExhaustion, ciExhaustion.replace('exit 1', 'exit 0'), 'case AY'),
         'case AY step',
       ),
+  },
+  {
+    name: 'BO validated_run_id input is removed',
+    mutate: (source) => replaceRequired(source, validatedRunInputBlock, '', 'case BO'),
+  },
+  {
+    name: 'BP validate-mode validated_run_id rejection is removed',
+    mutate: (source) => replaceRequired(source, validatedRunModeOnly, '', 'case BP'),
+  },
+  {
+    name: 'BQ validated_run_id numeric sanitizer is removed from input validation',
+    mutate: (source) => replaceRequired(source, validatedRunNumericCheck, '', 'case BQ'),
+  },
+  {
+    name: 'BR referenced validated run verification step is removed',
+    mutate: (source) => replaceStep(source, validationReuseStepStart, validationReuseStepEnd, () => '', 'case BR'),
+  },
+  {
+    name: 'BS referenced validated run exact-SHA check is removed',
+    mutate: (source) => replaceRequired(source, verifyHeadShaCheck, '', 'case BS'),
+  },
+  {
+    name: 'BT referenced validated run head-branch check is removed',
+    mutate: (source) => replaceRequired(source, verifyHeadBranchCheck, '', 'case BT'),
+  },
+  {
+    name: 'BU referenced validated run workflow-path check is removed',
+    mutate: (source) => replaceRequired(source, verifyPathCheck, '', 'case BU'),
+  },
+  {
+    name: 'BV referenced validated run event check is removed',
+    mutate: (source) => replaceRequired(source, verifyEventCheck, '', 'case BV'),
+  },
+  {
+    name: 'BW referenced validated run status and conclusion checks are removed',
+    mutate: (source) => replaceRequired(source, verifyStatusConclusionChecks, '', 'case BW'),
+  },
+  {
+    name: 'BX referenced validated run ordering check is removed',
+    mutate: (source) => replaceRequired(source, verifyRunNumberCheck, '', 'case BX'),
+  },
+  {
+    name: 'BY referenced jobs lose run_attempt binding',
+    mutate: (source) => replaceRequired(source, verifyRunAttemptCheck, '', 'case BY'),
+  },
+  {
+    name: 'BZ referenced jobs use the implicit latest endpoint',
+    mutate: (source) => replaceUnique(source, 'attempts/${RUN_ATTEMPT}/jobs?per_page=100', 'jobs?per_page=100', 'case BZ'),
+  },
+  {
+    name: 'CA referenced jobs lose total_count truncation check',
+    mutate: (source) => replaceRequired(source, verifyTotalCountCheck, '', 'case CA'),
+  },
+  {
+    name: 'CB referenced run validate-mode proof is removed',
+    mutate: (source) => replaceRequired(source, verifyValidateModeProof, '', 'case CB'),
+  },
+  {
+    name: 'CC referenced run required validate-step success checks are removed',
+    mutate: (source) => replaceRequired(source, verifyRequiredStepSuccessChecks, '', 'case CC'),
+  },
+  {
+    name: 'CD referenced run family smoke binding is removed',
+    mutate: (source) => replaceRequired(source, verifySmokeMap, '', 'case CD'),
+  },
+  {
+    name: 'CE referenced run selected smoke exactly-one success check is removed',
+    mutate: (source) => replaceRequired(source, verifySelectedSmokeChecks, '', 'case CE'),
+  },
+  {
+    name: 'CF Lint loses validated-run reuse skip wiring',
+    mutate: (source) => replaceRequired(source, "        if: ${{ steps.validate_reuse.outputs.reuse != 'true' }}\n        run: pnpm lint\n", '        run: pnpm lint\n', 'case CF'),
+  },
+  {
+    name: 'CG packed smoke loses its family predicate',
+    mutate: (source) => replaceUnique(source, "        if: ${{ steps.validate_reuse.outputs.reuse != 'true' && inputs.family == 'context-guard' }}", "        if: ${{ steps.validate_reuse.outputs.reuse != 'true' }}", 'case CG'),
+  },
+  {
+    name: 'CH CI preflight terminal fast-exit branch is removed',
+    mutate: (source) => replaceRequired(source, ciTerminalBranch, '', 'case CH'),
+  },
+  {
+    name: 'CI CI preflight loses startup_failure handling',
+    mutate: (source) => replaceUnique(source, 'startup_failure', '', 'case CI'),
+  },
+  {
+    name: 'CJ CI preflight loses latest-run selection',
+    mutate: (source) => replaceRequired(source, '              latest = max(candidates, key=lambda r: r.get("run_number", -1))\n', '', 'case CJ'),
   },
 ];
 

@@ -45,6 +45,11 @@ on:
         required: false
         default: false
         type: boolean
+      validated_run_id:
+        description: 'Optional in publish mode: run ID of a successful validate-mode run for the same family, versions, and commit'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -79,6 +84,7 @@ jobs:
           CORE_VERSION: ${{ inputs.core_version }}
           PI_VERSION: ${{ inputs.pi_version }}
           CONFIRMATION: ${{ inputs.confirmation }}
+          VALIDATED_RUN_ID: ${{ inputs.validated_run_id }}
         shell: bash
         run: |
           set -euo pipefail
@@ -117,6 +123,16 @@ jobs:
             expected_confirmation="publish-${FAMILY}-${CORE_VERSION}-${PI_VERSION}"
             if [[ "$CONFIRMATION" != "$expected_confirmation" ]]; then
               echo "Invalid confirmation. Expected exactly: $expected_confirmation" >&2
+              exit 1
+            fi
+          fi
+          if [[ -n "$VALIDATED_RUN_ID" ]]; then
+            if [[ "$MODE" != "publish" ]]; then
+              echo "validated_run_id is only allowed in publish mode." >&2
+              exit 1
+            fi
+            if [[ ! "$VALIDATED_RUN_ID" =~ ^[0-9]{1,19}$ ]]; then
+              echo "Invalid validated_run_id: must be a numeric Actions run ID with at most 19 digits." >&2
               exit 1
             fi
           fi
@@ -163,11 +179,28 @@ jobs:
               print("CI runs result window truncated.", file=sys.stderr)
               raise SystemExit(1)
 
-          candidates = [r for r in runs if r.get("status") == "completed" and r.get("conclusion") == "success" and r.get("head_sha") == sha and r.get("event") == "push" and r.get("head_branch") == "main" and r.get("path") == ".github/workflows/ci.yml"]
+          candidates = [
+              r for r in runs
+              if r.get("head_sha") == sha
+              and r.get("event") == "push"
+              and r.get("head_branch") == "main"
+              and r.get("path") == ".github/workflows/ci.yml"
+          ]
 
           if candidates:
-              print(f"Found successful CI run for {sha}.")
-              raise SystemExit(0)
+              latest = max(candidates, key=lambda r: r.get("run_number", -1))
+              terminal_conclusions = {"failure", "cancelled", "timed_out", "startup_failure"}
+              r = latest
+              if r.get("status") == "completed":
+                  if r.get("conclusion") == "success":
+                      print(f"Found successful CI run for {sha}.")
+                      raise SystemExit(0)
+                  if r.get("conclusion") in terminal_conclusions or r.get("conclusion") != "success":
+                      print(
+                          f"Latest matching CI run is terminal CI: {r.get('conclusion')}.",
+                          file=sys.stderr,
+                      )
+                      raise SystemExit(2)
 
           observed = sorted({f"{r.get('status')}/{r.get('conclusion')}" for r in runs})
           print(f"No successful CI run for {sha}; observed states: {', '.join(observed) or 'none'}.", file=sys.stderr)
@@ -178,6 +211,11 @@ jobs:
               ci_success=true
               break
             else
+              parser_status=$?
+              if (( parser_status == 2 )); then
+                echo "CI preflight observed terminal CI failure; failing closed." >&2
+                exit 1
+              fi
               echo "CI preflight attempt ${attempt}/${max_attempts} did not find a qualifying run." >&2
             fi
             if (( attempt < max_attempts )); then
@@ -189,6 +227,258 @@ jobs:
             echo "CI preflight exhausted ${max_attempts} attempts; failing closed." >&2
             exit 1
           fi
+
+      - name: Verify the referenced validated run
+        id: validate_reuse
+        env:
+          VALIDATED_RUN_ID: ${{ inputs.validated_run_id }}
+          DISPATCH_SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+          CURRENT_RUN_NUMBER: ${{ github.run_number }}
+          FAMILY: ${{ inputs.family }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$VALIDATED_RUN_ID" ]]; then
+            echo "reuse=false" >> "$GITHUB_OUTPUT"
+            echo "No validated run ID supplied; running full validation."
+            exit 0
+          fi
+
+          if [[ ! "$VALIDATED_RUN_ID" =~ ^[0-9]{1,19}$ ]]; then
+            echo "assertion: VALIDATED_RUN_ID must match ^[0-9]{1,19}$; failing closed." >&2
+            exit 1
+          fi
+
+          validated_run_file="$RUNNER_TEMP/validated-run-${VALIDATED_RUN_ID}.json"
+          validated_run_fetched=false
+          for ((attempt=1; attempt<=3; attempt++)); do
+            if gh api "repos/${REPOSITORY}/actions/runs/${VALIDATED_RUN_ID}" > "$validated_run_file" 2>/dev/null; then
+              validated_run_fetched=true
+              break
+            fi
+            if (( attempt < 3 )); then
+              sleep 5
+            fi
+          done
+          if [[ "$validated_run_fetched" != true ]]; then
+            echo "assertion: validated run API fetch failed after 3 attempts; failing closed." >&2
+            exit 1
+          fi
+
+          if ! validated_run_metadata="$(python3 - "$validated_run_file" "$DISPATCH_SHA" "$CURRENT_RUN_NUMBER" "$VALIDATED_RUN_ID" <<'PY'
+          import json
+          import sys
+          from types import SimpleNamespace
+
+          def fail(assertion):
+              print(f"assertion failed: {assertion}; failing closed.", file=sys.stderr)
+              raise SystemExit(2)
+
+          try:
+              with open(sys.argv[1], encoding="utf-8") as handle:
+                  data = json.load(handle)
+          except (OSError, json.JSONDecodeError):
+              fail("validated run response is valid JSON")
+
+          if not isinstance(data, dict):
+              fail("validated run response is a dict")
+
+          required_fields = {
+              "id",
+              "path",
+              "event",
+              "status",
+              "conclusion",
+              "head_sha",
+              "head_branch",
+              "run_number",
+              "run_attempt",
+          }
+          if any(field not in data for field in required_fields):
+              fail("validated run response contains all required fields")
+
+          for field in ("id", "run_number", "run_attempt"):
+              if not isinstance(data[field], int) or isinstance(data[field], bool):
+                  fail(f"validated run {field} has an integer type")
+          for field in ("path", "event", "status", "conclusion", "head_sha", "head_branch"):
+              if not isinstance(data[field], str):
+                  fail(f"validated run {field} has a string type")
+
+          try:
+              current_run_number = int(sys.argv[3])
+          except ValueError:
+              fail("CURRENT_RUN_NUMBER is an integer")
+
+          r = SimpleNamespace(**data)
+          dispatch_sha = sys.argv[2]
+          if not (r.id == int(sys.argv[4])):
+              fail("r.id == int(VALIDATED_RUN_ID)")
+          if not (r.path == ".github/workflows/release.yml"):
+              fail('r.path == ".github/workflows/release.yml"')
+          if not (r.event == "workflow_dispatch"):
+              fail('r.event == "workflow_dispatch"')
+          if not (r.status == "completed"):
+              fail('r.status == "completed"')
+          if not (r.conclusion == "success"):
+              fail('r.conclusion == "success"')
+          if not (r.head_sha == dispatch_sha):
+              fail("r.head_sha == dispatch_sha")
+          if not (r.head_branch == "main"):
+              fail('r.head_branch == "main"')
+          if not (r.run_number < current_run_number):
+              fail("r.run_number < current_run_number")
+
+          print(f"VALIDATED_RUN_ATTEMPT={r.run_attempt}")
+          PY
+          )"; then
+            echo "assertion: validated run metadata verification failed; failing closed." >&2
+            exit 1
+          fi
+
+          run_attempt_line="${validated_run_metadata##*$'\n'}"
+          if [[ "$run_attempt_line" != VALIDATED_RUN_ATTEMPT=* ]]; then
+            echo "assertion: validated run attempt parser output is missing; failing closed." >&2
+            exit 1
+          fi
+          RUN_ATTEMPT="${run_attempt_line#VALIDATED_RUN_ATTEMPT=}"
+          if [[ ! "$RUN_ATTEMPT" =~ ^[0-9]{1,9}$ ]]; then
+            echo "assertion: validated run attempt must contain 1-9 digits; failing closed." >&2
+            exit 1
+          fi
+
+          jobs_file="$RUNNER_TEMP/validated-run-${VALIDATED_RUN_ID}-attempt-${RUN_ATTEMPT}-jobs.json"
+          jobs_fetched=false
+          for ((attempt=1; attempt<=3; attempt++)); do
+            if gh api "repos/${REPOSITORY}/actions/runs/${VALIDATED_RUN_ID}/attempts/${RUN_ATTEMPT}/jobs?per_page=100" > "$jobs_file" 2>/dev/null; then
+              jobs_fetched=true
+              break
+            fi
+            if (( attempt < 3 )); then
+              sleep 5
+            fi
+          done
+          if [[ "$jobs_fetched" != true ]]; then
+            echo "assertion: attempt-specific validated run jobs API fetch failed after 3 attempts; failing closed." >&2
+            exit 1
+          fi
+
+          if ! python3 - "$jobs_file" "$RUN_ATTEMPT" "$FAMILY" <<'PY'
+          import json
+          import sys
+
+          def fail(assertion):
+              print(f"assertion failed: {assertion}; failing closed.", file=sys.stderr)
+              raise SystemExit(2)
+
+          try:
+              with open(sys.argv[1], encoding="utf-8") as handle:
+                  data = json.load(handle)
+          except (OSError, json.JSONDecodeError):
+              fail("validated run jobs response is valid JSON")
+
+          if not isinstance(data, dict):
+              fail("validated run jobs response is a dict")
+          total_count = data.get("total_count")
+          jobs = data.get("jobs")
+          if not isinstance(total_count, int) or isinstance(total_count, bool):
+              fail("total_count has an integer type")
+          if not isinstance(jobs, list) or any(not isinstance(job, dict) for job in jobs):
+              fail("jobs is a list of job dictionaries")
+          if not (total_count == len(jobs)):
+              fail("total_count == len(jobs)")
+
+          expected_job_names = {"validate", "publish", "registry-smoke"}
+          jobs_by_name = {}
+          for job_name in expected_job_names:
+              matches = [job for job in jobs if job.get("name") == job_name]
+              if len(matches) != 1:
+                  fail(f"exactly one job named {job_name!r}")
+              jobs_by_name[job_name] = matches[0]
+          for job in jobs:
+              if job.get("name") not in expected_job_names:
+                  fail("unexpected extra job names")
+              if any(field not in job for field in ("name", "conclusion", "status", "run_attempt", "steps")):
+                  fail("job contains all required fields")
+              job_attempt = job.get("run_attempt")
+              if not isinstance(job_attempt, int) or isinstance(job_attempt, bool):
+                  fail("job run_attempt has an integer type")
+              run_attempt = int(sys.argv[2])
+              if not (run_attempt == job_attempt):
+                  fail("run_attempt == job['run_attempt']")
+
+          if not (jobs_by_name["validate"]["conclusion"] == "success"):
+              fail('validate job conclusion == "success"')
+          if not (jobs_by_name["publish"]["conclusion"] == "skipped"):
+              fail('publish job conclusion == "skipped"')
+          if not (jobs_by_name["registry-smoke"]["conclusion"] == "skipped"):
+              fail('registry-smoke job conclusion == "skipped"')
+
+          validate_steps = jobs_by_name["validate"]["steps"]
+          if not isinstance(validate_steps, list) or any(not isinstance(step, dict) for step in validate_steps):
+              fail("validate job steps is a list of step dictionaries")
+
+          required_validate_step_names = [
+              "Validate release inputs and manifests",
+              "Require successful CI on the dispatched commit",
+              "Lint",
+              "Build from a clean dist",
+              "Typecheck",
+              "Test",
+              "Check package quality",
+              "Run example",
+              "Dry-run pnpm package publication",
+              "Pack release artifacts",
+              "Extract and audit release artifacts",
+          ]
+          for required_name in required_validate_step_names:
+              required_matches = [step for step in validate_steps if step.get("name") == required_name]
+              if len(required_matches) != 1:
+                  fail(f"required validate step {required_name!r} appears exactly once")
+              if not (required_matches[0].get("conclusion") == "success"):
+                  fail(f"required validate step {required_name!r} conclusion == \"success\"")
+
+          smoke_steps = {
+              "context-guard": "Smoke-test Context Guard packed artifacts in a fresh consumer",
+              "agent-state": "Smoke-test Agent State packed artifacts in a fresh consumer",
+              "agent-progress": "Smoke-test Progress packed artifacts in a fresh consumer",
+              "agent-retry-guard": "Smoke-test Retry Guard packed artifacts in a fresh consumer",
+              "agent-evidence": "Smoke-test Evidence packed artifacts in a fresh consumer",
+              "agent-handoff": "Smoke-test Handoff packed artifacts in a fresh consumer",
+              "agent-budget": "Smoke-test Budget packed artifacts in a fresh consumer",
+              "agent-tool-policy": "Smoke-test Tool Policy packed artifacts in a fresh consumer",
+          }
+          family = sys.argv[3]
+          if family not in smoke_steps:
+              fail("unknown FAMILY")
+          smoke_matches_by_name = {}
+          for smoke_name in smoke_steps.values():
+              smoke_matches = [step for step in validate_steps if step.get("name") == smoke_name]
+              if len(smoke_matches) != 1:
+                  fail(f"smoke step {smoke_name!r} appears exactly once")
+              smoke_matches_by_name[smoke_name] = smoke_matches[0]
+
+          selected_smoke = smoke_steps[family]
+          selected_matches = [step for step in validate_steps if step.get("name") == selected_smoke]
+          if len(selected_matches) != 1:
+              fail("selected family smoke step appears exactly once")
+          if not (selected_matches[0].get("conclusion") == "success"):
+              fail('selected family smoke step conclusion == "success"')
+          for smoke_family, smoke_name in smoke_steps.items():
+              if smoke_family == family:
+                  continue
+              if not (smoke_matches_by_name[smoke_name].get("conclusion") == "skipped"):
+                  fail(f"unselected family smoke step {smoke_name!r} conclusion == \"skipped\"")
+          PY
+          then
+            echo "assertion: validated run jobs verification failed; failing closed." >&2
+            exit 1
+          fi
+
+          echo "reuse=true" >> "$GITHUB_OUTPUT"
+          echo "Validated run ${VALIDATED_RUN_ID} is a verified validate-mode run for ${FAMILY}; skipping duplicated validation."
+          exit 0
 
       - name: Set up pnpm
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
@@ -203,9 +493,11 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Lint
+        if: ${{ steps.validate_reuse.outputs.reuse != 'true' }}
         run: pnpm lint
 
       - name: Build from a clean dist
+        if: ${{ steps.validate_reuse.outputs.reuse != 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -214,6 +506,7 @@ jobs:
           pnpm -r --filter "$ADAPTER_PKG_NAME..." run build
 
       - name: Typecheck
+        if: ${{ steps.validate_reuse.outputs.reuse != 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -221,6 +514,7 @@ jobs:
           pnpm -r --filter "$ADAPTER_PKG_NAME..." run typecheck
 
       - name: Test
+        if: ${{ steps.validate_reuse.outputs.reuse != 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -228,6 +522,7 @@ jobs:
           pnpm -r --filter "$ADAPTER_PKG_NAME..." run test
 
       - name: Check package quality
+        if: ${{ steps.validate_reuse.outputs.reuse != 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -235,6 +530,7 @@ jobs:
           pnpm -r --filter "$ADAPTER_PKG_NAME..." run check:package
 
       - name: Run example
+        if: ${{ steps.validate_reuse.outputs.reuse != 'true' }}
         env:
           FAMILY: ${{ inputs.family }}
         shell: bash
@@ -244,6 +540,7 @@ jobs:
           pnpm run "example:${FAMILY}"
 
       - name: Dry-run pnpm package publication
+        if: ${{ steps.validate_reuse.outputs.reuse != 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -251,6 +548,7 @@ jobs:
           pnpm --filter "$ADAPTER_PKG_NAME" publish --dry-run --access public --no-git-checks
 
       - name: Pack release artifacts
+        if: ${{ steps.validate_reuse.outputs.reuse != 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -260,6 +558,7 @@ jobs:
           pnpm --filter "$ADAPTER_PKG_NAME" pack --pack-destination "$RUNNER_TEMP/release-artifacts"
 
       - name: Extract and audit release artifacts
+        if: ${{ steps.validate_reuse.outputs.reuse != 'true' }}
         env:
           CORE_VERSION: ${{ inputs.core_version }}
           PI_VERSION: ${{ inputs.pi_version }}
@@ -390,7 +689,7 @@ jobs:
           PY
 
       - name: Smoke-test Context Guard packed artifacts in a fresh consumer
-        if: ${{ inputs.family == 'context-guard' }}
+        if: ${{ steps.validate_reuse.outputs.reuse != 'true' && inputs.family == 'context-guard' }}
         env:
           CORE_VERSION: ${{ inputs.core_version }}
           PI_VERSION: ${{ inputs.pi_version }}
@@ -462,7 +761,7 @@ jobs:
           NODE
 
       - name: Smoke-test Agent State packed artifacts in a fresh consumer
-        if: ${{ inputs.family == 'agent-state' }}
+        if: ${{ steps.validate_reuse.outputs.reuse != 'true' && inputs.family == 'agent-state' }}
         env:
           CORE_VERSION: ${{ inputs.core_version }}
           PI_VERSION: ${{ inputs.pi_version }}
@@ -547,7 +846,7 @@ jobs:
           NODE
 
       - name: Smoke-test Progress packed artifacts in a fresh consumer
-        if: ${{ inputs.family == 'agent-progress' }}
+        if: ${{ steps.validate_reuse.outputs.reuse != 'true' && inputs.family == 'agent-progress' }}
         env:
           CORE_VERSION: ${{ inputs.core_version }}
           PI_VERSION: ${{ inputs.pi_version }}
@@ -646,7 +945,7 @@ jobs:
           NODE
 
       - name: Smoke-test Retry Guard packed artifacts in a fresh consumer
-        if: ${{ inputs.family == 'agent-retry-guard' }}
+        if: ${{ steps.validate_reuse.outputs.reuse != 'true' && inputs.family == 'agent-retry-guard' }}
         env:
           CORE_VERSION: ${{ inputs.core_version }}
           PI_VERSION: ${{ inputs.pi_version }}
@@ -719,7 +1018,7 @@ jobs:
           console.log('Retry Guard packed artifact consumer smoke passed.');
           NODE
       - name: Smoke-test Evidence packed artifacts in a fresh consumer
-        if: ${{ inputs.family == 'agent-evidence' }}
+        if: ${{ steps.validate_reuse.outputs.reuse != 'true' && inputs.family == 'agent-evidence' }}
         env:
           CORE_VERSION: ${{ inputs.core_version }}
           PI_VERSION: ${{ inputs.pi_version }}
@@ -813,7 +1112,7 @@ jobs:
           console.log('Evidence packed artifact consumer smoke passed.');
           NODE
       - name: Smoke-test Handoff packed artifacts in a fresh consumer
-        if: ${{ inputs.family == 'agent-handoff' }}
+        if: ${{ steps.validate_reuse.outputs.reuse != 'true' && inputs.family == 'agent-handoff' }}
         env:
           CORE_VERSION: ${{ inputs.core_version }}
           PI_VERSION: ${{ inputs.pi_version }}
@@ -999,7 +1298,7 @@ jobs:
           NODE
 
       - name: Smoke-test Budget packed artifacts in a fresh consumer
-        if: ${{ inputs.family == 'agent-budget' }}
+        if: ${{ steps.validate_reuse.outputs.reuse != 'true' && inputs.family == 'agent-budget' }}
         env:
           CORE_VERSION: ${{ inputs.core_version }}
           PI_VERSION: ${{ inputs.pi_version }}
@@ -1212,7 +1511,7 @@ jobs:
           NODE
 
       - name: Smoke-test Tool Policy packed artifacts in a fresh consumer
-        if: ${{ inputs.family == 'agent-tool-policy' }}
+        if: ${{ steps.validate_reuse.outputs.reuse != 'true' && inputs.family == 'agent-tool-policy' }}
         env:
           CORE_VERSION: ${{ inputs.core_version }}
           PI_VERSION: ${{ inputs.pi_version }}
