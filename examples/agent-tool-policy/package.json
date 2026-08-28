@@ -1,0 +1,8 @@
+{
+  "name": "@examples/agent-tool-policy",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@j1nn0/agent-tool-policy": "workspace:*"
+  }
+}

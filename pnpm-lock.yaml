@@ -75,6 +75,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/agent-state
 
+  examples/agent-tool-policy:
+    dependencies:
+      '@j1nn0/agent-tool-policy':
+        specifier: workspace:*
+        version: link:../../packages/agent-tool-policy
+
   examples/context-guard:
     dependencies:
       '@j1nn0/agent-context-guard':
@@ -146,6 +152,8 @@ importers:
       '@j1nn0/agent-state':
         specifier: workspace:^
         version: link:../agent-state
+
+  packages/agent-tool-policy: {}
 
   packages/context-guard: {}
 

@@ -71,6 +71,10 @@ moment, and that is the adapter's job.
 
 `@j1nn0/agent-budget` is implemented in this repository. The control primitive judges caller-declared numeric consumption against a caller-declared limit and reports `within_budget` or `exhausted` with the unclamped remaining quantity. Units are opaque to the core; policy about what counts toward `consumed` belongs entirely to the caller. See [`packages/agent-budget/README.md`](packages/agent-budget/README.md) for the package documentation.
 
+#### `@j1nn0/agent-tool-policy`
+
+`@j1nn0/agent-tool-policy` is implemented in this repository. The control primitive judges a caller-declared tool name against a caller-declared policy and reports `allowed`, `denied`, or `requires_approval` with the source of the decision (an explicit rule or the declared default). The core declares outcomes only; approval prompts and enforcement belong to integrations. See [`packages/agent-tool-policy/README.md`](packages/agent-tool-policy/README.md) for the package documentation.
+
 ### Harness adapters
 
 #### `@j1nn0/agent-context-guard-pi`
@@ -109,7 +113,6 @@ Harness adapters ship on a per-primitive basis where a concrete consumer justifi
 
 The following are **not implemented**. They describe a direction, not an API promise:
 
-- **Tool policy** — allow, deny, and require-approval rules for tool invocation.
 - **MCP adapter** — exposing primitives to MCP-based agents, without the core packages depending on an MCP SDK.
 
 All implemented core primitives are listed in the Core primitives section above; each core that ships with a Pi adapter is listed in the Harness adapters section.
