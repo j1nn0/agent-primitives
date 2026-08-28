@@ -230,14 +230,28 @@ describe('Agent Handoff Pi packet lifecycle', () => {
     });
 
     const get = await harness.executeTool('agent_handoff_get', {});
-    expect(text(get)).toContain('1 packet');
-    expect(text(get)).toContain('show-1');
-    expect(text(get)).toContain('Policy: explicit caller-declared');
-    expect(text(get)).toContain('Privacy: all packet fields');
+    const getOutput = text(get);
+    expect(getOutput).toContain('1 packet');
+    expect(getOutput).toContain('show-1');
+    expect(getOutput).toContain('  Constraints:\n- c1');
+    expect(getOutput).toContain('  Open items:\n- o1');
+    expect(getOutput).toContain('  Evidence references:\n- e1');
+    expect(getOutput).toContain('Policy: explicit caller-declared');
+    expect(getOutput).toContain('Privacy: all packet fields');
 
+    const expectedSummary = [
+      'Agent Handoff: 1 packet in the current session.',
+      'Packets:',
+      '- show-1: src -> dst | goal: Goal text',
+      'Policy: explicit caller-declared packets only; no automatic generation, no successor selection, no completion judgment.',
+      'Privacy: all packet fields are caller-controlled and may carry sensitive content; scrub before transmission. No automatic redaction.',
+    ].join('\n');
+    await harness.command('');
+    const bareStatus = harness.notifications.at(-1)?.message;
     await harness.command('status');
-    expect(harness.notifications.at(-1)?.message).toContain('1 packet');
-
+    const namedStatus = harness.notifications.at(-1)?.message;
+    expect(bareStatus).toBe(expectedSummary);
+    expect(namedStatus).toBe(expectedSummary);
     await harness.command('show show-1');
     expect(harness.notifications.at(-1)?.message).toContain('Packet: show-1');
     expect(harness.notifications.at(-1)?.message).toContain('Source: src');
@@ -294,7 +308,14 @@ describe('Agent Handoff Pi packet lifecycle', () => {
 
     const harness2 = new FakePiHarness([]);
     await harness2.start();
-    expect(text(await harness2.executeTool('agent_handoff_get', {}))).toContain('0 packet');
+    expect(text(await harness2.executeTool('agent_handoff_get', {}))).toBe(
+      [
+        'Agent Handoff: 0 packets in the current session.',
+        'Packets: none.',
+        'Policy: explicit caller-declared packets only; no automatic generation, no successor selection, no completion judgment.',
+        'Privacy: all packet fields are caller-controlled and may carry sensitive content; scrub before transmission. No automatic redaction.',
+      ].join('\n'),
+    );
 
     // create then simulate resume
     await harness2.executeTool('agent_handoff_create', validPacket('resume-1', 's'));

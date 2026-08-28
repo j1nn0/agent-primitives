@@ -33,6 +33,11 @@ export function formatProgressVerdict(verdict: ProgressVerdict): string {
   const lines: string[] = [];
   if (verdict.outcome === 'unknown') {
     lines.push(`Agent Progress: unknown (${verdict.reason}).`);
+    if (verdict.reason === 'missing_baseline') {
+      lines.push(
+        'Call agent_progress_judge again after the milestone set changes: this first judgment established the baseline.',
+      );
+    }
     lines.push(
       ...milestoneLines('Recorded milestones', verdict.recordedMilestones),
     );

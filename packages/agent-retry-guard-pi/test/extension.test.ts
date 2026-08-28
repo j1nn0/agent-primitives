@@ -447,6 +447,25 @@ describe('Agent Retry Guard Pi tools and explicit judgment', () => {
     expect(Object.hasOwn(idlessVerdict, 'strategyRun')).toBe(false);
   });
 
+  it('adds recovery guidance only when retry is not allowed', async () => {
+    const blocked = new FakePiHarness();
+    await blocked.start();
+    await blocked.executeTool('agent_retry_set_policy', { maxStrategyAttempts: 1 });
+    await add(blocked, 'failure', 'alpha');
+    await add(blocked, 'failure', 'alpha');
+
+    const blockedOutput = text(await blocked.executeTool('agent_retry_judge'));
+    expect(blockedOutput).toContain('retryAllowed is false: this episode is not permitted another attempt.');
+    expect(blockedOutput).toContain('Start a new episode with agent_retry_start_episode.');
+
+    const allowed = new FakePiHarness();
+    await allowed.start();
+    await add(allowed, 'failure', 'alpha');
+    const allowedOutput = text(await allowed.executeTool('agent_retry_judge'));
+    expect(allowedOutput).toContain('retryAllowed is true: another attempt is permitted by the declared policy.');
+    expect(allowedOutput).not.toContain('agent_retry_start_episode');
+  });
+
   it('starts a new episode only explicitly, preserves policy, and appends only after a reset', async () => {
     const harness = new FakePiHarness();
     await harness.start();

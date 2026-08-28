@@ -1,5 +1,5 @@
 import type { AgentToolResult, ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { formatHandoffState } from './display.js';
+import { formatHandoffStateDetailed } from './display.js';
 import { duplicatePacketMessage, formatHandoffError, invalidMutationMessage } from './messages.js';
 import { createPacket, isValidIdentifier, removePacket, type StateController } from './state.js';
 
@@ -131,7 +131,7 @@ export function registerAgentHandoffTools(pi: ExtensionAPI, controller: StateCon
     description:
       'Read the current caller-declared handoff packets as readable text. This reports what was recorded and asserts nothing about completion, truth, or readiness. It does not generate packets automatically, summarize context, select successors, judge completion, or call Evidence/State/Progress/Retry/Context Guard.',
     parameters: GET_PARAMETERS,
-    execute: async () => textResult(formatHandoffState(controller.getState())),
+    execute: async () => textResult(formatHandoffStateDetailed(controller.getState())),
   });
 
   pi.registerTool({

@@ -51,5 +51,6 @@ export function formatRetryVerdict(verdict: RetryVerdict): string {
     'Agent Retry Guard verdict:',
     JSON.stringify(verdict, null, 2),
     `Reading: ${retryReading(verdict)}`,
+    ...(verdict.retryAllowed ? [] : ['Start a new episode with agent_retry_start_episode.']),
   ].join('\n');
 }

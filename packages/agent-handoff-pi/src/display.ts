@@ -5,6 +5,17 @@ function pluralize(count: number, singular: string, plural = `${singular}s`): st
   return count === 1 ? singular : plural;
 }
 
+function handoffHeader(count: number): string {
+  return `Agent Handoff: ${count} ${pluralize(count, 'packet')} in the current session.`;
+}
+
+function handoffPolicyLines(): string[] {
+  return [
+    'Policy: explicit caller-declared packets only; no automatic generation, no successor selection, no completion judgment.',
+    'Privacy: all packet fields are caller-controlled and may carry sensitive content; scrub before transmission. No automatic redaction.',
+  ];
+}
+
 function formatArray(label: string, items: readonly string[] | undefined): string[] {
   if (items === undefined || items.length === 0) {
     return [`${label}: none.`];
@@ -27,7 +38,7 @@ export function formatHandoffPacket(packet: HandoffPacket): string {
 export function formatHandoffState(state: HandoffState): string {
   const count = state.packets.length;
   const lines: string[] = [
-    `Agent Handoff: ${count} ${pluralize(count, 'packet')} in the current session.`,
+    handoffHeader(count),
   ];
 
   if (count === 0) {
@@ -40,12 +51,21 @@ export function formatHandoffState(state: HandoffState): string {
     }
   }
 
-  lines.push(
-    'Policy: explicit caller-declared packets only; no automatic generation, no successor selection, no completion judgment.',
-  );
-  lines.push(
-    'Privacy: all packet fields are caller-controlled and may carry sensitive content; scrub before transmission. No automatic redaction.',
-  );
+  lines.push(...handoffPolicyLines());
 
+  return lines.join('\n');
+}
+
+export function formatHandoffStateDetailed(state: HandoffState): string {
+  if (state.packets.length === 0) {
+    return formatHandoffState(state);
+  }
+
+  const count = state.packets.length;
+  const lines: string[] = [handoffHeader(count), 'Packets:'];
+  for (const packet of state.packets) {
+    lines.push('', formatHandoffPacket(packet));
+  }
+  lines.push('', ...handoffPolicyLines());
   return lines.join('\n');
 }

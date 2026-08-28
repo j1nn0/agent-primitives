@@ -60,7 +60,7 @@ The extension registers exactly one command namespace, `/agent-handoff`. A bare 
 /agent-handoff clear --yes
 ```
 
-`status` and the bare command show the same summary as `agent_handoff_get`. They do not create or judge. `show` prints one packet in detail. `remove` deletes one packet by exact id. `clear` requires `--yes` and is human-only.
+`status` and the bare command show the same one-line-per-packet summary. `agent_handoff_get` returns packet details for model reading. They do not create or judge. `show` prints one packet in detail. `remove` deletes one packet by exact id. `clear` requires `--yes` and is human-only.
 
 Packet creation is model-only via `agent_handoff_create`; there is no human `create` command in Phase 1. To create a packet as a human, use the model tool or add a future `create` subcommand.
 
@@ -70,7 +70,7 @@ The model can use exactly these three tools:
 
 | Tool | Parameters | Behavior |
 | --- | --- | --- |
-| `agent_handoff_get` | none | Returns the raw summary for the current session. |
+| `agent_handoff_get` | none | Returns packet details for the current session. |
 | `agent_handoff_create` | `schemaVersion` 1, `id`, `source`, `goal` required; `destination`, `constraints`, `openItems`, `evidenceReferences` optional | Creates one caller-declared packet after core validation and id-uniqueness check. |
 | `agent_handoff_remove` | `id` required string | Removes one packet after validation. |
 

@@ -253,6 +253,9 @@ describe('Agent Progress Pi tools', () => {
       await harness.executeTool('agent_progress_judge'),
     );
     expect(firstJudge).toContain('Agent Progress: unknown (missing_baseline).');
+    expect(firstJudge).toContain(
+      'Call agent_progress_judge again after the milestone set changes: this first judgment established the baseline.',
+    );
     expect(harness.appendedEntries).toHaveLength(2);
     expect(lastAppended(harness).data).toEqual({
       schemaVersion: 1,
@@ -265,6 +268,7 @@ describe('Agent Progress Pi tools', () => {
       await harness.executeTool('agent_progress_judge'),
     );
     expect(repeatedJudge).toContain('Agent Progress: no_progress.');
+    expect(repeatedJudge).not.toContain('Call agent_progress_judge again after the milestone set changes');
     expect(harness.appendedEntries).toHaveLength(2);
   });
 });
