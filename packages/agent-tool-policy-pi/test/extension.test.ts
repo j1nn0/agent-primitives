@@ -210,6 +210,12 @@ describe('Agent Tool Policy Pi enforcement', () => {
     await empty.start();
     await empty.executeToolCall('ls', {});
     expect(empty.confirmationCalls[0]?.message).toBe(nameOnlyApprovalMessage('ls'));
+
+
+    const normalizedEmpty = approvalHarness('bash');
+    await normalizedEmpty.start();
+    await normalizedEmpty.executeToolCall('bash', { command: '\x01\t' });
+    expect(normalizedEmpty.confirmationCalls[0]?.message).toBe(nameOnlyApprovalMessage('bash'));
   });
 
   it('skips accessor operands without invoking getters', async () => {

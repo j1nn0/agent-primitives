@@ -141,6 +141,10 @@ function previewLines(toolName: string, input: unknown): string[] {
     }
 
     const normalized = normalizePreviewValue(value);
+
+    if (normalized.trim().length === 0) {
+      continue;
+    }
     const rendered = normalized.length > 120 ? `${normalized.slice(0, 120)}... [truncated]` : normalized;
     lines.push(`${key}: ${rendered}`);
   }
