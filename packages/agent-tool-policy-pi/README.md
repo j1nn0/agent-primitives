@@ -1,7 +1,5 @@
 # @j1nn0/agent-tool-policy-pi
 
-> **Not published:** this package is available only from this repository for local development. Do not use a registry install command for it yet.
-
 ## What it is
 
 `@j1nn0/agent-tool-policy-pi` is a minimal Pi adapter that enforces a caller-declared tool policy at Pi's pre-execution `tool_call` boundary. It provides the human-only `/agent-tool-policy` command namespace and registers no model-callable tools.
@@ -9,6 +7,16 @@
 The adapter is safe by default: a session with no policy entry or with a corrupt newest entry blocks tool calls. An explicit `clear --yes` operation is the only way to select the pass-through state.
 
 ## Installation
+
+Install the published adapter from the registry:
+
+```sh
+pi install npm:@j1nn0/agent-tool-policy-pi
+```
+
+Add `-l` to install it project-locally instead of for your user.
+
+### From a local checkout (development)
 
 Build and install the package from a local checkout:
 

@@ -14,7 +14,13 @@ A caller may need a small, explicit decision about whether a named tool invocati
 
 ## Installation
 
-The package is not published to npm yet. From a local checkout, build it from the repository root and install the built package by local path:
+Install the published package from the npm registry:
+
+```sh
+npm install @j1nn0/agent-tool-policy
+```
+
+pnpm works the same way: `pnpm add @j1nn0/agent-tool-policy`.
 
 ### From a local checkout (development)
 
