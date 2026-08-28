@@ -144,4 +144,4 @@ The judge is a pure function:
 
 ## Limitations
 
-Version 0.1 judges one `consumed` and `limit` pair only. It does not provide multi-resource maps, soft or warning thresholds, units, automatic resets, windows, forecasting, provider pricing, or automatic accounting. Phase 1 ships no Pi adapter; future adapters would integrate explicitly at their own lifecycle boundaries. A minimal session-scoped Pi adapter now exists at packages/agent-budget-pi; it adds storage and on-demand judgment only, with no automatic accounting.
+Version 0.1 judges one `consumed` and `limit` pair only. It does not provide multi-resource maps, soft or warning thresholds, units, automatic resets, windows, forecasting, provider pricing, or automatic accounting. A minimal session-scoped Pi adapter exists at packages/agent-budget-pi; it adds storage and on-demand judgment only, with no automatic accounting.

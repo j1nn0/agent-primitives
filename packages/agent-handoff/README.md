@@ -145,10 +145,10 @@ Phase 1 has a zero-reference surface for Retry Guard. The packet has no retry po
 
 Handoff packets never bundle a `ContextSnapshot`. This core does not capture, persist, restore, summarize, or reinject Context Guard data.
 
-## Future Pi adapter (sketch only)
+## Pi adapter
 
-A future Pi adapter could provide explicit commands, model-callable tools, and session persistence for handoff packets. Like the other lifecycle integrations, that adapter would observe an explicitly requested boundary without automatically coupling handoff creation to Evidence, Agent State, Progress, Retry Guard, or Context Guard.
+A minimal Pi adapter is implemented in this repository as `@j1nn0/agent-handoff-pi`. It provides explicit `/agent-handoff` commands, three model-callable tools, and session persistence while observing an explicitly requested boundary without automatically coupling handoff creation to Evidence, Agent State, Progress, Retry Guard, or Context Guard.
 
 ## Limitations
 
-Version 0.1 validates and copies a caller-declared packet only. It performs no judgment, successor selection, or semantic matching; has no Pi adapter, MCP adapter, release family, or CLI; and does not provide persistence or external verification. Future adapters may add coupling at their own explicit boundaries. Packet prose is caller-owned content and may carry secrets, so callers must scrub it before transmission.
+Version 0.1 validates and copies a caller-declared packet only. It performs no judgment, successor selection, or semantic matching, and the core provides no persistence or external verification. A Pi adapter and release family exist in this repository as `@j1nn0/agent-handoff-pi`, wired as the agent-handoff release family; the core still has no MCP adapter or CLI. Packet prose is caller-owned content and may carry secrets, so callers must scrub it before transmission.
