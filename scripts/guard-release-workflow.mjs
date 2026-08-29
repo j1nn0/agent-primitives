@@ -277,6 +277,106 @@ function checkProvenanceIdentityStep({ step }, packageLabel) {
   }
 }
 
+function checkRegistryVisibilityStep({ step }, packageLabel, visibleVariable) {
+  const label = `release.yml ${packageLabel} registry visibility verification`;
+  if (!isRecord(step) || typeof step.run !== 'string') {
+    addViolation(`${label} step must have a string run script.`);
+    return;
+  }
+
+  const run = step.run;
+  const maxAttemptsMatches = [...run.matchAll(/^\s*max_attempts=(\d+)\s*$/gm)];
+  let maxAttempts;
+  if (maxAttemptsMatches.length !== 1) {
+    addViolation(`${label} step must define exactly one max_attempts integer.`);
+  } else {
+    maxAttempts = Number(maxAttemptsMatches[0][1]);
+    if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 2) {
+      addViolation(`${label} step max_attempts must be an integer of at least 2.`);
+    }
+  }
+
+  const loopMatch = run.match(
+    /for \(\(attempt = 1; attempt <= max_attempts; attempt \+= 1\)\); do\n([\s\S]*?)\n\s*done/,
+  );
+  if (!loopMatch) {
+    addViolation(`${label} step must use a bounded max_attempts loop.`);
+  } else {
+    const loopBody = loopMatch[1];
+    const scheduleMatch = loopBody.match(
+      /if \(\( attempt == 1 \)\); then\s+([A-Za-z_][A-Za-z0-9_]*)=(\d+)\s+else\s+\1=(\d+)\s+fi/,
+    );
+    if (!scheduleMatch) {
+      addViolation(`${label} step must define first and subsequent retry delays in its loop.`);
+    } else {
+      const delayVariable = scheduleMatch[1];
+      const firstDelay = Number(scheduleMatch[2]);
+      const subsequentDelay = Number(scheduleMatch[3]);
+      const sleepMatches = [...loopBody.matchAll(/^\s*sleep\s+"\$([A-Za-z_][A-Za-z0-9_]*)"\s*$/gm)];
+      if (sleepMatches.length !== 1 || sleepMatches[0][1] !== delayVariable) {
+        addViolation(`${label} step must sleep exactly once using its selected retry delay.`);
+      } else if (scheduleMatch.index > sleepMatches[0].index) {
+        addViolation(`${label} step must select its retry delay before sleeping.`);
+      }
+      const retryMessageMarker = `retrying in \${${delayVariable}}s.`;
+      if (!run.includes(retryMessageMarker)) {
+        addViolation(`${label} step must report the delay used by its retry sleep.`);
+      }
+      if (
+        !Number.isSafeInteger(firstDelay) ||
+        firstDelay < 0 ||
+        !Number.isSafeInteger(subsequentDelay) ||
+        subsequentDelay < 0
+      ) {
+        addViolation(`${label} step retry delays must be non-negative integers.`);
+      } else if (Number.isSafeInteger(maxAttempts) && maxAttempts >= 2) {
+        const totalSleep = firstDelay + (maxAttempts - 2) * subsequentDelay;
+        if (totalSleep > 600) {
+          addViolation(`${label} step derived sleep budget must not exceed 600 seconds; found ${totalSleep}.`);
+        }
+      }
+    }
+  }
+
+  const exhaustionMatch = run.match(
+    new RegExp(String.raw`if \[\[ "\$${visibleVariable}" != true \]\]; then[\s\S]*?\n\s*fi`),
+  );
+  if (!exhaustionMatch || !/\bexit 1\b/.test(exhaustionMatch[0]) || !/>&2/.test(exhaustionMatch[0])) {
+    addViolation(`${label} step must keep its stderr exhaustion failure with exit 1.`);
+  }
+}
+
+function checkRegistryVisibilityLoops(publishRecords) {
+  const coreVisibilityName = 'Verify core on the registry before the adapter';
+  const adapterVisibilityName = 'Verify Pi adapter on the registry';
+  const coreProvenanceName = 'Verify core provenance attestation before the adapter';
+  const coreVisibilityMatches = publishRecords.filter(
+    ({ step }) => isRecord(step) && step.name === coreVisibilityName,
+  );
+  const adapterVisibilityMatches = publishRecords.filter(
+    ({ step }) => isRecord(step) && step.name === adapterVisibilityName,
+  );
+  if (coreVisibilityMatches.length !== 1) {
+    addViolation(`release.yml publish job must contain exactly one ${coreVisibilityName} step; found ${coreVisibilityMatches.length}.`);
+  } else {
+    checkRegistryVisibilityStep(coreVisibilityMatches[0], 'core', 'core_visible');
+  }
+  if (adapterVisibilityMatches.length !== 1) {
+    addViolation(`release.yml publish job must contain exactly one ${adapterVisibilityName} step; found ${adapterVisibilityMatches.length}.`);
+  } else {
+    checkRegistryVisibilityStep(adapterVisibilityMatches[0], 'adapter', 'adapter_visible');
+  }
+
+  const coreProvenanceMatches = publishRecords.filter(
+    ({ step }) => isRecord(step) && step.name === coreProvenanceName,
+  );
+  if (coreProvenanceMatches.length !== 1) {
+    addViolation(`release.yml publish job must contain exactly one ${coreProvenanceName} step; found ${coreProvenanceMatches.length}.`);
+  } else if (coreVisibilityMatches.length === 1 && coreVisibilityMatches[0].index >= coreProvenanceMatches[0].index) {
+    addViolation(`release.yml ${coreVisibilityName} step must appear before ${coreProvenanceName}.`);
+  }
+}
+
 const SMOKE_CANDIDATE_PATTERNS = [
   {
     job: 'validate',
@@ -852,6 +952,7 @@ function checkReleaseStructure(release) {
   }
 
   const publishRecords = stepRecords(document, 'publish');
+  checkRegistryVisibilityLoops(publishRecords);
   const hasPnpmPackCommand = (run) =>
     commandSegments(run).some((command) => {
       if (!/^pnpm(?:\s|$)/.test(command)) {

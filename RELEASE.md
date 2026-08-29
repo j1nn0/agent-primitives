@@ -101,6 +101,8 @@ validation fallback in publish mode. Validate mode rejects the input.
 The CI preflight exits immediately on a terminal non-success CI conclusion; queued or
 in-progress runs continue through the existing bounded polling window.
 
+Registry visibility verification keeps its ~585s bounded budget: the first retry waits 15s and subsequent retries wait 5s. This is a tail-latency reduction for propagation that crosses the 15s boundary, not a happy-path release speedup. Track 2 (version-manifest gate) is designed but NOT implemented.
+
 ## Trusted Publishing and first-publish bootstrap
 
 The release path is tokenless Trusted Publishing only:

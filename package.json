@@ -23,7 +23,8 @@
     "example:agent-handoff": "node examples/agent-handoff/basic.ts",
     "example:agent-budget": "node examples/agent-budget/basic.ts",
     "example:agent-tool-policy": "node examples/agent-tool-policy/basic.ts",
-    "test:release-guard": "node scripts/test-release-guard.mjs"
+    "test:release-guard": "node scripts/test-release-guard.mjs",
+    "test:registry-poll": "node scripts/test-registry-poll.mjs"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",

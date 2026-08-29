@@ -98,6 +98,41 @@ const validatedTarballsStepStart = '      - name: Resolve, download, and audit v
 const validatedTarballsStepEnd = '\n\n      - name: Registry preflight';
 const registryPreflightStepStart = '      - name: Registry preflight';
 const registryPreflightStepEnd = '\n\n      - name: Record Node and npm versions for trusted publishing';
+const coreRegistryVisibilityStepStart = '      - name: Verify core on the registry before the adapter';
+const coreRegistryVisibilityStepEnd = '\n\n      - name: Verify core provenance attestation before the adapter';
+const adapterRegistryVisibilityStepStart = '      - name: Verify Pi adapter on the registry';
+const adapterRegistryVisibilityStepEnd = '\n\n      - name: Verify Pi adapter provenance attestation';
+const registryVisibilityLoop = '          for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do\n';
+const coreVisibilityExhaustionBlock = [
+  '          if [[ "$core_visible" != true ]]; then',
+  '            echo "Core registry verification failed; the adapter will not be published. The version did not become visible on the public registry within the wait window." >&2',
+  '            cat "$verification_error_file" >&2',
+  '            exit 1',
+  '          fi',
+].join('\n') + '\n';
+const adapterVisibilityExhaustionBlock = [
+  '          if [[ "$adapter_visible" != true ]]; then',
+  '            echo "Pi adapter registry verification failed. The version did not become visible on the public registry within the wait window." >&2',
+  '            cat "$verification_error_file" >&2',
+  '            exit 1',
+  '          fi',
+].join('\n') + '\n';
+
+function moveStepAfter(source, stepStart, stepEnd, afterMarker, label) {
+  const start = source.indexOf(stepStart);
+  const end = source.indexOf(stepEnd, start + stepStart.length);
+  if (start < 0 || end < 0) {
+    throw new Error(`${label}: expected workflow step was not found`);
+  }
+  const step = source.slice(start, end);
+  const withoutStep = source.slice(0, start) + source.slice(end);
+  const insertion = withoutStep.indexOf(afterMarker);
+  if (insertion < 0) {
+    throw new Error(`${label}: expected insertion marker was not found`);
+  }
+  const insertionEnd = insertion + afterMarker.length;
+  return `${withoutStep.slice(0, insertionEnd)}\n\n${step}${withoutStep.slice(insertionEnd)}`;
+}
 const validatedRunRequiredBlock = [
   '            if [[ -z "$VALIDATED_RUN_ID" ]]; then',
   '              echo "validated_run_id is required in publish mode." >&2',
@@ -1120,6 +1155,101 @@ const mutations = [
   {
     name: 'DL validate run attempt output is removed',
     mutate: (source) => replaceRequired(source, validateJobOutputBlock, '', 'case DL'),
+  },
+  {
+    name: 'DM core registry visibility loop loses its max-attempt bound',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        coreRegistryVisibilityStepStart,
+        coreRegistryVisibilityStepEnd,
+        (step) =>
+          replaceRequired(
+            step,
+            registryVisibilityLoop,
+            '          for ((attempt = 1; ; attempt += 1)); do\n',
+            'case DM',
+          ),
+        'case DM step',
+      ),
+  },
+  {
+    name: 'DN adapter registry visibility loop loses its max-attempt bound',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        adapterRegistryVisibilityStepStart,
+        adapterRegistryVisibilityStepEnd,
+        (step) =>
+          replaceRequired(
+            step,
+            registryVisibilityLoop,
+            '          for ((attempt = 1; ; attempt += 1)); do\n',
+            'case DN',
+          ),
+        'case DN step',
+      ),
+  },
+  {
+    name: 'DO core registry visibility exhaustion failure is removed',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        coreRegistryVisibilityStepStart,
+        coreRegistryVisibilityStepEnd,
+        (step) => replaceRequired(step, coreVisibilityExhaustionBlock, '', 'case DO'),
+        'case DO step',
+      ),
+  },
+  {
+    name: 'DP adapter registry visibility exhaustion failure is removed',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        adapterRegistryVisibilityStepStart,
+        adapterRegistryVisibilityStepEnd,
+        (step) => replaceRequired(step, adapterVisibilityExhaustionBlock, '', 'case DP'),
+        'case DP step',
+      ),
+  },
+  {
+    name: 'DQ core registry visibility wait budget exceeds the ceiling',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        coreRegistryVisibilityStepStart,
+        coreRegistryVisibilityStepEnd,
+        (step) => {
+          const first = replaceRequired(step, 'retry_delay=15', 'retry_delay=150', 'case DQ first');
+          return replaceRequired(first, 'retry_delay=5', 'retry_delay=50', 'case DQ subsequent');
+        },
+        'case DQ step',
+      ),
+  },
+  {
+    name: 'DR adapter registry visibility wait budget exceeds the ceiling',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        adapterRegistryVisibilityStepStart,
+        adapterRegistryVisibilityStepEnd,
+        (step) => {
+          const first = replaceRequired(step, 'retry_delay=15', 'retry_delay=150', 'case DR first');
+          return replaceRequired(first, 'retry_delay=5', 'retry_delay=50', 'case DR subsequent');
+        },
+        'case DR step',
+      ),
+  },
+  {
+    name: 'DS core registry visibility moves after core provenance verification',
+    mutate: (source) =>
+      moveStepAfter(
+        source,
+        coreRegistryVisibilityStepStart,
+        coreRegistryVisibilityStepEnd,
+        '          echo "Core provenance attestation verified for $CORE_PKG_NAME@$CORE_VERSION."',
+        'case DS',
+      ),
   },
 ];
 
