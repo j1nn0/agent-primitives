@@ -9,31 +9,24 @@ import {
 import {
   HANDOFF_EXTENSION_PATH,
   createCheck,
+  createCleanupRegistry,
   createIsolatedSession,
   makeIsolation,
+  messageText,
+  runScriptedTurn,
+  stateEntriesFor,
+  toolResultMessages,
 } from '../runner.mjs';
 
 const PACKET_ID = 'b1-packet-1';
 
-function handoffStateEntries(sessionManager) {
-  return sessionManager
-    .getBranch()
-    .filter(
-      (entry) =>
-        entry.type === 'custom' && entry.customType === 'agent-handoff-state',
-    );
+function latestToolResult(session, toolName) {
+  return toolResultMessages(session)
+    .filter((message) => message.toolName === toolName)
+    .at(-1);
 }
 
-async function runScriptedTurn(harness, prompt, responses) {
-  const start = harness.events.length;
-  harness.faux.setResponses(responses);
-  const turnFinished = harness.armAgentEndWaiter();
-  await harness.session.prompt(prompt);
-  await turnFinished;
-  return harness.events.slice(start);
-}
-
-async function runResumeProbe({ isolation, envelope, sessions, check }) {
+async function runResumeProbe({ isolation, envelope, registerCleanup, check }) {
   const resumeManager = SessionManager.inMemory(isolation.workDir);
   resumeManager.appendCustomEntry('agent-handoff-state', envelope);
 
@@ -43,18 +36,20 @@ async function runResumeProbe({ isolation, envelope, sessions, check }) {
     additionalExtensionPaths: [HANDOFF_EXTENSION_PATH],
     expectedExtensionPath: HANDOFF_EXTENSION_PATH,
   });
-  sessions.push(probe);
+  registerCleanup(() => probe.session.dispose());
 
   const probeResponses = [
     fauxAssistantMessage(fauxToolCall('agent_handoff_get', {})),
     fauxAssistantMessage(fauxText('Resume probe complete.')),
   ];
-  const probeAEvents = await runScriptedTurn(
+  await runScriptedTurn(
     probe,
     'Read the reconstructed handoff packets.',
     probeResponses,
   );
-  const probeAVisible = probeAEvents.some((event) => event.includes(PACKET_ID));
+  const probeAResult = latestToolResult(probe.session, 'agent_handoff_get');
+  const probeAVisible =
+    probeAResult !== undefined && messageText(probeAResult).includes(PACKET_ID);
   probe.assertNoPendingFauxResponses();
   probe.assertFauxNetworkIdentity();
 
@@ -86,12 +81,14 @@ async function runResumeProbe({ isolation, envelope, sessions, check }) {
     return 'unsupported';
   }
 
-  const probeBEvents = await runScriptedTurn(
+  await runScriptedTurn(
     probe,
     'Read the reconstructed handoff packets after reload.',
     probeResponses,
   );
-  const probeBVisible = probeBEvents.some((event) => event.includes(PACKET_ID));
+  const probeBResult = latestToolResult(probe.session, 'agent_handoff_get');
+  const probeBVisible =
+    probeBResult !== undefined && messageText(probeBResult).includes(PACKET_ID);
   probe.assertNoPendingFauxResponses();
   probe.assertFauxNetworkIdentity();
   check(probe.session.sessionFile === undefined, 'resume probe stayed in-memory');
@@ -105,10 +102,11 @@ async function runResumeProbe({ isolation, envelope, sessions, check }) {
 
 export const name = 'agent-handoff-pi';
 
-export async function run() {
+export async function run(cleanup = createCleanupRegistry()) {
   const { check, result } = createCheck();
+  const { registerCleanup, cleanupAll } = cleanup;
   const isolation = makeIsolation();
-  const sessions = [];
+  registerCleanup(isolation.cleanup);
 
   try {
     const primary = await createIsolatedSession({
@@ -116,7 +114,7 @@ export async function run() {
       additionalExtensionPaths: [HANDOFF_EXTENSION_PATH],
       expectedExtensionPath: HANDOFF_EXTENSION_PATH,
     });
-    sessions.push(primary);
+    registerCleanup(() => primary.session.dispose());
 
     check(
       primary.extensionsResult.extensions.length === 1 &&
@@ -145,19 +143,33 @@ export async function run() {
         fauxAssistantMessage(fauxText('Handoff packet created.')),
       ],
     );
-    const h1Branch = JSON.stringify(primary.sessionManager.getBranch());
+    const h1StateEntry = stateEntriesFor(
+      primary.sessionManager,
+      'agent-handoff-state',
+    ).at(-1);
+    const h1Envelope = h1StateEntry?.data;
+    const h1Packet = h1Envelope?.packets?.find(
+      (packet) => packet?.id === PACKET_ID,
+    );
     check(
-      h1Branch.includes('agent-handoff-state') && h1Branch.includes(PACKET_ID),
+      h1Envelope?.schemaVersion === 1 && h1Packet?.id === PACKET_ID,
       'H1 create persisted the packet through the real runtime',
     );
     check(
-      h1Events.some((event) => event.includes('agent_handoff_create')),
+      h1Events.some(
+        (event) =>
+          event.type === 'tool_execution_start' &&
+          event.toolName === 'agent_handoff_create',
+      ),
       'H1 captured the real agent_handoff_create tool call event',
     );
     primary.assertNoPendingFauxResponses();
     primary.assertFauxNetworkIdentity();
 
-    const capturedStateEntry = handoffStateEntries(primary.sessionManager).at(-1);
+    const capturedStateEntry = stateEntriesFor(
+      primary.sessionManager,
+      'agent-handoff-state',
+    ).at(-1);
     if (capturedStateEntry === undefined || capturedStateEntry.data === undefined) {
       check(false, 'H1 produced a state envelope for the resume probe');
       return { status: 'fail', reason: 'H1 did not produce a persisted state envelope' };
@@ -165,7 +177,7 @@ export async function run() {
     check(true, 'H1 produced a state envelope for the resume probe');
     const capturedEnvelope = capturedStateEntry.data;
 
-    const h2GetEvents = await runScriptedTurn(
+    await runScriptedTurn(
       primary,
       'Read the current handoff packets.',
       [
@@ -173,11 +185,9 @@ export async function run() {
         fauxAssistantMessage(fauxText('The current handoff packet was read.')),
       ],
     );
+    const h2GetResult = latestToolResult(primary.session, 'agent_handoff_get');
     check(
-      h2GetEvents.some(
-        (event) =>
-          event.includes('agent_handoff_get') && event.includes(PACKET_ID),
-      ),
+      h2GetResult !== undefined && messageText(h2GetResult).includes(PACKET_ID),
       'H2 get returned the created packet content',
     );
     primary.assertNoPendingFauxResponses();
@@ -193,14 +203,24 @@ export async function run() {
         fauxAssistantMessage(fauxText('The handoff packet was removed.')),
       ],
     );
-    const newestStateEntry = handoffStateEntries(primary.sessionManager).at(-1);
+    const newestStateEntry = stateEntriesFor(
+      primary.sessionManager,
+      'agent-handoff-state',
+    ).at(-1);
     check(
-      h2RemoveEvents.some((event) => event.includes('agent_handoff_remove')),
+      h2RemoveEvents.some(
+        (event) =>
+          event.type === 'tool_execution_start' &&
+          event.toolName === 'agent_handoff_remove',
+      ),
       'H2 remove executed the real agent_handoff_remove tool call',
     );
     check(
-      newestStateEntry !== undefined &&
-        !JSON.stringify(newestStateEntry.data).includes(PACKET_ID),
+      newestStateEntry?.data?.schemaVersion === 1 &&
+        Array.isArray(newestStateEntry.data.packets) &&
+        !newestStateEntry.data.packets.some(
+          (packet) => packet?.id === PACKET_ID,
+        ),
       'H2 newest handoff state no longer contains the packet',
     );
     primary.assertNoPendingFauxResponses();
@@ -213,7 +233,7 @@ export async function run() {
     const resumeStatus = await runResumeProbe({
       isolation,
       envelope: capturedEnvelope,
-      sessions,
+      registerCleanup,
       check,
     });
     if (resumeStatus === 'supported') {
@@ -233,9 +253,6 @@ export async function run() {
       reason: 'resume: NOT REPRESENTABLE WITH CURRENT PUBLIC SDK',
     };
   } finally {
-    for (const harness of sessions.reverse()) {
-      harness.session.dispose();
-    }
-    isolation.cleanup();
+    await cleanupAll();
   }
 }

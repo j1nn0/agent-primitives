@@ -35,6 +35,26 @@ export const TOOL_POLICY_EXTENSION_PATH = join(
   repoRoot,
   'packages/agent-tool-policy-pi/dist/extension.js',
 );
+export const AGENT_STATE_EXTENSION_PATH = join(
+  repoRoot,
+  'packages/agent-state-pi/dist/extension.js',
+);
+export const AGENT_PROGRESS_EXTENSION_PATH = join(
+  repoRoot,
+  'packages/agent-progress-pi/dist/extension.js',
+);
+export const AGENT_RETRY_GUARD_EXTENSION_PATH = join(
+  repoRoot,
+  'packages/agent-retry-guard-pi/dist/extension.js',
+);
+export const AGENT_EVIDENCE_EXTENSION_PATH = join(
+  repoRoot,
+  'packages/agent-evidence-pi/dist/extension.js',
+);
+export const AGENT_BUDGET_EXTENSION_PATH = join(
+  repoRoot,
+  'packages/agent-budget-pi/dist/extension.js',
+);
 
 const adapterDistPaths = [
   {
@@ -46,6 +66,31 @@ const adapterDistPaths = [
     name: 'agent-tool-policy-pi',
     extensionPath: TOOL_POLICY_EXTENSION_PATH,
     sourcePath: join(repoRoot, 'packages/agent-tool-policy-pi/src'),
+  },
+  {
+    name: 'agent-state-pi',
+    extensionPath: AGENT_STATE_EXTENSION_PATH,
+    sourcePath: join(repoRoot, 'packages/agent-state-pi/src'),
+  },
+  {
+    name: 'agent-progress-pi',
+    extensionPath: AGENT_PROGRESS_EXTENSION_PATH,
+    sourcePath: join(repoRoot, 'packages/agent-progress-pi/src'),
+  },
+  {
+    name: 'agent-retry-guard-pi',
+    extensionPath: AGENT_RETRY_GUARD_EXTENSION_PATH,
+    sourcePath: join(repoRoot, 'packages/agent-retry-guard-pi/src'),
+  },
+  {
+    name: 'agent-evidence-pi',
+    extensionPath: AGENT_EVIDENCE_EXTENSION_PATH,
+    sourcePath: join(repoRoot, 'packages/agent-evidence-pi/src'),
+  },
+  {
+    name: 'agent-budget-pi',
+    extensionPath: AGENT_BUDGET_EXTENSION_PATH,
+    sourcePath: join(repoRoot, 'packages/agent-budget-pi/src'),
   },
 ];
 
@@ -123,7 +168,7 @@ function assertExtensionLoaderContract(extensionsResult, expectedExtensionPath) 
 
   if (extensionsResult.errors.length !== 0) {
     throw new Error(
-      `extension load failed: ${JSON.stringify(extensionsResult.errors)}`,
+      `extension load failed: ${safeSerialize(extensionsResult.errors)}`,
     );
   }
 
@@ -139,7 +184,7 @@ function assertExtensionLoaderContract(extensionsResult, expectedExtensionPath) 
       (extension) => extension.resolvedPath ?? extension.path ?? '<unknown>',
     );
     throw new Error(
-      `extension loader contract failed: expected exactly one extension resolving to ${expectedPath}; loaded ${JSON.stringify(loadedPaths)}`,
+      `extension loader contract failed: expected exactly one extension resolving to ${expectedPath}; loaded ${safeSerialize(loadedPaths)}`,
     );
   }
 }
@@ -148,48 +193,124 @@ function isRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function collectProviderMentions(value, path, modelId, result) {
-  if (value === null || typeof value !== 'object') {
-    return;
+function valueTypeName(value) {
+  if (value === null) {
+    return 'null';
   }
+  if (typeof value !== 'object') {
+    return typeof value;
+  }
+  try {
+    return value.constructor?.name || 'Object';
+  } catch {
+    return 'Object';
+  }
+}
 
-  if (Object.prototype.hasOwnProperty.call(value, 'provider')) {
-    result.count += 1;
-    if (value.provider !== 'faux') {
-      throw new Error(
-        `network identity contract failed at ${path}.provider: expected faux provider`,
-      );
-    }
+export function safeSerialize(value) {
+  try {
+    const serialized = JSON.stringify(value);
+    return serialized === undefined
+      ? `<unserializable: ${valueTypeName(value)}>`
+      : serialized;
+  } catch {
+    return `<unserializable: ${valueTypeName(value)}>`;
+  }
+}
 
-    const modelIds = [];
-    if (typeof value.model === 'string') {
-      modelIds.push(value.model);
-    } else if (isRecord(value.model) && typeof value.model.id === 'string') {
-      modelIds.push(value.model.id);
-    }
-    if (typeof value.modelId === 'string') {
-      modelIds.push(value.modelId);
-    }
-    if (
-      modelIds.length === 0 &&
-      typeof value.id === 'string' &&
-      (Object.prototype.hasOwnProperty.call(value, 'api') ||
-        Object.prototype.hasOwnProperty.call(value, 'baseUrl') ||
-        Object.prototype.hasOwnProperty.call(value, 'name'))
-    ) {
-      modelIds.push(value.id);
-    }
+function sessionMessages(session) {
+  const messages = session?.messages;
+  if (!Array.isArray(messages)) {
+    const shape = typeof messages === 'function' ? 'method' : typeof messages;
+    throw new Error(
+      `real-harness session.messages contract failed: expected an array property, got ${shape}`,
+    );
+  }
+  if (!messages.every(isRecord)) {
+    throw new Error('real-harness session.messages contract failed: message was not an object');
+  }
+  return messages;
+}
 
-    if (modelIds.length === 0 || modelIds.some((candidate) => candidate !== modelId)) {
-      throw new Error(
-        `network identity contract failed at ${path}: expected faux model ${modelId}`,
-      );
+export function assistantMessages(session) {
+  return sessionMessages(session).filter((message) => message.role === 'assistant');
+}
+
+export function toolResultMessages(session) {
+  return sessionMessages(session).filter((message) => message.role === 'toolResult');
+}
+
+export function messageText(message) {
+  if (!isRecord(message) || !Array.isArray(message.content)) {
+    throw new Error('real-harness message contract failed: expected content array');
+  }
+  const textParts = [];
+  for (const part of message.content) {
+    if (!isRecord(part)) {
+      throw new Error('real-harness message contract failed: content part was not an object');
+    }
+    if (part.type === 'text') {
+      if (typeof part.text !== 'string') {
+        throw new Error('real-harness message contract failed: text content was not a string');
+      }
+      textParts.push(part.text);
     }
   }
+  return textParts.join('\n');
+}
 
-  for (const [key, child] of Object.entries(value)) {
-    collectProviderMentions(child, `${path}.${key}`, modelId, result);
+export function stateEntriesFor(sessionManager, customType) {
+  if (typeof sessionManager?.getBranch !== 'function') {
+    throw new Error('real-harness SessionManager contract failed: getBranch is not public');
   }
+  const branch = sessionManager.getBranch();
+  if (!Array.isArray(branch)) {
+    throw new Error('real-harness SessionManager contract failed: getBranch did not return an array');
+  }
+  return branch.filter(
+    (entry) =>
+      isRecord(entry) && entry.type === 'custom' && entry.customType === customType,
+  );
+}
+
+export function createCleanupRegistry() {
+  const cleanups = [];
+  let cleanupPromise;
+
+  const invokeCleanup = async (cleanup) => {
+    try {
+      await cleanup();
+    } catch (error) {
+      console.error(`real-harness cleanup failed: ${safeSerialize(error)}`);
+    }
+  };
+
+  return {
+    registerCleanup(cleanup) {
+      if (typeof cleanup !== 'function') {
+        throw new TypeError('real-harness cleanup must be a function');
+      }
+      if (cleanupPromise !== undefined) {
+        void invokeCleanup(cleanup);
+        return;
+      }
+      cleanups.push(cleanup);
+    },
+    async cleanupAll() {
+      if (cleanupPromise !== undefined) {
+        return cleanupPromise;
+      }
+      cleanupPromise = (async () => {
+        while (cleanups.length > 0) {
+          const cleanup = cleanups.pop();
+          if (cleanup !== undefined) {
+            await invokeCleanup(cleanup);
+          }
+        }
+      })();
+      return cleanupPromise;
+    },
+  };
 }
 
 function assertAuthStoreHasNoCredentials(authPath) {
@@ -298,11 +419,7 @@ export async function createIsolatedSession({
 
   const events = [];
   session.subscribe((event) => {
-    const serialized = JSON.stringify(event);
-    if (serialized === undefined) {
-      throw new Error('real-harness event capture failed: event was not serializable');
-    }
-    events.push(serialized);
+    events.push(event);
   });
 
   const armAgentEndWaiter = () =>
@@ -344,20 +461,27 @@ export async function createIsolatedSession({
     return true;
   };
 
-  const assertFauxNetworkIdentity = () => {
-    const modelId = faux.getModel().id;
-    const result = { count: 0 };
-    for (const [index, serialized] of events.entries()) {
-      let event;
-      try {
-        event = JSON.parse(serialized);
-      } catch {
-        throw new Error(`network identity contract failed: event ${index} is not JSON`);
-      }
-      collectProviderMentions(event, `event[${index}]`, modelId, result);
+  const assertFauxNetworkIdentity = (turnStartMessageIndex = 0) => {
+    const messages = sessionMessages(session);
+    const assistants = assistantMessages(session);
+    if (assistants.length === 0) {
+      throw new Error('network identity contract failed: no assistant message observed');
     }
-    if (result.count === 0) {
-      throw new Error('network identity contract failed: no provider event observed');
+
+    const modelId = faux.getModel().id;
+    for (const [index, message] of assistants.entries()) {
+      if (message.provider !== 'faux' || message.model !== modelId) {
+        throw new Error(
+          `network identity contract failed: assistant message ${index} expected provider faux and model ${modelId}; got ${safeSerialize(message)}`,
+        );
+      }
+    }
+
+    const turnAssistants = messages
+      .slice(turnStartMessageIndex)
+      .filter((message) => message.role === 'assistant');
+    if (turnAssistants.length === 0) {
+      throw new Error('network identity contract failed: no assistant message observed for turn');
     }
     assertAuthStoreHasNoCredentials(authPath);
     return true;
@@ -384,4 +508,98 @@ export async function createIsolatedSession({
     assertNoAuthCredentials,
     authPath,
   };
+}
+
+export async function runScriptedTurn(harness, prompt, responses) {
+  const eventStart = harness.events.length;
+  const messageStart = sessionMessages(harness.session).length;
+  harness.faux.setResponses(responses);
+  const turnFinished = harness.armAgentEndWaiter();
+  await harness.session.prompt(prompt);
+  await turnFinished;
+  harness.assertFauxNetworkIdentity(messageStart);
+  return harness.events.slice(eventStart);
+}
+
+export const SCENARIO_TIMEOUT_MS = 60000;
+
+async function runWithTimeout(scenario, cleanup) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      void cleanup.cleanupAll().then(() => {
+        reject(
+          new Error(
+            `scenario ${scenario.name} timed out after ${SCENARIO_TIMEOUT_MS / 1000}s`,
+          ),
+        );
+      });
+    }, SCENARIO_TIMEOUT_MS);
+  });
+
+  try {
+    return await Promise.race([scenario.run(cleanup), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function errorMessage(error) {
+  return error instanceof Error ? error.message : 'unknown error';
+}
+
+export async function runScenarioList(
+  scenarios,
+  { label, allowSkip = true } = {},
+) {
+  const runLabel = label ?? 'REAL-HARNESS';
+  try {
+    assertAllDistFresh();
+  } catch (error) {
+    console.error(`REAL-HARNESS ${runLabel} cannot run: ${errorMessage(error)}`);
+    process.exitCode = 1;
+    return { passed: 0, failed: 1, skipped: 0 };
+  }
+
+  let passed = 0;
+  let failed = 0;
+  let skipped = 0;
+
+  for (const scenario of scenarios) {
+    const cleanup = createCleanupRegistry();
+    let result;
+    try {
+      result = await runWithTimeout(scenario, cleanup);
+      const validStatuses = allowSkip ? ['pass', 'fail', 'skip'] : ['pass', 'fail'];
+      if (
+        result === undefined ||
+        !validStatuses.includes(result.status)
+      ) {
+        throw new Error('scenario returned an invalid result');
+      }
+    } catch (error) {
+      result = { status: 'fail', reason: errorMessage(error) };
+    } finally {
+      await cleanup.cleanupAll();
+    }
+
+    if (result.status === 'pass') {
+      passed += 1;
+    } else if (result.status === 'fail') {
+      failed += 1;
+    } else {
+      skipped += 1;
+    }
+
+    const reason = result.reason === undefined ? '' : ` — ${result.reason}`;
+    console.log(`scenario ${scenario.name}: ${result.status}${reason}`);
+  }
+
+  console.log(
+    `REAL-HARNESS ${runLabel} SUMMARY: ${passed} passed, ${failed} failed, ${skipped} skipped`,
+  );
+  if (failed !== 0 || (!allowSkip && skipped !== 0)) {
+    process.exitCode = 1;
+  }
+  return { passed, failed, skipped };
 }
