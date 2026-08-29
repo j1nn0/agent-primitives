@@ -133,6 +133,11 @@ Also verify packaging when package contents change:
 - A clean Git working tree does not prove that a delegated agent has stopped.
 - If the same delegated work makes no progress twice, stop repeating the same instruction and change the approach.
 
+## Communication
+
+- Use Japanese only for user-facing responses.
+- Use English for all other content, including internal reasoning, tool interactions, code, comments, documentation, commit messages, and agent-to-agent communication.
+
 ## Completion
 
 Before reporting a task complete:
