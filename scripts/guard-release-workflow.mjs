@@ -1353,6 +1353,28 @@ function checkSetupNodeRegistryUrl(workflowName, document) {
   }
 }
 
+function checkCiReleaseRegressionSuites(ciDocument) {
+  const steps =
+    isRecord(ciDocument) && isRecord(ciDocument.jobs) && isRecord(ciDocument.jobs.ci)
+      ? ciDocument.jobs.ci.steps
+      : undefined;
+  if (!Array.isArray(steps)) {
+    addViolation('ci.yml must define a ci job with a steps array.');
+    return;
+  }
+  const node24Condition = "matrix.node == '24.x'";
+  for (const suite of ['pnpm test:release-guard', 'pnpm test:registry-poll']) {
+    const matches = steps.filter((step) => isRecord(step) && step.run === suite);
+    if (matches.length !== 1) {
+      addViolation(`ci.yml must run ${suite} exactly once on the Node 24 job; found ${matches.length}.`);
+      continue;
+    }
+    if (matches[0].if !== node24Condition) {
+      addViolation(`ci.yml ${suite} must be gated to ${node24Condition} so the Node 22 job does not duplicate it.`);
+    }
+  }
+}
+
 async function loadWorkflows() {
   for (const source of workflowSources) {
     let raw;
@@ -1386,6 +1408,7 @@ if (release) {
 if (ci) {
   checkActionPins('ci.yml', ci.raw, ci.document);
   checkSetupNodeRegistryUrl('ci.yml', ci.document);
+  checkCiReleaseRegressionSuites(ci.document);
 }
 
 if (violations.length > 0) {

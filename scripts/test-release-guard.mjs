@@ -1251,6 +1251,39 @@ const mutations = [
         'case DS',
       ),
   },
+  {
+    name: 'DT ci.yml loses the release-guard regression suite',
+    file: 'ci.yml',
+    mutate: (source) =>
+      replaceRequired(
+        source,
+        "      - if: matrix.node == '24.x'\n        run: pnpm test:release-guard\n",
+        '',
+        'case DT',
+      ),
+  },
+  {
+    name: 'DU ci.yml loses the registry-poll regression suite',
+    file: 'ci.yml',
+    mutate: (source) =>
+      replaceRequired(
+        source,
+        "      - if: matrix.node == '24.x'\n        run: pnpm test:registry-poll\n",
+        '',
+        'case DU',
+      ),
+  },
+  {
+    name: 'DV ci.yml release-guard regression suite loses its Node 24 gate',
+    file: 'ci.yml',
+    mutate: (source) =>
+      replaceRequired(
+        source,
+        "      - if: matrix.node == '24.x'\n        run: pnpm test:release-guard\n",
+        '      - run: pnpm test:release-guard\n',
+        'case DV',
+      ),
+  },
 ];
 
 const positiveMutations = [
@@ -1280,10 +1313,10 @@ try {
 
   for (const testCase of positiveMutations) {
     const root = await createWorkflowCopy();
-    const copiedReleasePath = join(root, '.github', 'workflows', 'release.yml');
+    const targetPath = join(root, '.github', 'workflows', testCase.file ?? 'release.yml');
     try {
-      const source = await readFile(copiedReleasePath, 'utf8');
-      await writeFile(copiedReleasePath, testCase.mutate(source));
+      const source = await readFile(targetPath, 'utf8');
+      await writeFile(targetPath, testCase.mutate(source));
       const result = await runGuard(root);
       if (result.code === 0) {
         console.log(`${testCase.name}: PASS (guard accepted mutation)`);
@@ -1300,10 +1333,10 @@ try {
 
   for (const testCase of mutations) {
     const root = await createWorkflowCopy();
-    const copiedReleasePath = join(root, '.github', 'workflows', 'release.yml');
+    const targetPath = join(root, '.github', 'workflows', testCase.file ?? 'release.yml');
     try {
-      const source = await readFile(copiedReleasePath, 'utf8');
-      await writeFile(copiedReleasePath, testCase.mutate(source));
+      const source = await readFile(targetPath, 'utf8');
+      await writeFile(targetPath, testCase.mutate(source));
       const result = await runGuard(root);
       if (result.code === 1) {
         console.log(`${testCase.name}: PASS (guard rejected mutation)`);

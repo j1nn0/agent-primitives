@@ -204,7 +204,9 @@ The guard in `scripts/guard-release-workflow.mjs` checks these static invariants
 including the family pairing, family-scoped build/typecheck/test/`check:package` validation,
 family-specific examples, exact-SHA CI preflight, permissions, trigger, action pins, tokenless
 policy, tarball operands, and core-before-adapter provenance ordering. The
-negative-control suite is available as `pnpm test:release-guard`.
+negative-control suite is available as `pnpm test:release-guard`. CI runs it and the
+registry polling fixture (`pnpm test:registry-poll`) on the Node 24 job after
+`pnpm check:release`; the guard fails if either suite is removed from that job.
 
 ## Registry recovery
 

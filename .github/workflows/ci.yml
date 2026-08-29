@@ -32,3 +32,7 @@ jobs:
         run: pnpm example
       - if: matrix.node == '24.x'
         run: pnpm check:release
+      - if: matrix.node == '24.x'
+        run: pnpm test:release-guard
+      - if: matrix.node == '24.x'
+        run: pnpm test:registry-poll
