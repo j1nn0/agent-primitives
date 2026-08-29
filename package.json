@@ -24,7 +24,8 @@
     "example:agent-budget": "node examples/agent-budget/basic.ts",
     "example:agent-tool-policy": "node examples/agent-tool-policy/basic.ts",
     "test:release-guard": "node scripts/test-release-guard.mjs",
-    "test:registry-poll": "node scripts/test-registry-poll.mjs"
+    "test:registry-poll": "node scripts/test-registry-poll.mjs",
+    "test:real-harness:b1": "node scripts/real-harness/run-b1.mjs"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",
