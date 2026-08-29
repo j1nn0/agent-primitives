@@ -19,4 +19,7 @@ const scenarios = [
   agentToolPolicyScenario,
 ];
 
-await runScenarioList(scenarios, { allowSkip: true });
+await runScenarioList(scenarios, {
+  label: 'FULL',
+  allowSkip: false,
+});
