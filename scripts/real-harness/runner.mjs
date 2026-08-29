@@ -55,6 +55,10 @@ export const AGENT_BUDGET_EXTENSION_PATH = join(
   repoRoot,
   'packages/agent-budget-pi/dist/extension.js',
 );
+export const CONTEXT_GUARD_EXTENSION_PATH = join(
+  repoRoot,
+  'packages/context-guard-pi/dist/extension.js',
+);
 
 const adapterDistPaths = [
   {
@@ -91,6 +95,11 @@ const adapterDistPaths = [
     name: 'agent-budget-pi',
     extensionPath: AGENT_BUDGET_EXTENSION_PATH,
     sourcePath: join(repoRoot, 'packages/agent-budget-pi/src'),
+  },
+  {
+    name: 'context-guard-pi',
+    extensionPath: CONTEXT_GUARD_EXTENSION_PATH,
+    sourcePath: join(repoRoot, 'packages/context-guard-pi/src'),
   },
 ];
 
@@ -275,40 +284,29 @@ export function stateEntriesFor(sessionManager, customType) {
 
 export function createCleanupRegistry() {
   const cleanups = [];
-  let cleanupPromise;
+  let drainPromise;
 
-  const invokeCleanup = async (cleanup) => {
-    try {
-      await cleanup();
-    } catch (error) {
-      console.error(`real-harness cleanup failed: ${safeSerialize(error)}`);
+  async function drain() {
+    while (cleanups.length > 0) {
+      const cleanup = cleanups.pop();
+      try {
+        await cleanup();
+      } catch (error) {
+        console.error(`real-harness cleanup failed: ${safeSerialize(error)}`);
+      }
     }
-  };
+  }
 
   return {
     registerCleanup(cleanup) {
       if (typeof cleanup !== 'function') {
         throw new TypeError('real-harness cleanup must be a function');
       }
-      if (cleanupPromise !== undefined) {
-        void invokeCleanup(cleanup);
-        return;
-      }
       cleanups.push(cleanup);
     },
-    async cleanupAll() {
-      if (cleanupPromise !== undefined) {
-        return cleanupPromise;
-      }
-      cleanupPromise = (async () => {
-        while (cleanups.length > 0) {
-          const cleanup = cleanups.pop();
-          if (cleanup !== undefined) {
-            await invokeCleanup(cleanup);
-          }
-        }
-      })();
-      return cleanupPromise;
+    cleanupAll() {
+      drainPromise = (drainPromise ?? Promise.resolve()).then(drain, drain);
+      return drainPromise;
     },
   };
 }
@@ -355,6 +353,7 @@ export async function createIsolatedSession({
   expectedExtensionPath,
   customTools = [],
   sessionManager: suppliedSessionManager,
+  settingsManager: suppliedSettingsManager,
 }) {
   if (isolation === undefined) {
     throw new Error('real-harness isolation is required');
@@ -366,10 +365,12 @@ export async function createIsolatedSession({
   const adapter = adapterForExtensionPath(expectedExtensionPath);
   assertDistFresh(adapter);
 
-  const settingsManager = SettingsManager.inMemory({
-    compaction: { enabled: false },
-    retry: { enabled: false },
-  });
+  const settingsManager =
+    suppliedSettingsManager ??
+    SettingsManager.inMemory({
+      compaction: { enabled: false },
+      retry: { enabled: false },
+    });
   const sessionManager =
     suppliedSessionManager ?? SessionManager.inMemory(isolation.workDir);
   const authPath = join(isolation.agentDir, 'auth.json');
@@ -553,10 +554,11 @@ export async function runScenarioList(
   { label, allowSkip = true } = {},
 ) {
   const runLabel = label ?? 'REAL-HARNESS';
+  const labelPrefix = label === undefined ? 'REAL-HARNESS' : `REAL-HARNESS ${runLabel}`;
   try {
     assertAllDistFresh();
   } catch (error) {
-    console.error(`REAL-HARNESS ${runLabel} cannot run: ${errorMessage(error)}`);
+    console.error(`${labelPrefix} cannot run: ${errorMessage(error)}`);
     process.exitCode = 1;
     return { passed: 0, failed: 1, skipped: 0 };
   }
@@ -596,7 +598,7 @@ export async function runScenarioList(
   }
 
   console.log(
-    `REAL-HARNESS ${runLabel} SUMMARY: ${passed} passed, ${failed} failed, ${skipped} skipped`,
+    `${labelPrefix} SUMMARY: ${passed} passed, ${failed} failed, ${skipped} skipped`,
   );
   if (failed !== 0 || (!allowSkip && skipped !== 0)) {
     process.exitCode = 1;
