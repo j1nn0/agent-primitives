@@ -46,7 +46,7 @@ on:
         default: false
         type: boolean
       validated_run_id:
-        description: 'Optional in publish mode: run ID of a successful validate-mode run for the same family, versions, and commit'
+        description: 'Required in publish mode: run ID of a successful validate-mode run for the same family, versions, and commit'
         required: false
         default: ''
         type: string
@@ -71,6 +71,8 @@ jobs:
       ADAPTER_PKG_DIR: ${{ inputs.family == 'agent-tool-policy' && 'packages/agent-tool-policy-pi' || inputs.family == 'agent-budget' && 'packages/agent-budget-pi' || inputs.family == 'agent-handoff' && 'packages/agent-handoff-pi' || inputs.family == 'agent-evidence' && 'packages/agent-evidence-pi' || inputs.family == 'agent-retry-guard' && 'packages/agent-retry-guard-pi' || inputs.family == 'agent-progress' && 'packages/agent-progress-pi' || inputs.family == 'agent-state' && 'packages/agent-state-pi' || 'packages/context-guard-pi' }}
       CORE_TARBALL_BASE: ${{ inputs.family == 'agent-tool-policy' && 'j1nn0-agent-tool-policy' || inputs.family == 'agent-budget' && 'j1nn0-agent-budget' || inputs.family == 'agent-handoff' && 'j1nn0-agent-handoff' || inputs.family == 'agent-evidence' && 'j1nn0-agent-evidence' || inputs.family == 'agent-retry-guard' && 'j1nn0-agent-retry-guard' || inputs.family == 'agent-progress' && 'j1nn0-agent-progress' || inputs.family == 'agent-state' && 'j1nn0-agent-state' || 'j1nn0-agent-context-guard' }}
       ADAPTER_TARBALL_BASE: ${{ inputs.family == 'agent-tool-policy' && 'j1nn0-agent-tool-policy-pi' || inputs.family == 'agent-budget' && 'j1nn0-agent-budget-pi' || inputs.family == 'agent-handoff' && 'j1nn0-agent-handoff-pi' || inputs.family == 'agent-evidence' && 'j1nn0-agent-evidence-pi' || inputs.family == 'agent-retry-guard' && 'j1nn0-agent-retry-guard-pi' || inputs.family == 'agent-progress' && 'j1nn0-agent-progress-pi' || inputs.family == 'agent-state' && 'j1nn0-agent-state-pi' || 'j1nn0-agent-context-guard-pi' }}
+    outputs:
+      validated_run_attempt: ${{ steps.validate_reuse.outputs.run_attempt }}
     steps:
       - name: Check out dispatched commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -123,6 +125,10 @@ jobs:
             expected_confirmation="publish-${FAMILY}-${CORE_VERSION}-${PI_VERSION}"
             if [[ "$CONFIRMATION" != "$expected_confirmation" ]]; then
               echo "Invalid confirmation. Expected exactly: $expected_confirmation" >&2
+              exit 1
+            fi
+            if [[ -z "$VALIDATED_RUN_ID" ]]; then
+              echo "validated_run_id is required in publish mode." >&2
               exit 1
             fi
           fi
@@ -232,6 +238,7 @@ jobs:
         id: validate_reuse
         env:
           VALIDATED_RUN_ID: ${{ inputs.validated_run_id }}
+          MODE: ${{ inputs.mode }}
           DISPATCH_SHA: ${{ github.sha }}
           REPOSITORY: ${{ github.repository }}
           CURRENT_RUN_NUMBER: ${{ github.run_number }}
@@ -241,6 +248,10 @@ jobs:
           set -euo pipefail
 
           if [[ -z "$VALIDATED_RUN_ID" ]]; then
+            if [[ "$MODE" == "publish" ]]; then
+              echo "assertion: VALIDATED_RUN_ID is required in publish mode; run a new validate dispatch first; failing closed." >&2
+              exit 1
+            fi
             echo "reuse=false" >> "$GITHUB_OUTPUT"
             echo "No validated run ID supplied; running full validation."
             exit 0
@@ -431,6 +442,7 @@ jobs:
               "Dry-run pnpm package publication",
               "Pack release artifacts",
               "Extract and audit release artifacts",
+              "Upload validated release tarballs",
           ]
           for required_name in required_validate_step_names:
               required_matches = [step for step in validate_steps if step.get("name") == required_name]
@@ -477,6 +489,7 @@ jobs:
           fi
 
           echo "reuse=true" >> "$GITHUB_OUTPUT"
+          printf 'run_attempt=%s\n' "$RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
           echo "Validated run ${VALIDATED_RUN_ID} is a verified validate-mode run for ${FAMILY}; skipping duplicated validation."
           exit 0
 
@@ -558,6 +571,7 @@ jobs:
           pnpm --filter "$ADAPTER_PKG_NAME" pack --pack-destination "$RUNNER_TEMP/release-artifacts"
 
       - name: Extract and audit release artifacts
+        id: validate_artifacts
         if: ${{ steps.validate_reuse.outputs.reuse != 'true' }}
         env:
           CORE_VERSION: ${{ inputs.core_version }}
@@ -687,6 +701,8 @@ jobs:
 
           print("Release artifacts passed manifest, contents, extension, and path audits.")
           PY
+          printf 'core_tarball=%s\n' "$core_tarball" >> "$GITHUB_OUTPUT"
+          printf 'pi_tarball=%s\n' "$pi_tarball" >> "$GITHUB_OUTPUT"
 
       - name: Smoke-test Context Guard packed artifacts in a fresh consumer
         if: ${{ steps.validate_reuse.outputs.reuse != 'true' && inputs.family == 'context-guard' }}
@@ -1739,8 +1755,21 @@ jobs:
           NODE
 
 
+      - name: Upload validated release tarballs
+        if: ${{ inputs.mode == 'validate' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-tarballs-${{ inputs.family }}-${{ inputs.core_version }}-${{ inputs.pi_version }}-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: |
+            ${{ steps.validate_artifacts.outputs.core_tarball }}
+            ${{ steps.validate_artifacts.outputs.pi_tarball }}
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: false
+          include-hidden-files: false
   publish:
     permissions:
+      actions: read
       contents: read
       id-token: write
     if: ${{ inputs.mode == 'publish' }}
@@ -1794,25 +1823,10 @@ jobs:
             exit 1
           fi
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
-
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.x
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build from a clean dist
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf "$CORE_PKG_DIR/dist" "$ADAPTER_PKG_DIR/dist"
-          pnpm list -r --filter "$ADAPTER_PKG_NAME..." --depth -1 --json | node -e 'const fs=require("node:fs");const actual=JSON.parse(fs.readFileSync(0,"utf8")).map((entry)=>entry.name).sort();const expected=[process.env.CORE_PKG_NAME,process.env.ADAPTER_PKG_NAME].sort();if(actual.length!==expected.length||actual.some((name,index)=>name!==expected[index])){console.error("Family package set mismatch: "+JSON.stringify(actual)+" instead of "+JSON.stringify(expected));process.exit(1);}'
-          pnpm -r --filter "$ADAPTER_PKG_NAME..." run build
 
       - name: Re-assert manifest versions
         env:
@@ -1832,26 +1846,247 @@ jobs:
             exit 1
           fi
 
-      - name: Pack and audit publish artifacts
-        id: publish_artifacts
+      - name: Resolve, download, and audit validated release artifacts
+        id: validated_tarballs
         env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          VALIDATED_RUN_ID: ${{ inputs.validated_run_id }}
+          VALIDATED_RUN_ATTEMPT: ${{ needs.validate.outputs.validated_run_attempt }}
+          DISPATCH_SHA: ${{ github.sha }}
           CORE_VERSION: ${{ inputs.core_version }}
           PI_VERSION: ${{ inputs.pi_version }}
+          FAMILY: ${{ inputs.family }}
         shell: bash
         run: |
           set -euo pipefail
-          artifact_dir="$RUNNER_TEMP/publish-artifacts"
-          rm -rf "$artifact_dir"
-          mkdir -p "$artifact_dir"
-          pnpm --filter "$CORE_PKG_NAME" pack --pack-destination "$artifact_dir"
-          pnpm --filter "$ADAPTER_PKG_NAME" pack --pack-destination "$artifact_dir"
-          core_tarball="$(find "$artifact_dir" -maxdepth 1 -type f -name "$CORE_TARBALL_BASE-*.tgz" ! -name "$ADAPTER_TARBALL_BASE-*.tgz" -print -quit)"
-          pi_tarball="$(find "$artifact_dir" -maxdepth 1 -type f -name "$ADAPTER_TARBALL_BASE-*.tgz" -print -quit)"
-          if [[ -z "$core_tarball" || -z "$pi_tarball" ]]; then
-            echo "Could not locate both pre-publish release tarballs." >&2
+
+          if [[ ! "$VALIDATED_RUN_ID" =~ ^[0-9]{1,19}$ ]]; then
+            echo "assertion: VALIDATED_RUN_ID must match ^[0-9]{1,19}$; run a new validate dispatch; failing closed." >&2
             exit 1
           fi
-          python3 - "$core_tarball" "$pi_tarball" "$CORE_VERSION" "$PI_VERSION" "$CORE_PKG_NAME" "$ADAPTER_PKG_NAME" <<'PY'
+          if [[ ! "$VALIDATED_RUN_ATTEMPT" =~ ^[0-9]{1,9}$ ]]; then
+            echo "assertion: VALIDATED_RUN_ATTEMPT must match ^[0-9]{1,9}$; run a new validate dispatch; failing closed." >&2
+            exit 1
+          fi
+          if [[ ! "$DISPATCH_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "assertion: DISPATCH_SHA must match ^[0-9a-f]{40}$; run a new validate dispatch; failing closed." >&2
+            exit 1
+          fi
+
+          expected_artifact_name="release-tarballs-${FAMILY}-${CORE_VERSION}-${PI_VERSION}-${DISPATCH_SHA}-attempt-${VALIDATED_RUN_ATTEMPT}"
+          artifacts_file="$RUNNER_TEMP/validated-release-artifacts.json"
+          rm -f "$artifacts_file"
+          artifacts_fetched=false
+          for ((attempt=1; attempt<=3; attempt++)); do
+            if gh api "repos/${REPOSITORY}/actions/runs/${VALIDATED_RUN_ID}/artifacts?per_page=100" > "$artifacts_file" 2>/dev/null; then
+              artifacts_fetched=true
+              break
+            fi
+            if (( attempt < 3 )); then
+              sleep 5
+            fi
+          done
+          if [[ "$artifacts_fetched" != true ]]; then
+            echo "assertion: validated release artifact listing failed after 3 attempts; run a new validate dispatch; failing closed." >&2
+            exit 1
+          fi
+
+          if ! artifact_metadata="$(python3 - "$artifacts_file" "$expected_artifact_name" "$VALIDATED_RUN_ID" "$DISPATCH_SHA" <<'PY'
+          import json
+          import re
+          import sys
+
+          def fail(assertion):
+              print(f"assertion failed: {assertion}; failing closed.", file=sys.stderr)
+              raise SystemExit(2)
+
+          try:
+              with open(sys.argv[1], encoding="utf-8") as handle:
+                  data = json.load(handle)
+          except (OSError, json.JSONDecodeError):
+              fail("artifact list response is valid JSON")
+
+          if not isinstance(data, dict):
+              fail("artifact list response is a dict")
+          total_count = data.get("total_count")
+          artifacts = data.get("artifacts")
+          if not isinstance(total_count, int) or isinstance(total_count, bool):
+              fail("total_count has an integer type")
+          if not isinstance(artifacts, list) or any(not isinstance(artifact, dict) for artifact in artifacts):
+              fail("artifacts is a list of artifact dictionaries")
+          if not (total_count == len(artifacts)):
+              fail("total_count == len(artifacts)")
+
+          expected_name = sys.argv[2]
+          matches = [artifact for artifact in artifacts if artifact.get("name") == expected_name]
+          if len(matches) != 1:
+              fail("exactly one artifact has the expected attempt-specific name")
+          artifact = matches[0]
+          required_fields = {"id", "name", "expired", "digest", "size_in_bytes", "workflow_run"}
+          if any(field not in artifact for field in required_fields):
+              fail("artifact contains all required fields")
+          if not isinstance(artifact["id"], int) or isinstance(artifact["id"], bool):
+              fail("artifact id has an integer type")
+          if not isinstance(artifact["name"], str):
+              fail("artifact name has a string type")
+          if not isinstance(artifact["expired"], bool):
+              fail("artifact expired has a boolean type")
+          if not isinstance(artifact["digest"], str):
+              fail("artifact digest has a string type")
+          if not isinstance(artifact["size_in_bytes"], int) or isinstance(artifact["size_in_bytes"], bool) or artifact["size_in_bytes"] <= 0:
+              fail("artifact size_in_bytes is a positive integer")
+          if artifact["expired"] is not False:
+              fail("artifact expired is false")
+          if not re.fullmatch(r"sha256:[0-9a-f]{64}", artifact["digest"]):
+              fail("artifact digest matches sha256:<64 lowercase hex>")
+
+          workflow_run = artifact["workflow_run"]
+          if not isinstance(workflow_run, dict) or "id" not in workflow_run or "head_sha" not in workflow_run:
+              fail("artifact workflow_run contains id and head_sha")
+          if not isinstance(workflow_run["id"], int) or isinstance(workflow_run["id"], bool):
+              fail("artifact workflow_run id has an integer type")
+          if not isinstance(workflow_run["head_sha"], str):
+              fail("artifact workflow_run head_sha has a string type")
+          if workflow_run["id"] != int(sys.argv[3]):
+              fail("artifact workflow_run id == int(VALIDATED_RUN_ID)")
+          if workflow_run["head_sha"] != sys.argv[4]:
+              fail("artifact workflow_run head_sha == DISPATCH_SHA")
+
+          print(f"ARTIFACT_ID={artifact['id']}")
+          print(f"ARTIFACT_DIGEST={artifact['digest'][len('sha256:'):]}")
+          print(f"ARTIFACT_SIZE={artifact['size_in_bytes']}")
+          PY
+          )"; then
+            echo "assertion: validated release artifact metadata verification failed; run a new validate dispatch; failing closed." >&2
+            exit 1
+          fi
+
+          if [[ "$artifact_metadata" != *$'\n'* ]]; then
+            echo "assertion: artifact metadata parser output is malformed; run a new validate dispatch; failing closed." >&2
+            exit 1
+          fi
+          artifact_id_line="${artifact_metadata%%$'\n'*}"
+          artifact_metadata_tail="${artifact_metadata#*$'\n'}"
+          if [[ "$artifact_metadata_tail" != *$'\n'* ]]; then
+            echo "assertion: artifact metadata parser output is incomplete; run a new validate dispatch; failing closed." >&2
+            exit 1
+          fi
+          artifact_digest_line="${artifact_metadata_tail%%$'\n'*}"
+          artifact_size_line="${artifact_metadata_tail#*$'\n'}"
+          if [[ "$artifact_size_line" == *$'\n'* ]]; then
+            echo "assertion: artifact metadata parser output has extra fields; run a new validate dispatch; failing closed." >&2
+            exit 1
+          fi
+          if [[ ! "$artifact_id_line" =~ ^ARTIFACT_ID=[0-9]+$ || ! "$artifact_digest_line" =~ ^ARTIFACT_DIGEST=[0-9a-f]{64}$ || ! "$artifact_size_line" =~ ^ARTIFACT_SIZE=[1-9][0-9]*$ ]]; then
+            echo "assertion: artifact metadata parser output failed bash validation; run a new validate dispatch; failing closed." >&2
+            exit 1
+          fi
+          ARTIFACT_ID="${artifact_id_line#ARTIFACT_ID=}"
+          ARTIFACT_DIGEST="${artifact_digest_line#ARTIFACT_DIGEST=}"
+          ARTIFACT_SIZE="${artifact_size_line#ARTIFACT_SIZE=}"
+
+          zip_file="$RUNNER_TEMP/validated-release-artifact.zip"
+          rm -f "$zip_file"
+          zip_fetched=false
+          for ((attempt=1; attempt<=3; attempt++)); do
+            if gh api "repos/${REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" > "$zip_file" 2>/dev/null; then
+              zip_fetched=true
+              break
+            fi
+            if (( attempt < 3 )); then
+              sleep 5
+            fi
+          done
+          if [[ "$zip_fetched" != true || ! -s "$zip_file" ]]; then
+            echo "assertion: validated release artifact download failed, was empty, or may have expired (including HTTP 410); run a new validate dispatch; failing closed." >&2
+            exit 1
+          fi
+
+          downloaded_size="$(wc -c < "$zip_file" | tr -d '[:space:]')"
+          if [[ "$downloaded_size" != "$ARTIFACT_SIZE" ]]; then
+            echo "assertion: downloaded artifact size does not match GitHub metadata; run a new validate dispatch; failing closed." >&2
+            exit 1
+          fi
+          zip_digest="$(sha256sum "$zip_file" | awk '{print $1}')"
+          if [[ "$zip_digest" != "$ARTIFACT_DIGEST" ]]; then
+            echo "assertion: downloaded artifact ZIP digest does not match GitHub's digest; run a new validate dispatch; failing closed." >&2
+            exit 1
+          fi
+
+          extracted_dir="$(mktemp -d "$RUNNER_TEMP/validated-release-tarballs.XXXXXX")"
+          if ! python3 - "$zip_file" "$extracted_dir" "$CORE_TARBALL_BASE" "$CORE_VERSION" "$ADAPTER_TARBALL_BASE" "$PI_VERSION" <<'PY'
+          import os
+          import re
+          import shutil
+          import sys
+          import zipfile
+          from pathlib import Path
+
+          def fail(assertion):
+              print(f"assertion failed: {assertion}; failing closed.", file=sys.stderr)
+              raise SystemExit(2)
+
+          zip_path = Path(sys.argv[1])
+          destination = Path(sys.argv[2])
+          core_name = f"{sys.argv[3]}-{sys.argv[4]}.tgz"
+          adapter_name = f"{sys.argv[5]}-{sys.argv[6]}.tgz"
+          try:
+              with zipfile.ZipFile(zip_path) as zf:
+                  infos = zf.infolist()
+                  if len(infos) != 2:
+                      fail("ZIP has exactly two members")
+                  names = [info.filename for info in infos]
+                  if len(set(names)) != len(names):
+                      fail("ZIP member names are unique")
+                  for info in infos:
+                      name = info.filename
+                      if not isinstance(name, str) or not name:
+                          fail("ZIP member name is non-empty")
+                      if info.is_dir():
+                          fail("ZIP has no directory members")
+                      if "/" in name or "\\" in name:
+                          fail("ZIP member paths are flat")
+                      if os.path.isabs(name) or name.startswith("/") or re.match(r"^[A-Za-z]:", name):
+                          fail("ZIP member paths are not absolute")
+                      if ".." in name.split("/"):
+                          fail("ZIP member paths contain no .. component")
+                      if name != os.path.basename(name):
+                          fail("ZIP member name equals its basename")
+                      if not name.endswith(".tgz"):
+                          fail("ZIP members are .tgz files")
+                      mode = (info.external_attr >> 16) & 0o170000
+                      if mode == 0o120000:
+                          fail("ZIP member is not a symlink")
+                      if mode not in (0, 0o100000):
+                          fail("ZIP member has only regular-file mode bits")
+                  if names.count(core_name) != 1:
+                      fail("ZIP contains exactly one expected core tarball")
+                  if names.count(adapter_name) != 1:
+                      fail("ZIP contains exactly one expected adapter tarball")
+                  if any(destination.iterdir()):
+                      fail("ZIP extraction destination is fresh")
+                  for info in infos:
+                      member_name = os.path.basename(info.filename)
+                      target = destination / member_name
+                      with zf.open(info) as source, target.open("wb") as output:
+                          shutil.copyfileobj(source, output)
+          except zipfile.BadZipFile:
+              fail("ZIP is valid")
+          PY
+          then
+            echo "assertion: strict validated artifact ZIP inspection or extraction failed; run a new validate dispatch; failing closed." >&2
+            exit 1
+          fi
+
+          core_tarball="$extracted_dir/${CORE_TARBALL_BASE}-${CORE_VERSION}.tgz"
+          pi_tarball="$extracted_dir/${ADAPTER_TARBALL_BASE}-${PI_VERSION}.tgz"
+          if [[ ! -f "$core_tarball" || ! -f "$pi_tarball" ]]; then
+            echo "assertion: strict ZIP extraction did not produce both expected tarballs; run a new validate dispatch; failing closed." >&2
+            exit 1
+          fi
+
+          if ! python3 - "$core_tarball" "$pi_tarball" "$CORE_VERSION" "$PI_VERSION" "$CORE_PKG_NAME" "$ADAPTER_PKG_NAME" <<'PY'
           import json
           import sys
           import tarfile
@@ -1863,7 +2098,6 @@ jobs:
           pi_version = sys.argv[4]
           core_package_name = sys.argv[5]
           adapter_package_name = sys.argv[6]
-
           expected = {
               core_tarball: (core_package_name, core_version),
               pi_tarball: (adapter_package_name, pi_version),
@@ -1891,6 +2125,8 @@ jobs:
                       manifest = json.load(manifest_data)
                   except json.JSONDecodeError as error:
                       fail(f"{archive} has invalid package.json: {error}")
+                  if not isinstance(manifest, dict):
+                      fail(f"{archive} package manifest is not an object")
 
                   if manifest.get("name") != expected_name:
                       fail(f"{archive} has unexpected package name")
@@ -1918,13 +2154,19 @@ jobs:
 
               audits[archive] = (manifest, names)
 
+          core_manifest, core_names = audits[core_tarball]
           adapter_manifest, adapter_names = audits[pi_tarball]
+          if core_manifest.get("name") != core_package_name or core_manifest.get("version") != core_version:
+              fail("core tarball identification does not match the requested package")
+          if adapter_manifest.get("name") != adapter_package_name or adapter_manifest.get("version") != pi_version:
+              fail("adapter tarball identification does not match the requested package")
+
           dependencies = adapter_manifest.get("dependencies")
           if not isinstance(dependencies, dict):
               fail("adapter packed manifest has no dependencies object")
           dependency_text = json.dumps(dependencies, sort_keys=True)
-          if "workspace:" in dependency_text:
-              fail("adapter packed dependencies contain workspace:")
+          if any(marker in dependency_text for marker in ("workspace:", "file:", "link:")):
+              fail("adapter packed dependencies contain workspace:, file:, or link:")
           expected_dependency = f"^{core_version}"
           actual_dependency = dependencies.get(core_package_name)
           if actual_dependency != expected_dependency:
@@ -1944,8 +2186,13 @@ jobs:
               if not target_path or f"package/{target_path}" not in adapter_names:
                   fail(f"adapter pi.extensions target is missing: {target!r}")
 
-          print("Pre-publish artifacts passed manifest, contents, dependency, extension, and path audits.")
+          print("Validated release tarballs passed manifest, contents, dependency, extension, and path audits.")
           PY
+          then
+            echo "assertion: downloaded validated tarball audit failed; run a new validate dispatch; failing closed." >&2
+            exit 1
+          fi
+
           printf 'core_tarball=%s\n' "$core_tarball" >> "$GITHUB_OUTPUT"
           printf 'pi_tarball=%s\n' "$pi_tarball" >> "$GITHUB_OUTPUT"
 
@@ -1953,6 +2200,7 @@ jobs:
         id: registry_preflight
         env:
           CORE_VERSION: ${{ inputs.core_version }}
+          CORE_TARBALL: ${{ steps.validated_tarballs.outputs.core_tarball }}
           PI_VERSION: ${{ inputs.pi_version }}
           ALLOW_EXISTING_CORE: ${{ inputs.allow_existing_core }}
         shell: bash
@@ -2051,6 +2299,51 @@ jobs:
               raise SystemExit("Existing core repository does not identify j1nn0/agent-primitives.")
           print("Existing core identity and repository verified for partial recovery.")
           PY
+              core_integrity_file="$RUNNER_TEMP/core-registry-integrity"
+              core_integrity_error_file="$RUNNER_TEMP/core-registry-integrity.err"
+              rm -f "$core_integrity_file" "$core_integrity_error_file"
+              if ! npm view "$CORE_PKG_NAME@$CORE_VERSION" dist.integrity --json --prefer-online > "$core_integrity_file" 2> "$core_integrity_error_file"; then
+                echo "Existing core integrity could not be read; refusing partial recovery. Run a new validate dispatch and verify the registry before retrying." >&2
+                cat "$core_integrity_error_file" >&2
+                exit 1
+              fi
+              if ! validated_core_integrity="$(python3 - "$CORE_TARBALL" <<'PY'
+          import base64
+          import hashlib
+          import sys
+
+          digest = hashlib.sha512()
+          with open(sys.argv[1], "rb") as handle:
+              for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                  digest.update(chunk)
+          print("sha512-" + base64.b64encode(digest.digest()).decode("ascii"))
+          PY
+              )"; then
+                echo "assertion: validated core tarball SHA-512 integrity could not be computed; run a new validate dispatch; failing closed." >&2
+                exit 1
+              fi
+              if ! registry_core_integrity="$(python3 - "$core_integrity_file" <<'PY'
+          import json
+          import re
+          import sys
+
+          try:
+              with open(sys.argv[1], encoding="utf-8") as handle:
+                  value = json.load(handle)
+          except (OSError, json.JSONDecodeError):
+              raise SystemExit("registry core dist.integrity response is not valid JSON")
+          if not isinstance(value, str) or not re.fullmatch(r"sha512-[A-Za-z0-9+/]+=*", value):
+              raise SystemExit("registry core dist.integrity is missing or malformed")
+          print(value)
+          PY
+              )"; then
+                echo "assertion: registry core dist.integrity is missing or malformed; run a new validate dispatch; failing closed." >&2
+                exit 1
+              fi
+              if [[ "$registry_core_integrity" != "$validated_core_integrity" ]]; then
+                echo "assertion: registry core dist.integrity does not match the validated core tarball; refusing to publish the adapter. Run a new validate dispatch; failing closed." >&2
+                exit 1
+              fi
               printf 'publish_core=false\n' >> "$GITHUB_OUTPUT"
               printf 'publish_adapter=true\n' >> "$GITHUB_OUTPUT"
               echo "Registry state B: verified existing core; only the adapter will be published."
@@ -2086,7 +2379,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm publish "${{ steps.publish_artifacts.outputs.core_tarball }}" --access public --provenance
+          npm publish "${{ steps.validated_tarballs.outputs.core_tarball }}" --access public --provenance
 
       - name: Verify core on the registry before the adapter
         if: ${{ success() && steps.registry_preflight.outputs.publish_adapter == 'true' }}
@@ -2286,7 +2579,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm publish "${{ steps.publish_artifacts.outputs.pi_tarball }}" --access public --provenance
+          npm publish "${{ steps.validated_tarballs.outputs.pi_tarball }}" --access public --provenance
 
       - name: Verify Pi adapter on the registry
         if: ${{ success() && steps.registry_preflight.outputs.publish_adapter == 'true' }}

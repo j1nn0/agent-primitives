@@ -77,21 +77,34 @@ function runGuard(root) {
   });
 }
 
-const corePublishLine = '          npm publish "${{ steps.publish_artifacts.outputs.core_tarball }}" --access public --provenance';
+const corePublishLine = '          npm publish "${{ steps.validated_tarballs.outputs.core_tarball }}" --access public --provenance';
 const adapterPublishBlock = [
   '      - name: Publish Pi adapter',
   "        if: ${{ success() && steps.registry_preflight.outputs.publish_adapter == 'true' }}",
   '        shell: bash',
   '        run: |',
   '          set -euo pipefail',
-  '          npm publish "${{ steps.publish_artifacts.outputs.pi_tarball }}" --access public --provenance',
+  '          npm publish "${{ steps.validated_tarballs.outputs.pi_tarball }}" --access public --provenance',
   '',
   '',
 ].join('\n');
 
 const toolPolicyPackedSmokeStart = '      - name: Smoke-test Tool Policy packed artifacts in a fresh consumer';
-const toolPolicyPackedSmokeEnd = '\n\n  publish:';
+const toolPolicyPackedSmokeEnd = '\n\n      - name: Upload validated release tarballs';
 const toolPolicyPackedSmokeIf = "        if: ${{ steps.validate_reuse.outputs.reuse != 'true' && inputs.family == 'agent-tool-policy' }}\n";
+const uploadStepStart = '      - name: Upload validated release tarballs';
+const uploadStepEnd = '\n  publish:';
+const validatedTarballsStepStart = '      - name: Resolve, download, and audit validated release artifacts';
+const validatedTarballsStepEnd = '\n\n      - name: Registry preflight';
+const registryPreflightStepStart = '      - name: Registry preflight';
+const registryPreflightStepEnd = '\n\n      - name: Record Node and npm versions for trusted publishing';
+const validatedRunRequiredBlock = [
+  '            if [[ -z "$VALIDATED_RUN_ID" ]]; then',
+  '              echo "validated_run_id is required in publish mode." >&2',
+  '              exit 1',
+  '            fi',
+].join('\n') + '\n';
+const validateJobOutputBlock = '    outputs:\n      validated_run_attempt: ${{ steps.validate_reuse.outputs.run_attempt }}\n';
 const packageSetAssertLine = '          pnpm list -r --filter "$ADAPTER_PKG_NAME..." --depth -1 --json | node -e \'const fs=require("node:fs");const actual=JSON.parse(fs.readFileSync(0,"utf8")).map((entry)=>entry.name).sort();const expected=[process.env.CORE_PKG_NAME,process.env.ADAPTER_PKG_NAME].sort();if(actual.length!==expected.length||actual.some((name,index)=>name!==expected[index])){console.error("Family package set mismatch: "+JSON.stringify(actual)+" instead of "+JSON.stringify(expected));process.exit(1);}\'\n';
 const runExampleStep = [
   '      - name: Run example',
@@ -106,7 +119,7 @@ const runExampleStep = [
 ].join('\n') + '\n';
 const validatedRunInputBlock = [
   '      validated_run_id:',
-  "        description: 'Optional in publish mode: run ID of a successful validate-mode run for the same family, versions, and commit'",
+  "        description: 'Required in publish mode: run ID of a successful validate-mode run for the same family, versions, and commit'",
   '        required: false',
   "        default: ''",
   '        type: string',
@@ -229,8 +242,8 @@ const mutations = [
     mutate: (source) =>
       replaceRequired(
         source,
-        '          npm publish "${{ steps.publish_artifacts.outputs.pi_tarball }}" --access public --provenance',
-        '          npm publish "${{ steps.publish_artifacts.outputs.pi_tarball }}" --access public',
+        '          npm publish "${{ steps.validated_tarballs.outputs.pi_tarball }}" --access public --provenance',
+        '          npm publish "${{ steps.validated_tarballs.outputs.pi_tarball }}" --access public',
         'case B',
       ),
   },
@@ -691,31 +704,23 @@ const mutations = [
       ),
   },
   {
-    name: 'AT publish build reverts to repo-wide build',
+    name: 'AT publish job reintroduces a build step',
     mutate: (source) =>
-      replaceStep(
+      replaceRequired(
         source,
-        '  publish:\n',
-        '\n  registry-smoke:',
-        (job) =>
-          replaceRequired(
-            job,
-            `${packageSetAssertLine}          pnpm -r --filter "$ADAPTER_PKG_NAME..." run build`,
-            '          pnpm build',
-            'case AT',
-          ),
-        'case AT job',
+        '      - name: Resolve, download, and audit validated release artifacts\n',
+        '      - name: Build from a clean dist\n        run: pnpm build\n\n      - name: Resolve, download, and audit validated release artifacts\n',
+        'case AT',
       ),
   },
   {
-    name: 'AU publish build loses the package-set assertion',
+    name: 'AU publish job reintroduces dependency installation',
     mutate: (source) =>
-      replaceStep(
+      replaceRequired(
         source,
-        '  publish:\n',
-        '\n  registry-smoke:',
-        (job) => replaceRequired(job, packageSetAssertLine, '', 'case AU'),
-        'case AU job',
+        '      - name: Resolve, download, and audit validated release artifacts\n',
+        '      - name: Install dependencies\n        run: pnpm install --frozen-lockfile\n\n      - name: Resolve, download, and audit validated release artifacts\n',
+        'case AU',
       ),
   },
   {
@@ -848,6 +853,273 @@ const mutations = [
   {
     name: 'CJ CI preflight loses latest-run selection',
     mutate: (source) => replaceRequired(source, '              latest = max(candidates, key=lambda r: r.get("run_number", -1))\n', '', 'case CJ'),
+  },
+  {
+    name: 'CK validated artifact upload step is removed',
+    mutate: (source) => replaceStep(source, uploadStepStart, uploadStepEnd, () => '', 'case CK'),
+  },
+  {
+    name: 'CL validated artifact upload runs outside validate mode',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        uploadStepStart,
+        uploadStepEnd,
+        (step) => replaceUnique(step, "        if: ${{ inputs.mode == 'validate' }}", '        if: ${{ always() }}', 'case CL'),
+        'case CL step',
+      ),
+  },
+  {
+    name: 'CM validated artifact name loses the run-attempt suffix',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        uploadStepStart,
+        uploadStepEnd,
+        (step) => replaceUnique(step, '-attempt-${{ github.run_attempt }}', '', 'case CM'),
+        'case CM step',
+      ),
+  },
+  {
+    name: 'CN validated artifact upload enables overwrite',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        uploadStepStart,
+        uploadStepEnd,
+        (step) => replaceUnique(step, '          overwrite: false\n', '          overwrite: true\n', 'case CN'),
+        'case CN step',
+      ),
+  },
+  {
+    name: 'CO referenced-run required upload check is removed',
+    mutate: (source) => replaceRequired(source, '              "Upload validated release tarballs",\n', '', 'case CO'),
+  },
+  {
+    name: 'CP publish validated-artifact resolve step is removed',
+    mutate: (source) => replaceStep(source, validatedTarballsStepStart, validatedTarballsStepEnd, () => '', 'case CP'),
+  },
+  {
+    name: 'CQ publish artifact workflow-run ID binding is removed',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        validatedTarballsStepStart,
+        validatedTarballsStepEnd,
+        (step) => replaceRequired(step, '          if workflow_run["id"] != int(sys.argv[3]):\n', '', 'case CQ'),
+        'case CQ step',
+      ),
+  },
+  {
+    name: 'CR publish artifact head-SHA binding is removed',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        validatedTarballsStepStart,
+        validatedTarballsStepEnd,
+        (step) => replaceRequired(step, '          if workflow_run["head_sha"] != sys.argv[4]:\n', '', 'case CR'),
+        'case CR step',
+      ),
+  },
+  {
+    name: 'CS publish artifact list truncation check is removed',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        validatedTarballsStepStart,
+        validatedTarballsStepEnd,
+        (step) => replaceRequired(step, '          if not (total_count == len(artifacts)):\n', '', 'case CS'),
+        'case CS step',
+      ),
+  },
+  {
+    name: 'CT publish artifact expiration check is removed',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        validatedTarballsStepStart,
+        validatedTarballsStepEnd,
+        (step) => replaceRequired(step, '          if artifact["expired"] is not False:\n', '', 'case CT'),
+        'case CT step',
+      ),
+  },
+  {
+    name: 'CU publish artifact ZIP digest verification is removed',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        validatedTarballsStepStart,
+        validatedTarballsStepEnd,
+        (step) => replaceRequired(step, '          if [[ "$zip_digest" != "$ARTIFACT_DIGEST" ]]; then\n', '', 'case CU'),
+        'case CU step',
+      ),
+  },
+  {
+    name: 'CV publish strict ZIP validation is removed',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        validatedTarballsStepStart,
+        validatedTarballsStepEnd,
+        (step) => replaceUnique(step, '              with zipfile.ZipFile(zip_path) as zf:\n', '              with tarfile.ZipFile(zip_path) as zf:\n', 'case CV'),
+        'case CV step',
+      ),
+  },
+  {
+    name: 'CW publish ZIP allows an extra member',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        validatedTarballsStepStart,
+        validatedTarballsStepEnd,
+        (step) => replaceRequired(step, '                  if len(infos) != 2:\n', '', 'case CW'),
+        'case CW step',
+      ),
+  },
+  {
+    name: 'CX publish ZIP allows path traversal',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        validatedTarballsStepStart,
+        validatedTarballsStepEnd,
+        (step) => replaceRequired(step, '                      if ".." in name.split("/"):\n', '', 'case CX'),
+        'case CX step',
+      ),
+  },
+  {
+    name: 'CY publish ZIP allows symlinks',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        validatedTarballsStepStart,
+        validatedTarballsStepEnd,
+        (step) => replaceRequired(step, '                      if mode == 0o120000:\n', '', 'case CY'),
+        'case CY step',
+      ),
+  },
+  {
+    name: 'CZ publish downloaded-tarball audit is removed',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        validatedTarballsStepStart,
+        validatedTarballsStepEnd,
+        (step) => replaceRequired(step, '              with tarfile.open(archive, "r:gz") as tar:\n', '', 'case CZ'),
+        'case CZ step',
+      ),
+  },
+  {
+    name: 'DA publish job reintroduces a build step',
+    mutate: (source) =>
+      replaceRequired(
+        source,
+        `${validatedTarballsStepStart}\n`,
+        `      - name: Build from a clean dist\n        run: pnpm build\n\n${validatedTarballsStepStart}\n`,
+        'case DA',
+      ),
+  },
+  {
+    name: 'DB publish job reintroduces dependency installation',
+    mutate: (source) =>
+      replaceRequired(
+        source,
+        `${validatedTarballsStepStart}\n`,
+        `      - name: Install dependencies\n        run: pnpm install --frozen-lockfile\n\n${validatedTarballsStepStart}\n`,
+        'case DB',
+      ),
+  },
+  {
+    name: 'DC publish job reintroduces pnpm repacking',
+    mutate: (source) =>
+      replaceRequired(
+        source,
+        `${validatedTarballsStepStart}\n`,
+        `      - name: Repack validated artifacts\n        run: pnpm --filter "$CORE_PKG_NAME" pack\n\n${validatedTarballsStepStart}\n`,
+        'case DC',
+      ),
+  },
+  {
+    name: 'DD publish regresses to directory publication',
+    mutate: (source) =>
+      replaceRequired(
+        source,
+        corePublishLine,
+        '          npm publish "$CORE_PKG_DIR" --access public --provenance\n',
+        'case DD',
+      ),
+  },
+  {
+    name: 'DE publish core operand is not linked to the resolve step',
+    mutate: (source) =>
+      replaceRequired(
+        source,
+        corePublishLine,
+        '          npm publish "${{ steps.other.outputs.core_tarball }}" --access public --provenance\n',
+        'case DE',
+      ),
+  },
+  {
+    name: 'DF State B core integrity comparison is removed',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        registryPreflightStepStart,
+        registryPreflightStepEnd,
+        (step) => replaceRequired(step, '              if [[ "$registry_core_integrity" != "$validated_core_integrity" ]]; then\n', '', 'case DF'),
+        'case DF step',
+      ),
+  },
+  {
+    name: 'DG Registry State C and D definitions are swapped',
+    mutate: (source) =>
+      replaceUnique(
+        source,
+        "          elif [[ \"$core_exists\" == false && \"$adapter_exists\" == true ]]; then\n            state='C'\n",
+        "          elif [[ \"$core_exists\" == false && \"$adapter_exists\" == true ]]; then\n            state='D'\n",
+        'case DG',
+      ),
+  },
+  {
+    name: 'DH publish permissions are over-broadened',
+    mutate: (source) =>
+      replaceRequired(
+        source,
+        '  publish:\n    permissions:\n      actions: read\n      contents: read\n      id-token: write\n',
+        '  publish:\n    permissions:\n      actions: write\n      contents: read\n      id-token: write\n',
+        'case DH',
+      ),
+  },
+  {
+    name: 'DI core provenance verification moves after adapter publication',
+    mutate: (source) => {
+      const withoutAdapter = replaceRequired(source, adapterPublishBlock, '', 'case DI removal');
+      return replaceRequired(
+        withoutAdapter,
+        '      - name: Verify core provenance attestation before the adapter',
+        `${adapterPublishBlock}      - name: Verify core provenance attestation before the adapter`,
+        'case DI insertion',
+      );
+    },
+  },
+  {
+    name: 'DJ publish mode no longer requires a validated run ID',
+    mutate: (source) => replaceRequired(source, validatedRunRequiredBlock, '', 'case DJ'),
+  },
+  {
+    name: 'DK validated artifact retention is removed',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        uploadStepStart,
+        uploadStepEnd,
+        (step) => replaceRequired(step, '          retention-days: 90\n', '', 'case DK'),
+        'case DK step',
+      ),
+  },
+  {
+    name: 'DL validate run attempt output is removed',
+    mutate: (source) => replaceRequired(source, validateJobOutputBlock, '', 'case DL'),
   },
 ];
 

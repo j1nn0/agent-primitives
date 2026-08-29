@@ -402,12 +402,6 @@ function checkFamilyScopedValidation(document) {
   }
 
   const publishRecords = stepRecords(document, 'publish');
-  const publishBuildMatches = publishRecords.filter(({ step }) => isRecord(step) && step.name === 'Build from a clean dist');
-  if (publishBuildMatches.length !== 1) {
-    addViolation(`release.yml publish job must contain exactly one Build from a clean dist step; found ${publishBuildMatches.length}.`);
-  } else {
-    checkFamilyScopedStep(publishBuildMatches[0], 'publish', 'Build from a clean dist', 'build');
-  }
   for (const { step } of publishRecords) {
     if (!isRecord(step) || typeof step.run !== 'string') {
       continue;
@@ -513,6 +507,11 @@ function checkValidationReuse(document) {
   }
 
   const validateRecords = stepRecords(document, 'validate');
+  exactMapping(
+    document?.jobs?.validate?.outputs,
+    { validated_run_attempt: '${{ steps.validate_reuse.outputs.run_attempt }}' },
+    'release.yml validate outputs',
+  );
   const inputValidationName = 'Validate release inputs and manifests';
   const inputValidationMatches = validateRecords.filter(
     ({ step }) => isRecord(step) && step.name === inputValidationName,
@@ -525,6 +524,11 @@ function checkValidationReuse(document) {
       addViolation(`release.yml ${inputValidationName} step must have a string run script.`);
     } else {
       const modeGate = 'if [[ "$MODE" != "publish" ]]; then';
+      const publishModeGate = 'if [[ "$MODE" == "publish" ]]; then';
+      const requiredRunIdGate = 'if [[ -z "$VALIDATED_RUN_ID" ]]; then';
+      if (!inputValidationRun.includes(publishModeGate) || !inputValidationRun.includes(requiredRunIdGate)) {
+        addViolation(`release.yml ${inputValidationName} step must require a non-empty validated_run_id in publish mode.`);
+      }
       if (!inputValidationRun.includes('if [[ -n "$VALIDATED_RUN_ID" ]]; then') || !inputValidationRun.includes(modeGate)) {
         addViolation(`release.yml ${inputValidationName} step must reject validated_run_id outside publish mode.`);
       }
@@ -533,8 +537,16 @@ function checkValidationReuse(document) {
       }
       const confirmationPosition = inputValidationRun.indexOf('expected_confirmation');
       const modeGatePosition = inputValidationRun.indexOf(modeGate);
+      const publishModeGatePosition = inputValidationRun.indexOf(publishModeGate);
+      const requiredRunIdPosition = inputValidationRun.indexOf(requiredRunIdGate);
       if (confirmationPosition >= 0 && modeGatePosition <= confirmationPosition) {
         addViolation(`release.yml ${inputValidationName} validated_run_id checks must follow confirmation validation.`);
+      }
+      if (confirmationPosition >= 0 && requiredRunIdPosition <= confirmationPosition) {
+        addViolation(`release.yml ${inputValidationName} required validated_run_id check must follow confirmation validation.`);
+      }
+      if (requiredRunIdPosition >= 0 && publishModeGatePosition >= 0 && requiredRunIdPosition <= publishModeGatePosition) {
+        addViolation(`release.yml ${inputValidationName} required validated_run_id check must remain inside publish mode validation.`);
       }
     }
   }
@@ -556,6 +568,7 @@ function checkValidationReuse(document) {
       verifyStep.env,
       {
         VALIDATED_RUN_ID: '${{ inputs.validated_run_id }}',
+        MODE: '${{ inputs.mode }}',
         DISPATCH_SHA: '${{ github.sha }}',
         REPOSITORY: '${{ github.repository }}',
         CURRENT_RUN_NUMBER: '${{ github.run_number }}',
@@ -615,6 +628,17 @@ function checkValidationReuse(document) {
       ]) {
         if (!run.includes(marker)) {
           addViolation(`release.yml ${verifyName} step is missing the required marker ${marker}.`);
+        }
+      }
+
+      for (const marker of [
+        'if [[ "$MODE" == "publish" ]]; then',
+        'run a new validate dispatch',
+        "printf 'run_attempt=%s\\n' \"$RUN_ATTEMPT\" >> \"$GITHUB_OUTPUT\"",
+        '"Upload validated release tarballs"',
+      ]) {
+        if (!run.includes(marker)) {
+          addViolation(`release.yml ${verifyName} step is missing the required reuse-contract marker ${marker}.`);
         }
       }
 
@@ -768,7 +792,7 @@ function checkReleaseStructure(release) {
     exactMapping(jobs.validate?.permissions, { actions: 'read', contents: 'read' }, 'release.yml validate permissions');
     exactMapping(
       jobs.publish?.permissions,
-      { contents: 'read', 'id-token': 'write' },
+      { actions: 'read', contents: 'read', 'id-token': 'write' },
       'release.yml publish permissions',
     );
     exactMapping(
@@ -807,6 +831,9 @@ function checkReleaseStructure(release) {
   if (/\$\{\{[^}]*\bsecrets\b[^}]*\}\}/s.test(raw)) {
     addViolation('release.yml must not contain a secrets context reference.');
   }
+  if (/\boverwrite:\s*true\b/.test(raw)) {
+    addViolation('release.yml must not enable artifact overwrite.');
+  }
 
   const releaseSteps = stepRecords(document);
   const corePackage = '"$CORE_PKG_NAME"';
@@ -824,36 +851,292 @@ function checkReleaseStructure(release) {
     addViolation(`release.yml must contain a pnpm pack invocation filtered to ${adapterPackage}.`);
   }
 
-  const packOutputStepIds = releaseSteps
-    .filter(({ step }) => {
-      if (!isRecord(step) || typeof step.id !== 'string' || typeof step.run !== 'string') {
+  const publishRecords = stepRecords(document, 'publish');
+  const hasPnpmPackCommand = (run) =>
+    commandSegments(run).some((command) => {
+      if (!/^pnpm(?:\s|$)/.test(command)) {
         return false;
       }
-      return (
-        hasPnpmPackInvocation(step.run, corePackage) &&
-        hasPnpmPackInvocation(step.run, adapterPackage) &&
-        /\bcore_tarball=/.test(step.run) &&
-        /\bpi_tarball=/.test(step.run)
-      );
-    })
-    .map(({ step }) => step.id);
+      return command.split(/\s+/).includes('pack');
+    });
+  const publishPackRecords = publishRecords.filter(
+    ({ step }) => isRecord(step) && typeof step.run === 'string' && hasPnpmPackCommand(step.run),
+  );
+  if (publishPackRecords.length > 0) {
+    addViolation('release.yml publish job must not contain any pnpm pack invocation.');
+  }
+  for (const { step } of publishRecords) {
+    if (!isRecord(step)) {
+      continue;
+    }
+    if (step.name === 'Set up pnpm' || (typeof step.uses === 'string' && /^pnpm\/action-setup@/.test(step.uses))) {
+      addViolation('release.yml publish job must not set up pnpm.');
+    }
+    if (step.name === 'Build from a clean dist') {
+      addViolation('release.yml publish job must not contain Build from a clean dist.');
+    }
+    if (step.name === 'Set up Node.js' && isRecord(step.with) && hasOwn(step.with, 'cache')) {
+      addViolation('release.yml publish Set up Node.js step must not configure a package-manager cache.');
+    }
+    if (typeof step.run !== 'string') {
+      continue;
+    }
+    if (commandSegments(step.run).some((command) => /^pnpm(?:\s|$).*\binstall(?:\s|$)/.test(command))) {
+      addViolation('release.yml publish job must not run pnpm install.');
+    }
+    if (commandSegments(step.run).some((command) => /^pnpm(?:\s|$).*(?:\brun\s+build(?:\s|$)|\bbuild(?:\s|$))/.test(command))) {
+      addViolation('release.yml publish job must not run a pnpm build.');
+    }
+  }
 
-  const publishRecords = stepRecords(document, 'publish');
+  const coreTarballOutputMarker = "printf 'core_tarball=%s\\n' \"$core_tarball\" >> \"$GITHUB_OUTPUT\"";
+  const piTarballOutputMarker = "printf 'pi_tarball=%s\\n' \"$pi_tarball\" >> \"$GITHUB_OUTPUT\"";
+  const publishOutputRecords = publishRecords.filter(
+    ({ step }) =>
+      isRecord(step) &&
+      typeof step.run === 'string' &&
+      step.run.includes(coreTarballOutputMarker) &&
+      step.run.includes(piTarballOutputMarker) &&
+      !hasPnpmPackCommand(step.run),
+  );
+  if (publishOutputRecords.length !== 1) {
+    addViolation(`release.yml publish job must contain exactly one non-repacking tarball-output step; found ${publishOutputRecords.length}.`);
+  } else {
+    const outputStep = publishOutputRecords[0].step;
+    if (typeof outputStep.id !== 'string' || outputStep.id.length === 0) {
+      addViolation('release.yml publish tarball-output step must have an id.');
+    }
+    if (outputStep.id !== 'validated_tarballs') {
+      addViolation('release.yml publish tarball-output step must be validated_tarballs.');
+    }
+  }
+
+  const validateRecords = stepRecords(document, 'validate');
+  const auditName = 'Extract and audit release artifacts';
+  const auditMatches = validateRecords.filter(({ step }) => isRecord(step) && step.name === auditName);
+  let auditStepId;
+  if (auditMatches.length !== 1) {
+    addViolation(`release.yml validate job must contain exactly one ${auditName} step; found ${auditMatches.length}.`);
+  } else {
+    const auditStep = auditMatches[0].step;
+    if (auditStep.id !== 'validate_artifacts') {
+      addViolation(`release.yml ${auditName} step must have id validate_artifacts.`);
+    }
+    if (typeof auditStep.id === 'string') {
+      auditStepId = auditStep.id;
+    }
+    if (typeof auditStep.run !== 'string') {
+      addViolation(`release.yml ${auditName} step must have a string run script.`);
+    } else {
+      for (const marker of [
+        "printf 'core_tarball=%s\\n' \"$core_tarball\" >> \"$GITHUB_OUTPUT\"",
+        "printf 'pi_tarball=%s\\n' \"$pi_tarball\" >> \"$GITHUB_OUTPUT\"",
+      ]) {
+        if (!auditStep.run.includes(marker)) {
+          addViolation(`release.yml ${auditName} step must write ${marker} to GITHUB_OUTPUT.`);
+        }
+      }
+    }
+  }
+
+  const uploadName = 'Upload validated release tarballs';
+  const uploadMatches = validateRecords.filter(({ step }) => isRecord(step) && step.name === uploadName);
+  if (uploadMatches.length !== 1) {
+    addViolation(`release.yml validate job must contain exactly one ${uploadName} step; found ${uploadMatches.length}.`);
+  } else {
+    const uploadRecord = uploadMatches[0];
+    const uploadStep = uploadRecord.step;
+    if (uploadStep.if !== '${{ inputs.mode == \'validate\' }}') {
+      addViolation(`release.yml ${uploadName} step must run only in validate mode.`);
+    }
+    if (uploadStep.uses !== 'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a') {
+      addViolation(`release.yml ${uploadName} step must use the pinned upload-artifact action.`);
+    }
+    const uploadWith = uploadStep.with;
+    if (!isRecord(uploadWith)) {
+      addViolation(`release.yml ${uploadName} step must define its action inputs.`);
+    } else {
+      const expectedName = 'release-tarballs-${{ inputs.family }}-${{ inputs.core_version }}-${{ inputs.pi_version }}-${{ github.sha }}-attempt-${{ github.run_attempt }}';
+      if (uploadWith.name !== expectedName) {
+        addViolation(`release.yml ${uploadName} artifact name must include the workflow run attempt.`);
+      }
+      const expectedPath = auditStepId
+        ? [
+            `\${{ steps.${auditStepId}.outputs.core_tarball }}`,
+            `\${{ steps.${auditStepId}.outputs.pi_tarball }}`,
+          ]
+        : [];
+      const actualPath = typeof uploadWith.path === 'string'
+        ? uploadWith.path.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+        : [];
+      if (JSON.stringify(actualPath) !== JSON.stringify(expectedPath)) {
+        addViolation(`release.yml ${uploadName} path must contain exactly the audit step tarball outputs.`);
+      }
+      if (uploadWith['retention-days'] !== 90 || typeof uploadWith['retention-days'] !== 'number') {
+        addViolation(`release.yml ${uploadName} retention-days must be 90.`);
+      }
+      if (uploadWith['if-no-files-found'] !== 'error') {
+        addViolation(`release.yml ${uploadName} must fail when a tarball is missing.`);
+      }
+      if (uploadWith.overwrite !== false) {
+        addViolation(`release.yml ${uploadName} overwrite must be false.`);
+      }
+      if (uploadWith['include-hidden-files'] !== false) {
+        addViolation(`release.yml ${uploadName} include-hidden-files must be false.`);
+      }
+      for (const forbiddenInput of ['compression-level', 'archive']) {
+        if (hasOwn(uploadWith, forbiddenInput)) {
+          addViolation(`release.yml ${uploadName} must not override ${forbiddenInput}.`);
+        }
+      }
+    }
+    if (auditMatches.length === 1 && uploadRecord.index <= auditMatches[0].index) {
+      addViolation(`release.yml ${uploadName} must appear after ${auditName}.`);
+    }
+    for (const { index, step } of validateRecords) {
+      if (isRecord(step) && typeof step.name === 'string' && /^Smoke-test .* packed artifacts in a fresh consumer$/.test(step.name)) {
+        if (uploadRecord.index <= index) {
+          addViolation(`release.yml ${uploadName} must appear after every packed-artifact smoke step.`);
+        }
+      }
+    }
+  }
+
+  const resolveMatches = publishRecords.filter(({ step }) => isRecord(step) && step.id === 'validated_tarballs');
+  let resolvedStepId;
+  if (resolveMatches.length !== 1) {
+    addViolation(`release.yml publish job must contain exactly one validated_tarballs step; found ${resolveMatches.length}.`);
+  } else {
+    const resolveStep = resolveMatches[0].step;
+    resolvedStepId = resolveStep.id;
+    if (typeof resolveStep.run !== 'string') {
+      addViolation('release.yml validated_tarballs step must have a string run script.');
+    } else {
+      const resolveRun = resolveStep.run;
+      const expectedResolveEnvironment = {
+        GH_TOKEN: '${{ github.token }}',
+        REPOSITORY: '${{ github.repository }}',
+        VALIDATED_RUN_ID: '${{ inputs.validated_run_id }}',
+        VALIDATED_RUN_ATTEMPT: '${{ needs.validate.outputs.validated_run_attempt }}',
+        DISPATCH_SHA: '${{ github.sha }}',
+        CORE_VERSION: '${{ inputs.core_version }}',
+        PI_VERSION: '${{ inputs.pi_version }}',
+        FAMILY: '${{ inputs.family }}',
+      };
+      if (!isRecord(resolveStep.env)) {
+        addViolation('release.yml validated_tarballs step must define its artifact-resolution environment.');
+      } else {
+        for (const [key, expectedValue] of Object.entries(expectedResolveEnvironment)) {
+          if (resolveStep.env[key] !== expectedValue) {
+            addViolation(`release.yml validated_tarballs environment ${key} must be ${describe(expectedValue)}.`);
+          }
+        }
+      }
+      const requiredResolveMarkers = [
+        'set -euo pipefail',
+        '^[0-9]{1,19}$',
+        '^[0-9]{1,9}$',
+        '^[0-9a-f]{40}$',
+        'release-tarballs-${FAMILY}-${CORE_VERSION}-${PI_VERSION}-${DISPATCH_SHA}-attempt-${VALIDATED_RUN_ATTEMPT}',
+        'repos/${REPOSITORY}/actions/runs/${VALIDATED_RUN_ID}/artifacts?per_page=100',
+        'total_count == len(artifacts)',
+        'if not (total_count == len(artifacts)):',
+        'required_fields = {"id", "name", "expired", "digest", "size_in_bytes", "workflow_run"}',
+        'len(matches) != 1',
+        'artifact["expired"] is not False',
+        'sha256:[0-9a-f]{64}',
+        'workflow_run id == int(VALIDATED_RUN_ID)',
+        'workflow_run head_sha == DISPATCH_SHA',
+        'if workflow_run["id"] != int(sys.argv[3]):',
+        'if workflow_run["head_sha"] != sys.argv[4]:',
+        'ARTIFACT_ID=',
+        'ARTIFACT_DIGEST=',
+        'ARTIFACT_SIZE=',
+        '^ARTIFACT_ID=[0-9]+$',
+        '^ARTIFACT_DIGEST=[0-9a-f]{64}$',
+        '^ARTIFACT_SIZE=[1-9][0-9]*$',
+        'repos/${REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip',
+        '! -s "$zip_file"',
+        'ARTIFACT_SIZE',
+        'sha256sum "$zip_file"',
+        'zip_digest',
+        'if [[ "$zip_digest" != "$ARTIFACT_DIGEST" ]]; then',
+        'zipfile.ZipFile',
+        'zipfile.BadZipFile',
+        'len(infos) != 2',
+        'len(set(names)) != len(names)',
+        'info.is_dir()',
+        'os.path.isabs(name)',
+        're.match(r"^[A-Za-z]:", name)',
+        '".." in name.split("/")',
+        'os.path.basename(name)',
+        'name.endswith(".tgz")',
+        'info.external_attr >> 16',
+        '0o120000',
+        'if mode == 0o120000:',
+        'mode not in (0, 0o100000)',
+        'names.count(core_name) != 1',
+        'names.count(adapter_name) != 1',
+        'mktemp -d',
+        'zf.open(info)',
+        'tarfile.open',
+        'package/LICENSE',
+        'package/README.md',
+        'package/dist',
+        'package/src',
+        'forbidden_parts',
+        'name.endswith(".tgz")',
+        '"/home/"',
+        'workspace:',
+        'file:',
+        'link:',
+        'expected_dependency',
+        'pi_manifest',
+        'extensions',
+        'target_path',
+        "printf 'core_tarball=%s\\n' \"$core_tarball\" >> \"$GITHUB_OUTPUT\"",
+        "printf 'pi_tarball=%s\\n' \"$pi_tarball\" >> \"$GITHUB_OUTPUT\"",
+        'run a new validate dispatch',
+        'if not isinstance(artifact["expired"], bool):',
+        'or not name:',
+        'if "/" in name or',
+        'if [[ "$downloaded_size" != "$ARTIFACT_SIZE" ]]; then',
+        'destination.iterdir()',
+      ];
+      for (const marker of requiredResolveMarkers) {
+        if (!resolveRun.includes(marker)) {
+          addViolation(`release.yml validated_tarballs step is missing required artifact safety marker ${marker}.`);
+        }
+      }
+      if (/\bzf\.extract(?:all)?\s*\(/.test(resolveRun)) {
+        addViolation('release.yml validated_tarballs step must not use ZIP extract helpers.');
+      }
+    }
+  }
+
+  const reassertMatches = publishRecords.filter(({ step }) => isRecord(step) && step.name === 'Re-assert manifest versions');
+  if (reassertMatches.length !== 1) {
+    addViolation(`release.yml publish job must contain exactly one Re-assert manifest versions step; found ${reassertMatches.length}.`);
+  } else if (resolveMatches.length === 1 && resolveMatches[0].index !== reassertMatches[0].index + 1) {
+    addViolation('release.yml validated_tarballs step must immediately follow Re-assert manifest versions.');
+  }
+
   const publishInvocations = npmPublishInvocations(releaseSteps);
   const publishJobInvocations = npmPublishInvocations(publishRecords);
   if (publishInvocations.length !== 2) {
     addViolation(`release.yml must contain exactly two npm publish invocations; found ${publishInvocations.length}.`);
   }
-
-  const expectedOperands = [
-    new Set(packOutputStepIds.map((id) => `\${{ steps.${id}.outputs.core_tarball }}`)),
-    new Set(packOutputStepIds.map((id) => `\${{ steps.${id}.outputs.pi_tarball }}`)),
-  ];
+  const expectedOperands = resolvedStepId
+    ? [
+        new Set([`\${{ steps.${resolvedStepId}.outputs.core_tarball }}`]),
+        new Set([`\${{ steps.${resolvedStepId}.outputs.pi_tarball }}`]),
+      ]
+    : [new Set(), new Set()];
   publishInvocations.slice(0, 2).forEach((invocation, index) => {
     const packageLabel = index === 0 ? 'core' : 'adapter';
     if (!expectedOperands[index].has(invocation.operand)) {
       addViolation(
-        `release.yml ${packageLabel} npm publish must use the tarball output from its pnpm pack step, not a directory; found ${describe(invocation.operand)}.`,
+        `release.yml ${packageLabel} npm publish must use the validated tarball output, not a directory; found ${describe(invocation.operand)}.`,
       );
     }
     if (!/--access\s+public(?:\s|$)/.test(invocation.argumentsText)) {
@@ -863,6 +1146,55 @@ function checkReleaseStructure(release) {
       addViolation(`release.yml ${packageLabel} npm publish must pass --provenance.`);
     }
   });
+
+  const registryPreflightMatches = publishRecords.filter(({ step }) => isRecord(step) && step.name === 'Registry preflight');
+  if (registryPreflightMatches.length !== 1) {
+    addViolation(`release.yml publish job must contain exactly one Registry preflight step; found ${registryPreflightMatches.length}.`);
+  } else {
+    const registryStep = registryPreflightMatches[0].step;
+    if (!isRecord(registryStep.env) || registryStep.env.CORE_TARBALL !== '${{ steps.validated_tarballs.outputs.core_tarball }}') {
+      addViolation('release.yml Registry preflight must receive the validated core tarball path.');
+    }
+    if (typeof registryStep.run !== 'string') {
+      addViolation('release.yml Registry preflight step must have a string run script.');
+    } else {
+      const registryRun = registryStep.run;
+      const statePatterns = [
+        /if \[\[ "\$core_exists" == false && "\$adapter_exists" == false \]\]; then\s+state='A'/,
+        /elif \[\[ "\$core_exists" == true && "\$adapter_exists" == false \]\]; then\s+state='B'/,
+        /elif \[\[ "\$core_exists" == false && "\$adapter_exists" == true \]\]; then\s+state='C'/,
+        /else\s+state='D'/,
+      ];
+      for (const pattern of statePatterns) {
+        if (!pattern.test(registryRun)) {
+          addViolation('release.yml Registry preflight must retain the Registry State A/B/C/D definitions.');
+        }
+      }
+      const stateBStart = registryRun.indexOf('B)');
+      const stateBEnd = stateBStart >= 0 ? registryRun.indexOf('C)', stateBStart + 2) : -1;
+      const stateBRun = stateBStart >= 0 && stateBEnd >= 0 ? registryRun.slice(stateBStart, stateBEnd) : '';
+      const stateBMarkers = [
+        'npm view "$CORE_PKG_NAME@$CORE_VERSION" dist.integrity --json --prefer-online',
+        'python3 - "$CORE_TARBALL"',
+        'validated_core_integrity',
+        'hashlib.sha512()',
+        'base64.b64encode',
+        'registry_core_integrity',
+        'if [[ "$registry_core_integrity" != "$validated_core_integrity" ]]; then',
+        'refusing to publish the adapter',
+      ];
+      for (const marker of stateBMarkers) {
+        if (!stateBRun.includes(marker)) {
+          addViolation(`release.yml Registry preflight State B is missing the core integrity marker ${marker}.`);
+        }
+      }
+      const comparisonPosition = stateBRun.indexOf('if [[ "$registry_core_integrity" != "$validated_core_integrity" ]]; then');
+      const publishAdapterPosition = stateBRun.indexOf("printf 'publish_adapter=true\\n'");
+      if (comparisonPosition < 0 || publishAdapterPosition < 0 || comparisonPosition >= publishAdapterPosition) {
+        addViolation('release.yml Registry preflight State B must compare core integrity before enabling adapter publication.');
+      }
+    }
+  }
 
   const provenanceMarker = 'https://registry.npmjs.org/-/npm/v1/attestations/';
   const provenanceEscape = String.fromCharCode(92);

@@ -1,8 +1,8 @@
 # Release procedure
 
 The release workflow uses one guarded path for the package families listed below. It never bumps
-versions and it never publishes source directories: each release is packed with
-pnpm and the resulting tarballs are published with npm.
+versions and it never publishes source directories. Validate mode packs and audits the release
+tarballs; publish mode reuses those exact tarball bytes with npm.
 
 ## Package families
 
@@ -65,28 +65,38 @@ literal. It installs dependencies from the frozen lockfile, validates only the s
 family's core and Pi adapter for build, typecheck, test, and `check:package`, runs the
 family-specific root example script, retains repo-wide lint, and requires a successful
 CI run for the dispatched commit with a `push` event on `main` and the same SHA before
-proceeding, failing closed otherwise. It performs pnpm dry runs, audits both packed
-tarballs, and runs the selected family's fresh-consumer smoke. Validate mode always
-runs this inline validation and rejects a non-empty `validated_run_id`.
+proceeding, failing closed otherwise. It performs pnpm dry runs, packs and audits both
+release tarballs, and runs the selected family's fresh-consumer smoke. Only after all
+of those checks succeed, validate mode uploads the exact packed core and adapter
+`.tgz` files as the Actions artifact
+`release-tarballs-<family>-<core_version>-<pi_version>-<sha>-attempt-<run_attempt>`.
+The artifact is retained for 90 days with `overwrite` disabled. Validate mode rejects
+a non-empty `validated_run_id`.
 
-`publish` repeats the safety checks, reasserts the manifest versions, performs an
-anonymous registry preflight, and publishes only when the requested registry state is
-safe. Its validate job may skip duplicated validation only after a referenced validated
-run passes every reuse check; without that input it performs the full inline validation.
-The publish job then verifies the core on the registry and verifies its provenance before
-publishing the adapter. Finally it verifies the adapter and its provenance, and the
-anonymous `registry-smoke` job exercises both packages.
+`publish` requires a non-empty `validated_run_id` and the exact confirmation literal.
+It repeats the safety checks, reasserts the manifest versions, and performs an
+anonymous registry preflight. The publish job downloads and verifies exactly the
+attempt-specific artifact from that validated run, re-audits both downloaded tarballs,
+and publishes those exact bytes. It does not install dependencies, build, or pack.
+A missing, deleted, expired (including HTTP 410), or otherwise inaccessible artifact
+hard-fails the release; the operator must run a new validate dispatch. The publish job
+then verifies the core on the registry and verifies its provenance before publishing
+the adapter. Finally it verifies the adapter and its provenance, and the anonymous
+`registry-smoke` job exercises both packages.
 
 ### Validated-run reuse
 
-In `publish` mode, the operator may pass `validated_run_id` for an earlier successful
+In `publish` mode, the operator must pass `validated_run_id` for an earlier successful
 validate-mode run of the same workflow, commit, family, and requested versions. The
 workflow verifies the reference through the Actions API: the same SHA on `main`, the
 `release.yml` `workflow_dispatch` workflow, successful completion, an older run number,
-validate-mode job states, every required validation step, and the selected family's
-smoke binding. It skips duplicated validation steps only after full verification succeeds;
-an empty input keeps full inline validation, and any anomaly hard-fails. Validate mode
-rejects the input. No artifacts or tarballs are reused (Phase 2).
+the exact run attempt, validate-mode job states, every required validation step,
+`Upload validated release tarballs` as a successful step on that attempt, and the
+selected family's smoke binding. It then recomputes the attempt-specific artifact
+name, requires exactly one unexpired artifact bound to that run ID and head SHA,
+re-verifies GitHub's artifact SHA-256 digest locally, validates the ZIP strictly,
+and audits both extracted tarballs. Any anomaly hard-fails; there is no inline-
+validation fallback in publish mode. Validate mode rejects the input.
 
 The CI preflight exits immediately on a terminal non-success CI conclusion; queued or
 in-progress runs continue through the existing bounded polling window.
@@ -100,9 +110,11 @@ The release path is tokenless Trusted Publishing only:
 - no `secrets.*` expression; and
 - no token-authenticated `.npmrc` or fallback authentication.
 
-The workflow uses job-level `contents: read` permissions everywhere, with
-`id-token: write` only on `publish`. It declares no GitHub Actions
-`environment:`. Do not add a token or an environment to the release path.
+The workflow uses `contents: read` permissions globally. The `validate` job uses
+`actions: read` plus `contents: read`; `publish` uses `actions: read`, `contents: read`,
+and `id-token: write`; and `registry-smoke` uses `contents: read`. It declares no
+GitHub Actions `environment:`. Do not add `NPM_TOKEN`, `NODE_AUTH_TOKEN`, a
+`secrets.*` reference, or an environment to the release path.
 
 Trusted Publishing cannot perform the first publish of a package that does not
 exist on the npm registry, so a new package must first be published once by a
@@ -144,20 +156,39 @@ subsequent Trusted Publishing releases.
 
 ## Ordering and artifact integrity
 
-For any family, the required order is:
+For any family, validate mode first packs the core and adapter tarballs with pnpm,
+audits them, and runs the selected packed-consumer smoke. It then uploads those exact
+files under an attempt-specific Actions artifact name. Publish mode resolves that
+artifact from the referenced validated run, verifies its run binding, SHA, size, and
+GitHub-managed ZIP digest, strictly validates and extracts its two flat `.tgz` members,
+and performs the full publish-side audit. It passes the extracted paths directly to
+`npm publish`:
 
-1. pack the core and adapter tarballs with pnpm;
-2. publish the core tarball with `npm publish --access public --provenance`;
-3. verify the core registry manifest and provenance;
-4. publish the adapter tarball with the same flags; and
-5. verify the adapter registry manifest and provenance.
+1. publish the validated core tarball with `npm publish --access public --provenance`;
+2. verify the core registry manifest and provenance;
+3. publish the validated adapter tarball with the same flags; and
+4. verify the adapter registry manifest and provenance.
 
 The adapter is never published before its core. The packed audits require the
-expected name and version, `LICENSE`, `README.md`, `dist/`, and (for the adapter)
-`pi.extensions` targets. They reject workspace dependencies, forbidden test and
-benchmark paths, `.git`, `.npmrc`, nested tarballs, absolute `/home/` paths, and
-`/home/` in file contents. The adapter dependency must be exactly `^<core_version>`
-after pnpm rewrites `workspace:^` during packing.
+expected name and version, `LICENSE`, `README.md`, `dist/`, and `src/` (and, for the
+adapter, `pi.extensions` targets). They reject workspace, `file:`, and `link:`
+dependencies, forbidden test and benchmark paths, `.git`, `.npmrc`, nested tarballs,
+absolute `/home/` paths, and `/home/` in file contents. The adapter dependency must
+be exactly `^<core_version>` after pnpm rewrites `workspace:^` during packing.
+
+The provenance meaning is composed rather than implied by npm alone:
+
+```text
+Phase 1b validated_run_id + run_attempt verification
+  → GitHub artifact bound to that run id and head SHA
+  → GitHub-managed artifact SHA-256 digest re-verified locally
+  → the downloaded exact validated .tgz
+  → publish-side full tarball audit
+  → npm provenance: published tarball subject digest + publishing workflow/source identity
+```
+
+npm provenance contributes only the last link (what was published, and by which
+workflow and source); the earlier links tie those bytes back to the validated run.
 
 Each provenance response must contain the npm publish predicate and SLSA v1. The
 SLSA statement must identify:
@@ -179,7 +210,12 @@ The publish preflight refuses to republish an existing version. It also refuses
 an inconsistent state where the adapter exists but the core does not. If the
 core exists and the adapter does not, the default is to stop; use
 `allow_existing_core=true` only after an explicit decision to verify the existing
-core and publish the missing adapter.
+core and publish the missing adapter. State B additionally requires the registry
+core's `dist.integrity`, read with
+`npm view <core>@<version> dist.integrity --json --prefer-online`, to equal the
+`sha512-` plus base64 SHA-512 integrity of the validated core tarball downloaded by
+the publish job. Missing, malformed, or mismatching integrity hard-fails before the
+adapter can be published.
 
 Inspect the public registry before re-dispatching after a timeout. Registry and
 attestation reads use bounded retries because new releases can take time to
@@ -188,10 +224,12 @@ propagate.
 ## Required sequence
 
 1. Dispatch the selected family in `validate` mode from `main` and wait for the
-   complete validation job to pass.
+   complete validation job, including the packed-consumer smoke and artifact upload,
+   to pass. Record that run's ID and attempt.
 2. Dispatch the same family and versions in `publish` mode with the exact
-   family-aware confirmation literal.
-3. Let the workflow finish its core publication, core registry/provenance checks,
-   adapter publication, adapter checks, and anonymous registry smoke.
+   family-aware confirmation literal and the validated run ID.
+3. Let the workflow resolve and verify the exact artifact, finish its core publication,
+   core registry/provenance checks, adapter publication, adapter checks, and anonymous
+   registry smoke.
 
 After any required first-publish bootstrap, no manual publish, tag, GitHub Release, or version bump is part of the normal release procedure.
