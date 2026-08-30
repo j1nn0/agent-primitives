@@ -109,6 +109,21 @@ function stepRecords(document, jobName) {
   }
   return records;
 }
+function checkGhApiAuthentication(document) {
+  const expectedToken = '${{ github.token }}';
+  for (const { jobName, index, step } of stepRecords(document)) {
+    if (!isRecord(step) || typeof step.run !== 'string' || !step.run.includes('gh api')) {
+      continue;
+    }
+
+    if (!isRecord(step.env) || step.env.GH_TOKEN !== expectedToken) {
+      const stepLabel = typeof step.name === 'string' ? step.name : `${jobName} step ${index + 1}`;
+      addViolation(
+        `release.yml ${stepLabel} invokes gh api and must define GH_TOKEN as ${describe(expectedToken)}.`,
+      );
+    }
+  }
+}
 
 function collectUses(value, path = [], references = []) {
   if (Array.isArray(value)) {
@@ -667,6 +682,7 @@ function checkValidationReuse(document) {
     exactMapping(
       verifyStep.env,
       {
+        GH_TOKEN: '${{ github.token }}',
         VALIDATED_RUN_ID: '${{ inputs.validated_run_id }}',
         MODE: '${{ inputs.mode }}',
         DISPATCH_SHA: '${{ github.sha }}',
@@ -1402,6 +1418,7 @@ const ci = workflows.get('ci.yml');
 
 if (release) {
   checkReleaseStructure(release);
+  checkGhApiAuthentication(release.document);
   checkActionPins('release.yml', release.raw, release.document);
   checkSetupNodeRegistryUrl('release.yml', release.document);
 }

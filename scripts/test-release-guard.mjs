@@ -1284,6 +1284,23 @@ const mutations = [
         'case DV',
       ),
   },
+  {
+    name: 'DW Verify the referenced validated run loses GH_TOKEN',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        validationReuseStepStart,
+        validationReuseStepEnd,
+        (step) =>
+          replaceRequired(
+            step,
+            '          GH_TOKEN: ${{ github.token }}\n',
+            '          GH_TOK3N: ${{ github.token }}\n',
+            'case DW',
+          ),
+        'case DW step',
+      ),
+  },
 ];
 
 const positiveMutations = [
