@@ -78,6 +78,20 @@ function runGuard(root) {
 }
 
 const corePublishLine = '          npm publish "${{ steps.validated_tarballs.outputs.core_tarball }}" --access public --provenance';
+const stateBDigestComparisonBlock = [
+  '              if subject_digest.get("sha512") != tarball_sha512:',
+  '                  raise SystemExit(',
+  '                      "State B core provenance subject sha512 mismatch: "',
+  "                      f\"expected {tarball_sha512!r}, actual {subject_digest.get('sha512')!r}\"",
+  '                  )',
+].join('\n') + '\n';
+const stateBSubjectNameComparisonBlock = [
+  '              if subject.get("name") != expected_subject_name:',
+  '                  raise SystemExit(',
+  '                      f"State B core provenance subject name mismatch: expected {expected_subject_name!r}, "',
+  "                      f\"actual {subject.get('name')!r}\"",
+  '                  )',
+].join('\n') + '\n';
 const adapterPublishBlock = [
   '      - name: Publish Pi adapter',
   "        if: ${{ success() && steps.registry_preflight.outputs.publish_adapter == 'true' }}",
@@ -1319,7 +1333,7 @@ const mutations = [
       ),
   },
   {
-    name: 'DY core provenance State B tarball digest binding is removed',
+    name: 'DY core provenance State B tarball digest calculation representation changed',
     mutate: (source) =>
       replaceStep(
         source,
@@ -1333,6 +1347,28 @@ const mutations = [
             'case DY',
           ),
         'case DY step',
+      ),
+  },
+  {
+    name: 'DZ core provenance State B subject digest comparison is removed',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        '      - name: Verify core provenance attestation before the adapter',
+        '      - name: Publish Pi adapter',
+        (step) => replaceRequired(step, stateBDigestComparisonBlock, '', 'case DZ'),
+        'case DZ step',
+      ),
+  },
+  {
+    name: 'EA core provenance State B subject name comparison is removed',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        '      - name: Verify core provenance attestation before the adapter',
+        '      - name: Publish Pi adapter',
+        (step) => replaceRequired(step, stateBSubjectNameComparisonBlock, '', 'case EA'),
+        'case EA step',
       ),
   }
 ];

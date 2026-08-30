@@ -306,6 +306,21 @@ function checkProvenanceIdentityStep({ step }, packageLabel) {
         'release.yml core provenance verification step must compute a tarball SHA-512 hexdigest for State B subject binding.'
       );
     }
+    if (!run.includes('subject_digest.get("sha512") != tarball_sha512')) {
+      addViolation(
+        'release.yml core provenance verification step must compare the State B subject SHA-512 with the validated tarball digest.'
+      );
+    }
+    if (!run.includes('State B core provenance subject sha512 mismatch')) {
+      addViolation(
+        'release.yml core provenance verification step must fail closed on a State B subject SHA-512 mismatch.'
+      );
+    }
+    if (!run.includes('subject.get("name") != expected_subject_name')) {
+      addViolation(
+        'release.yml core provenance verification step must compare the State B subject name.'
+      );
+    }
   }
 }
 
