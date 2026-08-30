@@ -1,5 +1,3 @@
-/* global console */
-
 import { SessionManager } from '@earendil-works/pi-coding-agent';
 import {
   fauxAssistantMessage,
@@ -19,6 +17,8 @@ import {
 } from '../runner.mjs';
 
 const PACKET_ID = 'b1-packet-1';
+const PACKET_GOAL =
+  'Prove real-harness handoff execution and state persistence.';
 
 function latestToolResult(session, toolName) {
   return toolResultMessages(session)
@@ -26,78 +26,114 @@ function latestToolResult(session, toolName) {
     .at(-1);
 }
 
-async function runResumeProbe({ isolation, envelope, registerCleanup, check }) {
-  const resumeManager = SessionManager.inMemory(isolation.workDir);
-  resumeManager.appendCustomEntry('agent-handoff-state', envelope);
-
-  const probe = await createIsolatedSession({
+async function runFileBackedResume({ isolation, registerCleanup, check }) {
+  const sessionA = await createIsolatedSession({
     isolation,
+    storage: 'file',
+    additionalExtensionPaths: [HANDOFF_EXTENSION_PATH],
+    expectedExtensionPath: HANDOFF_EXTENSION_PATH,
+  });
+  let sessionADisposed = false;
+  const disposeSessionA = () => {
+    if (!sessionADisposed) {
+      sessionA.session.dispose();
+      sessionADisposed = true;
+    }
+  };
+  registerCleanup(disposeSessionA);
+
+  check(sessionA.assertSessionStorage(), 'resume Session A is file-backed');
+  const h1Events = await runScriptedTurn(
+    sessionA,
+    'Create the requested handoff packet for the resume round-trip.',
+    [
+      fauxAssistantMessage([
+        fauxText('Creating the requested handoff packet.'),
+        fauxToolCall('agent_handoff_create', {
+          schemaVersion: 1,
+          id: PACKET_ID,
+          source: 'real-harness-b1-resume',
+          goal: PACKET_GOAL,
+        }),
+      ]),
+      fauxAssistantMessage(fauxText('Handoff packet created.')),
+    ],
+  );
+  const sessionFile = sessionA.sessionFile;
+  const stateEntry = stateEntriesFor(
+    sessionA.sessionManager,
+    'agent-handoff-state',
+  ).at(-1);
+  const envelope = stateEntry?.data;
+  const packet = envelope?.packets?.find((candidate) => candidate?.id === PACKET_ID);
+  check(
+    typeof sessionFile === 'string',
+    'resume Session A exposed its file path',
+  );
+  check(
+    envelope?.schemaVersion === 1 && packet?.id === PACKET_ID,
+    'resume Session A H1 persisted a structured handoff envelope',
+  );
+  check(
+    h1Events.some(
+      (event) =>
+        event.type === 'tool_execution_start' &&
+        event.toolName === 'agent_handoff_create',
+    ),
+    'resume Session A captured the real agent_handoff_create tool call',
+  );
+  sessionA.assertNoPendingFauxResponses();
+  sessionA.assertFauxNetworkIdentity();
+
+  if (typeof sessionFile !== 'string' || envelope === undefined) {
+    return false;
+  }
+  disposeSessionA();
+
+  const resumeManager = SessionManager.open(sessionFile);
+  const sessionB = await createIsolatedSession({
+    isolation,
+    storage: 'file',
     sessionManager: resumeManager,
     additionalExtensionPaths: [HANDOFF_EXTENSION_PATH],
     expectedExtensionPath: HANDOFF_EXTENSION_PATH,
   });
-  registerCleanup(() => probe.session.dispose());
+  registerCleanup(() => sessionB.session.dispose());
+  check(sessionB.assertSessionStorage(), 'resume Session B is file-backed');
+  check(
+    sessionB.sessionFile === sessionFile,
+    'resume Session B reopened Session A file',
+  );
 
-  const probeResponses = [
-    fauxAssistantMessage(fauxToolCall('agent_handoff_get', {})),
-    fauxAssistantMessage(fauxText('Resume probe complete.')),
-  ];
   await runScriptedTurn(
-    probe,
+    sessionB,
     'Read the reconstructed handoff packets.',
-    probeResponses,
+    [
+      fauxAssistantMessage(fauxToolCall('agent_handoff_get', {})),
+      fauxAssistantMessage(fauxText('Resume round-trip complete.')),
+    ],
   );
-  const probeAResult = latestToolResult(probe.session, 'agent_handoff_get');
-  const probeAVisible =
-    probeAResult !== undefined && messageText(probeAResult).includes(PACKET_ID);
-  probe.assertNoPendingFauxResponses();
-  probe.assertFauxNetworkIdentity();
-
-  if (probeAVisible) {
-    check(true, 'resume probe A reconstructed the captured handoff state');
-    probe.assertNoPendingFauxResponses();
-    probe.assertFauxNetworkIdentity();
-    check(probe.session.sessionFile === undefined, 'resume probe stayed in-memory');
-    return 'supported';
-  }
-
-  const publicMethods = Object.getOwnPropertyNames(
-    Object.getPrototypeOf(resumeManager),
-  ).filter((name) => name !== 'constructor' && !name.startsWith('_'));
-  console.log(
-    `  resume probe public SessionManager surface: ${publicMethods.join(', ')}`,
+  const probeResult = latestToolResult(sessionB.session, 'agent_handoff_get');
+  const probeOutput =
+    probeResult === undefined ? '' : messageText(probeResult);
+  check(
+    probeResult !== undefined &&
+      probeOutput.includes(PACKET_ID) &&
+      probeOutput.includes(PACKET_GOAL),
+    'resume Session B returned the reconstructed packet id and content',
   );
-  console.log(
-    '  resume probe: trying public AgentSession.reload() as the only alternate path',
+  const resumedStateEntry = stateEntriesFor(
+    sessionB.sessionManager,
+    'agent-handoff-state',
+  ).at(-1);
+  check(
+    resumedStateEntry?.data !== undefined &&
+      JSON.stringify(resumedStateEntry.data) === JSON.stringify(envelope),
+    'resume Session B newest handoff envelope matches Session A',
   );
-
-  try {
-    await probe.session.reload();
-  } catch (error) {
-    console.error(
-      '  resume probe public reload failed:',
-      error instanceof Error ? error.message : 'unknown error',
-    );
-    return 'unsupported';
-  }
-
-  await runScriptedTurn(
-    probe,
-    'Read the reconstructed handoff packets after reload.',
-    probeResponses,
-  );
-  const probeBResult = latestToolResult(probe.session, 'agent_handoff_get');
-  const probeBVisible =
-    probeBResult !== undefined && messageText(probeBResult).includes(PACKET_ID);
-  probe.assertNoPendingFauxResponses();
-  probe.assertFauxNetworkIdentity();
-  check(probe.session.sessionFile === undefined, 'resume probe stayed in-memory');
-
-  if (probeBVisible) {
-    check(true, 'resume probe B reconstructed the captured handoff state');
-    return 'supported';
-  }
-  return 'unsupported';
+  sessionB.assertNoPendingFauxResponses();
+  sessionB.assertFauxNetworkIdentity();
+  return true;
 }
 
 export const name = 'agent-handoff-pi';
@@ -174,8 +210,7 @@ export async function run(cleanup = createCleanupRegistry()) {
       check(false, 'H1 produced a state envelope for the resume probe');
       return { status: 'fail', reason: 'H1 did not produce a persisted state envelope' };
     }
-    check(true, 'H1 produced a state envelope for the resume probe');
-    const capturedEnvelope = capturedStateEntry.data;
+    check(true, 'H1 produced a structured state envelope');
 
     await runScriptedTurn(
       primary,
@@ -230,27 +265,17 @@ export async function run(cleanup = createCleanupRegistry()) {
       return { status: 'fail', reason: 'handoff assertions failed' };
     }
 
-    const resumeStatus = await runResumeProbe({
+    const resumeVerified = await runFileBackedResume({
       isolation,
-      envelope: capturedEnvelope,
       registerCleanup,
       check,
     });
-    if (resumeStatus === 'supported') {
-      return {
-        status: result.status,
-        reason:
-          result.status === 'pass'
-            ? 'resume: SUPPORTED'
-            : 'resume: SUPPORTED; handoff assertions failed',
-      };
-    }
-    if (result.status === 'fail') {
+    if (result.status === 'fail' || !resumeVerified) {
       return { status: 'fail', reason: 'handoff assertions failed' };
     }
     return {
       status: 'pass',
-      reason: 'resume: NOT REPRESENTABLE WITH CURRENT PUBLIC SDK',
+      reason: 'file-backed resume round-trip verified',
     };
   } finally {
     await cleanupAll();

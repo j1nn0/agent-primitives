@@ -14,6 +14,7 @@ import {
   makeIsolation,
   messageText,
   runScriptedTurn,
+  stateEntriesFor,
   toolResultMessages,
 } from '../runner.mjs';
 
@@ -35,6 +36,9 @@ const POLICY_APPROVAL = {
   deny: [],
   requiresApproval: ['spike_echo'],
 };
+
+const CORRUPT_BLOCK_REASON =
+  'policy configuration is invalid or corrupted; tool call blocked.';
 
 function createEchoTool(invocations) {
   return {
@@ -136,43 +140,89 @@ async function runConfiguredCase({
 async function runCorruptStateProbe({ invocations, registerCleanup, check }) {
   const isolation = makeIsolation();
   registerCleanup(isolation.cleanup);
-  const sessionManager = SessionManager.inMemory(isolation.workDir);
-  sessionManager.appendCustomEntry('agent-tool-policy-state', {
-    schemaVersion: 999,
-    policy: POLICY_ALLOW,
-  });
 
-  const harness = await createIsolatedSession({
+  const sessionA = await createIsolatedSession({
     isolation,
-    sessionManager,
+    storage: 'file',
     additionalExtensionPaths: [TOOL_POLICY_EXTENSION_PATH],
     expectedExtensionPath: TOOL_POLICY_EXTENSION_PATH,
     customTools: [createEchoTool(invocations)],
   });
-  registerCleanup(() => harness.session.dispose());
+  let sessionADisposed = false;
+  const disposeSessionA = () => {
+    if (!sessionADisposed) {
+      sessionA.session.dispose();
+      sessionADisposed = true;
+    }
+  };
+  registerCleanup(disposeSessionA);
+  check(sessionA.assertSessionStorage(), 'P5 Session A is file-backed');
+
+  await runScriptedTurn(
+    sessionA,
+    'Warm up the file-backed tool-policy session.',
+    [fauxAssistantMessage(fauxText('Warm-up complete.'))],
+  );
+  sessionA.assertNoPendingFauxResponses();
+  sessionA.assertFauxNetworkIdentity();
+
+  sessionA.sessionManager.appendCustomEntry('agent-tool-policy-state', {
+    schemaVersion: 999,
+    policy: {
+      default: 'allow',
+      allow: [],
+      deny: [],
+      requiresApproval: [],
+    },
+  });
+  const sessionFile = sessionA.sessionFile;
+  const corruptEntry = stateEntriesFor(
+    sessionA.sessionManager,
+    'agent-tool-policy-state',
+  ).at(-1);
   check(
-    harness.session.sessionFile === undefined,
-    'P5 corrupt-state probe stayed in-memory',
+    typeof sessionFile === 'string',
+    'P5 Session A exposed its flushed session file',
+  );
+  check(
+    corruptEntry?.data?.schemaVersion === 999,
+    'P5 appended a semantically invalid adapter state entry',
+  );
+  if (typeof sessionFile !== 'string') {
+    return false;
+  }
+  disposeSessionA();
+
+  const resumeManager = SessionManager.open(sessionFile);
+  const sessionB = await createIsolatedSession({
+    isolation,
+    storage: 'file',
+    sessionManager: resumeManager,
+    additionalExtensionPaths: [TOOL_POLICY_EXTENSION_PATH],
+    expectedExtensionPath: TOOL_POLICY_EXTENSION_PATH,
+    customTools: [createEchoTool(invocations)],
+  });
+  registerCleanup(() => sessionB.session.dispose());
+  check(sessionB.assertSessionStorage(), 'P5 Session B is file-backed');
+  check(
+    sessionB.sessionFile === sessionFile,
+    'P5 Session B reopened Session A file',
   );
 
-  await runScriptedToolTurn(harness);
-  const toolResult = latestToolResult(harness.session, 'spike_echo');
+  await runScriptedToolTurn(sessionB);
+  const toolResult = latestToolResult(sessionB.session, 'spike_echo');
   const output = toolResult === undefined ? '' : messageText(toolResult);
-  const corruptReason = 'policy configuration is invalid or corrupted';
-  const blocked = output.includes('tool call blocked');
-  check(invocations.length === 0, 'P5 corrupt-state probe kept spike_echo blocked');
-  harness.assertNoPendingFauxResponses();
-  harness.assertFauxNetworkIdentity();
-
-  if (output.includes(corruptReason)) {
-    check(true, 'P5 corrupt-state reason surfaced from the real runtime');
-    return 'supported';
-  }
-  if (!blocked) {
-    check(false, 'P5 corrupt-state probe failed closed without a block reason');
-    return 'failed';
-  }
-  return 'unsupported';
+  check(
+    invocations.length === 0,
+    'P5 corrupt-state fail-closed never executed spike_echo',
+  );
+  check(
+    toolResult !== undefined && output.includes(CORRUPT_BLOCK_REASON),
+    `P5 corrupt-state surfaced the exact block reason: ${CORRUPT_BLOCK_REASON}`,
+  );
+  sessionB.assertNoPendingFauxResponses();
+  sessionB.assertFauxNetworkIdentity();
+  return true;
 }
 
 export const name = 'agent-tool-policy-pi';
@@ -227,18 +277,18 @@ export async function run(cleanup = createCleanupRegistry()) {
     });
     invocations.length = 0;
 
-    const corruptStateStatus = await runCorruptStateProbe({
+    const corruptStateVerified = await runCorruptStateProbe({
       invocations,
       registerCleanup,
       check,
     });
-    if (result.status === 'fail' || corruptStateStatus === 'failed') {
+    if (result.status === 'fail' || !corruptStateVerified) {
       return { status: 'fail', reason: 'tool-policy assertions failed' };
     }
-    if (corruptStateStatus === 'supported') {
-      return { status: 'pass', reason: 'corrupt-state: SUPPORTED' };
-    }
-    return { status: 'pass', reason: 'corrupt-state: FAKE-ONLY' };
+    return {
+      status: 'pass',
+      reason: 'file-backed corrupt-state fail-closed verified',
+    };
   } finally {
     await cleanupAll();
   }

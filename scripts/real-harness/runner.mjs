@@ -10,7 +10,7 @@ import {
   statSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import {
   DefaultResourceLoader,
@@ -349,6 +349,7 @@ export function createCheck() {
 
 export async function createIsolatedSession({
   isolation,
+  storage = 'memory',
   additionalExtensionPaths = [],
   expectedExtensionPath,
   customTools = [],
@@ -357,6 +358,9 @@ export async function createIsolatedSession({
 }) {
   if (isolation === undefined) {
     throw new Error('real-harness isolation is required');
+  }
+  if (storage !== 'memory' && storage !== 'file') {
+    throw new Error(`real-harness storage mode is invalid: ${storage}`);
   }
   if (typeof expectedExtensionPath !== 'string') {
     throw new Error('real-harness expectedExtensionPath is required');
@@ -371,8 +375,16 @@ export async function createIsolatedSession({
       compaction: { enabled: false },
       retry: { enabled: false },
     });
-  const sessionManager =
-    suppliedSessionManager ?? SessionManager.inMemory(isolation.workDir);
+  let sessionManager = suppliedSessionManager;
+  if (sessionManager === undefined) {
+    if (storage === 'file') {
+      const sessionDir = join(isolation.base, 'sessions');
+      mkdirSync(sessionDir, { recursive: true });
+      sessionManager = SessionManager.create(isolation.workDir, sessionDir);
+    } else {
+      sessionManager = SessionManager.inMemory(isolation.workDir);
+    }
+  }
   const authPath = join(isolation.agentDir, 'auth.json');
   const modelRuntime = await ModelRuntime.create({
     authPath,
@@ -408,16 +420,50 @@ export async function createIsolatedSession({
     customTools,
   });
 
+  const assertSessionStorage = () => {
+    if (storage === 'memory') {
+      if (session.sessionFile !== undefined) {
+        throw new Error('in-memory session contract failed: session file was created');
+      }
+      return true;
+    }
+
+    if (typeof session.sessionFile !== 'string') {
+      throw new Error('file-backed session contract failed: session file was not created');
+    }
+    if (
+      typeof sessionManager.isPersisted !== 'function' ||
+      !sessionManager.isPersisted()
+    ) {
+      throw new Error('file-backed session contract failed: session manager is not persisted');
+    }
+    const relativeSessionFile = relative(
+      resolve(isolation.base),
+      resolve(session.sessionFile),
+    );
+    if (
+      relativeSessionFile === '' ||
+      relativeSessionFile === '..' ||
+      relativeSessionFile.startsWith(`..${sep}`) ||
+      isAbsolute(relativeSessionFile)
+    ) {
+      throw new Error(
+        `file-backed session contract failed: session file is outside isolation base (${session.sessionFile})`,
+      );
+    }
+    return true;
+  };
+
   try {
     assertExtensionLoaderContract(extensionsResult, expectedExtensionPath);
-    if (session.sessionFile !== undefined) {
-      throw new Error('in-memory session contract failed: session file was created');
-    }
+    assertSessionStorage();
+    await session.bindExtensions({});
   } catch (error) {
     session.dispose();
     throw error;
   }
 
+  const sessionFile = session.sessionFile;
   const events = [];
   session.subscribe((event) => {
     events.push(event);
@@ -500,11 +546,14 @@ export async function createIsolatedSession({
     faux,
     session,
     sessionManager,
+    sessionFile,
+    storage,
     events,
     extensionsResult,
     armAgentEndWaiter,
     assertNoPendingFauxResponses,
     assertInMemorySession,
+    assertSessionStorage,
     assertFauxNetworkIdentity,
     assertNoAuthCredentials,
     authPath,
