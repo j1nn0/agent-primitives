@@ -13,6 +13,8 @@ import type {
 export const STATE_CUSTOM_TYPE = 'agent-retry-state';
 export const ADAPTER_SCHEMA_VERSION = 1 as const;
 
+export const AUTO_RECORD_CUSTOM_TYPE = 'agent-retry-auto-record';
+
 export interface RetryState {
   readonly attempts: readonly RetryAttempt[];
   readonly policy: RetryPolicy;
@@ -213,6 +215,46 @@ export function loadState(
     ctx.ui.notify(INVALID_STATE_WARNING, 'warning');
     return createEmptyState();
   }
+}
+
+export function loadAutoRecordEnabled(
+  ctx: Pick<ExtensionContext, 'sessionManager'>,
+): boolean {
+  try {
+    const latestAutoRecordEntry = ctx.sessionManager
+      .getBranch()
+      .filter(
+        (entry) =>
+          entry.type === 'custom' && entry.customType === AUTO_RECORD_CUSTOM_TYPE,
+      )
+      .at(-1);
+
+    if (latestAutoRecordEntry === undefined || latestAutoRecordEntry.type !== 'custom') {
+      return false;
+    }
+
+    const data = latestAutoRecordEntry.data;
+    return (
+      isPlainRecord(data) &&
+      hasOnlyKeys(data, ['schemaVersion', 'enabled']) &&
+      hasOwn(data, 'schemaVersion') &&
+      data.schemaVersion === ADAPTER_SCHEMA_VERSION &&
+      hasOwn(data, 'enabled') &&
+      data.enabled === true
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function persistAutoRecordEnabled(
+  pi: Pick<ExtensionAPI, 'appendEntry'>,
+  enabled: boolean,
+): void {
+  pi.appendEntry(AUTO_RECORD_CUSTOM_TYPE, {
+    schemaVersion: ADAPTER_SCHEMA_VERSION,
+    enabled,
+  });
 }
 
 export function saveState(

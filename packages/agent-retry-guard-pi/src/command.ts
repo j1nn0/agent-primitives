@@ -4,6 +4,8 @@ import type {
 } from '@earendil-works/pi-coding-agent';
 import { formatRetryPolicy, formatRetryState, formatRetryVerdict } from './display.js';
 import {
+  AUTO_RECORD_DISABLED_MESSAGE,
+  AUTO_RECORD_ENABLED_MESSAGE,
   confirmationRequiredMessage,
   formatRetryError,
   NOTIFICATION_PREFIX,
@@ -19,6 +21,11 @@ import {
 } from './state.js';
 
 export const COMMAND_NAME = 'agent-retry';
+
+type AutoRecordController = {
+  readonly replaceEnabled: (enabled: boolean) => void;
+  readonly persist: (enabled: boolean) => void;
+};
 
 function notify(
   ctx: ExtensionCommandContext,
@@ -199,11 +206,28 @@ function clearCurrent(
   notify(ctx, `${NOTIFICATION_PREFIX}cleared attempts and policy.`);
 }
 
+function configureAutoRecord(
+  ctx: ExtensionCommandContext,
+  controller: AutoRecordController,
+  arguments_: readonly string[],
+): void {
+  const mode = arguments_[0];
+  if (arguments_.length !== 1 || (mode !== 'on' && mode !== 'off')) {
+    notify(ctx, USAGE, 'warning');
+    return;
+  }
+
+  const enabled = mode === 'on';
+  controller.replaceEnabled(enabled);
+  controller.persist(enabled);
+  notify(ctx, enabled ? AUTO_RECORD_ENABLED_MESSAGE : AUTO_RECORD_DISABLED_MESSAGE);
+}
 
 function handleCommand(
   args: string,
   ctx: ExtensionCommandContext,
   controller: StateController,
+  autoRecordController: AutoRecordController,
 ): void {
   const tokens = parseTokens(args);
   if (tokens === undefined) {
@@ -260,6 +284,9 @@ function handleCommand(
         arguments_.length === 1 && arguments_[0] === '--yes',
       );
       return;
+    case 'auto-record':
+      configureAutoRecord(ctx, autoRecordController, arguments_);
+      return;
     default:
       notify(ctx, USAGE, 'warning');
   }
@@ -268,11 +295,12 @@ function handleCommand(
 export function registerAgentRetryCommand(
   pi: ExtensionAPI,
   controller: StateController,
+  autoRecordController: AutoRecordController,
 ): void {
   pi.registerCommand(COMMAND_NAME, {
     description: 'Record and judge caller-declared retry attempts.',
     handler: async (args, ctx): Promise<void> => {
-      handleCommand(args, ctx, controller);
+      handleCommand(args, ctx, controller, autoRecordController);
     },
   });
 }

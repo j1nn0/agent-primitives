@@ -54,6 +54,7 @@ The extension registers exactly one command namespace, `/agent-retry`. A bare co
 /agent-retry judge
 /agent-retry clear
 /agent-retry clear --yes
+/agent-retry auto-record on|off
 ```
 
 For example:
@@ -73,6 +74,8 @@ For example:
 `judge` explicitly delegates to `judgeRetry(...)` and displays the complete verdict JSON with a short reading. `clear` requires `--yes`; without confirmation it warns and does nothing. `/agent-retry clear --yes` fully resets both the attempts and policy and records that reset.
 
 Starting the next episode is intentionally a model- or caller-owned lifecycle operation exposed by `agent_retry_start_episode`, not an automatic command-side transition.
+
+`auto-record on|off` opts the current session into or out of automatic failure-outcome recording. It is off by default. The setting is persisted in the session file, so reopening that session resumes the mode; a new session starts with it off. When enabled, each actually-executed tool that fails contributes exactly one `{ outcome: 'failure' }` attempt with no strategy identifier. Calls that never execute, including blocked or unknown tools, do not trigger this path. Manual `add` and `agent_retry_add_attempt` remain available; in auto mode, avoid declaring the same failure manually as well. Tool names, inputs, outputs, and error stacks are never persisted.
 
 ## Tools
 
@@ -102,7 +105,7 @@ An attempt is a caller-declared observation about one retry effort. Its outcome 
 'success' | 'failure' | 'no_progress' | 'unknown'
 ```
 
-The adapter does not infer an outcome from a model response, tool result, prompt, or any other event. A declared `success` is accepted as a claim at this boundary; another component may use a different boundary to verify it.
+The adapter does not infer a manually declared outcome from a model response, tool result, prompt, or any other event. Automatic failure recording is a separate opt-in mode that records only the observed failure outcome of an actually-executed failed tool.
 
 ## Strategy identifier responsibility
 
@@ -133,7 +136,7 @@ State is persisted as a Pi custom session entry with custom type `agent-retry-st
 }
 ```
 
-Only raw attempts and policy are stored. Derived verdict fields are never written. The adapter appends entries after a successful add, an actual policy replacement, a confirmed `clear --yes`, or `agent_retry_start_episode` when attempts existed. Loading never appends.
+Only raw attempts and policy are stored in the retry-state envelope. Derived verdict fields are never written. The adapter appends entries after a successful add, an actual policy replacement, a confirmed `clear --yes`, or `agent_retry_start_episode` when attempts existed. Loading never appends. The automatic-recording setting is stored separately as an `agent-retry-auto-record` entry with `{ schemaVersion: 1, enabled: boolean }`; it never changes the main envelope.
 
 On `session_start`, the adapter selects the newest matching entry in the current Pi branch and validates the envelope strictly. A malformed newest entry produces exactly one warning and starts fresh; it is not repaired, and an older valid entry is not used as a fallback. A branch without a matching entry starts fresh without a warning. JSON round-trip resume, including absent `strategyId` properties and policy preservation across an episode restart, is tested against Pi `0.84.x` behavior. There is no cross-session history beyond Pi's own session entries.
 
@@ -151,7 +154,7 @@ Declared outcomes are trusted as caller claims for Retry Guard judgment and are 
 
 ## No automatic retry
 
-This package does not execute retries, choose or generate strategies, observe model responses, infer outcomes, inject context, call providers or models, make network calls, or maintain background resources. It is an explicit recording and judgment adapter only.
+This package does not execute retries, choose or generate strategies, observe model responses, inject context, call providers or models, make network calls, or maintain background resources. By default it records only caller-declared attempts and judgments; with `auto-record on`, it additionally records the Pi runtime's observed `isError: true` result for each executed failed tool, without selecting a strategy or retrying.
 
 ## Coexistence with the other Pi adapters
 
@@ -159,7 +162,8 @@ This adapter can be loaded alongside `@j1nn0/agent-context-guard-pi`, `@j1nn0/ag
 
 - command: `/agent-retry`;
 - tools: `agent_retry_get`, `agent_retry_add_attempt`, `agent_retry_set_policy`, `agent_retry_judge`, and `agent_retry_start_episode`; and
-- session entry type: `agent-retry-state`.
+- session entry type: `agent-retry-state`;
+- automatic-recording marker type: `agent-retry-auto-record`.
 
 The other adapters use `/context-guard`, `/agent-state`, and `/agent-progress`, their own tool namespaces, and `agent-context-guard-state`, `agent-state-state`, and `agent-progress-state` custom types. This package has no dependency on their adapters or state and does not map or merge their entries.
 

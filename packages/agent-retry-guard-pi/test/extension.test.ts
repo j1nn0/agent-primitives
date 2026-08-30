@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentToolResult } from '@earendil-works/pi-coding-agent';
 import { COMMAND_NAME } from '../src/command.js';
+import { shouldAutoRecord } from '../src/extension.js';
 import { formatRetryState } from '../src/display.js';
 import {
   ADAPTER_SCHEMA_VERSION,
+  AUTO_RECORD_CUSTOM_TYPE,
   STATE_CUSTOM_TYPE,
 } from '../src/state.js';
 import { TOOL_NAMES } from '../src/tools.js';
@@ -33,6 +35,30 @@ function lastAppended(harness: FakePiHarness): {
 
 function customEntry(data: unknown): unknown {
   return { type: 'custom', customType: STATE_CUSTOM_TYPE, data };
+}
+
+function autoRecordEntry(data: unknown): unknown {
+  return { type: 'custom', customType: AUTO_RECORD_CUSTOM_TYPE, data };
+}
+
+function toolResultPayload(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    type: 'tool_result',
+    toolCallId: 'test-call',
+    input: {},
+    content: [{ type: 'text', text: 'tool failed' }],
+    isError: true,
+    toolName: 'external_tool',
+    ...overrides,
+  };
+}
+
+function latestStateData(harness: FakePiHarness): unknown {
+  return harness.appendedEntries
+    .filter((entry) => entry.customType === STATE_CUSTOM_TYPE)
+    .at(-1)?.data;
 }
 
 function payload(
@@ -70,13 +96,13 @@ async function add(
 }
 
 describe('Agent Retry Guard Pi registration and commands', () => {
-  it('registers exactly one command, five tools, and one lifecycle handler', () => {
+  it('registers exactly one command, five tools, and two lifecycle handlers', () => {
     const harness = new FakePiHarness();
 
     expect([...harness.commands.keys()]).toEqual([COMMAND_NAME]);
     expect([...harness.tools.keys()]).toEqual(TOOL_NAMES);
     expect(harness.tools.size).toBe(5);
-    expect([...harness.handlers.keys()]).toEqual(['session_start']);
+    expect([...harness.handlers.keys()]).toEqual(['session_start', 'tool_result']);
     expect([...harness.tools.values()].map((tool) => tool.label)).toEqual([
       'Agent Retry Guard: get',
       'Agent Retry Guard: add attempt',
@@ -591,6 +617,7 @@ describe('Agent Retry Guard Pi coexistence and zero automatic behavior', () => {
       STATE_CUSTOM_TYPE,
       'agent-progress-state',
       'agent-state-state',
+      AUTO_RECORD_CUSTOM_TYPE,
       CONTEXT_STATE_CUSTOM_TYPE,
     ];
     const allTools = [
@@ -604,6 +631,7 @@ describe('Agent Retry Guard Pi coexistence and zero automatic behavior', () => {
     expect(new Set(allTools).size).toBe(allTools.length);
     expect(COMMAND_NAME).toBe('agent-retry');
     expect(STATE_CUSTOM_TYPE).toBe('agent-retry-state');
+    expect(AUTO_RECORD_CUSTOM_TYPE).toBe('agent-retry-auto-record');
     expect(TOOL_NAMES.every((name) => !name.startsWith('agent_progress_'))).toBe(true);
     expect(TOOL_NAMES.every((name) => !name.startsWith('agent_state_'))).toBe(true);
   });
@@ -614,5 +642,145 @@ describe('Agent Retry Guard Pi coexistence and zero automatic behavior', () => {
     await harness.start();
     expect(harness.appendedEntries).toHaveLength(0);
     expect(harness.notifications).toHaveLength(0);
+  });
+});
+
+describe('Agent Retry Guard Pi automatic failure recording', () => {
+  it('is off by default and ignores a failed tool result', async () => {
+    const harness = new FakePiHarness();
+    await harness.start();
+
+    await harness.invoke('tool_result', toolResultPayload());
+
+    expect(latestStateData(harness)).toBeUndefined();
+    expect(harness.appendedEntries).toHaveLength(0);
+    expect(text(await harness.executeTool('agent_retry_get'))).toContain(
+      '0 attempts recorded',
+    );
+  });
+
+  it('records one failure through the existing state path when enabled', async () => {
+    const harness = new FakePiHarness();
+    await harness.start();
+    await harness.command('auto-record on');
+
+    expect(harness.notifications.at(-1)).toEqual({
+      message:
+        'Agent Retry Guard: automatic failure recording enabled for this session.',
+      type: 'info',
+    });
+    expect(harness.appendedEntries.at(-1)).toEqual({
+      customType: AUTO_RECORD_CUSTOM_TYPE,
+      data: { schemaVersion: ADAPTER_SCHEMA_VERSION, enabled: true },
+    });
+
+    await harness.invoke('tool_result', toolResultPayload());
+
+    expect(latestStateData(harness)).toEqual({
+      schemaVersion: ADAPTER_SCHEMA_VERSION,
+      attempts: [{ outcome: 'failure' }],
+      policy: {},
+    });
+  });
+
+  it('does not record successful tool results while enabled', async () => {
+    const harness = new FakePiHarness();
+    await harness.start();
+    await harness.command('auto-record on');
+    const before = harness.appendedEntries.length;
+
+    await harness.invoke(
+      'tool_result',
+      toolResultPayload({ isError: false }),
+    );
+
+    expect(harness.appendedEntries).toHaveLength(before);
+    expect(latestStateData(harness)).toBeUndefined();
+  });
+
+  it('does not record blocked calls that never emit tool_result', async () => {
+    const harness = new FakePiHarness();
+    await harness.start();
+    await harness.command('auto-record on');
+
+    expect(
+      shouldAutoRecord(
+        true,
+        toolResultPayload({ type: 'tool_execution_end' }),
+      ),
+    ).toBe(false);
+    expect(harness.appendedEntries).toHaveLength(1);
+    expect(latestStateData(harness)).toBeUndefined();
+  });
+
+  it('stops recording after auto-record is disabled', async () => {
+    const harness = new FakePiHarness();
+    await harness.start();
+    await harness.command('auto-record on');
+    await harness.command('auto-record off');
+
+    expect(harness.notifications.at(-1)).toEqual({
+      message:
+        'Agent Retry Guard: automatic failure recording disabled for this session.',
+      type: 'info',
+    });
+    await harness.invoke('tool_result', toolResultPayload());
+
+    expect(latestStateData(harness)).toBeUndefined();
+    expect(harness.appendedEntries).toHaveLength(2);
+  });
+
+  it('does not auto-record the guard tools themselves', async () => {
+    const harness = new FakePiHarness();
+    await harness.start();
+    await harness.command('auto-record on');
+
+    await harness.invoke(
+      'tool_result',
+      toolResultPayload({ toolName: 'agent_retry_add_attempt' }),
+    );
+
+    expect(latestStateData(harness)).toBeUndefined();
+    expect(harness.appendedEntries).toHaveLength(1);
+  });
+
+  it('fails closed when the newest auto-record marker is malformed', async () => {
+    const harness = new FakePiHarness([
+      autoRecordEntry({ schemaVersion: ADAPTER_SCHEMA_VERSION, enabled: true }),
+      autoRecordEntry({ schemaVersion: ADAPTER_SCHEMA_VERSION, enabled: 'yes' }),
+    ]);
+    await harness.start('malformed-marker');
+
+    await harness.invoke('tool_result', toolResultPayload());
+
+    expect(latestStateData(harness)).toBeUndefined();
+    expect(harness.appendedEntries).toHaveLength(0);
+  });
+
+  it('resumes the enabled flag from a separate session entry', async () => {
+    const harness = new FakePiHarness([
+      autoRecordEntry({ schemaVersion: ADAPTER_SCHEMA_VERSION, enabled: true }),
+    ]);
+    await harness.start('resume');
+
+    await harness.invoke('tool_result', toolResultPayload());
+
+    expect(latestStateData(harness)).toEqual({
+      schemaVersion: ADAPTER_SCHEMA_VERSION,
+      attempts: [{ outcome: 'failure' }],
+      policy: {},
+    });
+  });
+
+  it('returns undefined and does not mutate the emitted tool result', async () => {
+    const harness = new FakePiHarness();
+    await harness.start();
+    await harness.command('auto-record on');
+    const event = toolResultPayload();
+    const before = structuredClone(event);
+
+    await expect(harness.invoke('tool_result', event)).resolves.toBeUndefined();
+
+    expect(event).toEqual(before);
   });
 });
