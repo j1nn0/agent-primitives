@@ -87,7 +87,7 @@ describe('Agent Handoff Pi registration and namespaces', () => {
     ).toBe(true);
   });
 
-  it('uses namespaces distinct from all four existing adapters', () => {
+  it('uses namespaces distinct from the other adapters\' namespaces', () => {
     const existingCommands = new Set(['agent-evidence', 'agent-state', 'agent-progress', 'agent-retry']);
     expect(existingCommands.has(COMMAND_NAME)).toBe(false);
 

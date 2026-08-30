@@ -133,7 +133,7 @@ The adapter does not know whether a packet is complete, safe to act on, or wheth
 
 ## Coexistence with the other Pi adapters
 
-This adapter can be loaded alongside the four existing adapters plus context-guard-pi. It uses independent namespaces:
+This adapter can be loaded alongside the other Pi adapters in this repository. It uses independent namespaces:
 
 | Adapter | Command | Tools | Session entry |
 | --- | --- | --- | --- |

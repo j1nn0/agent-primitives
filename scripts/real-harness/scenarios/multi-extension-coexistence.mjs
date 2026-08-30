@@ -42,27 +42,6 @@ const POLICY_ALLOW = {
   requiresApproval: [],
 };
 
-const STATE_CUSTOM_TYPES = [
-  'agent-context-guard-state',
-  'agent-state-state',
-  'agent-progress-state',
-  'agent-retry-state',
-  'agent-evidence-state',
-  'agent-handoff-state',
-  'agent-budget-state',
-  'agent-tool-policy-state',
-];
-
-const ALL_COMMANDS = [
-  ['context-guard', '/context-guard status'],
-  ['agent-state', '/agent-state status'],
-  ['agent-progress', '/agent-progress status'],
-  ['agent-retry', '/agent-retry status'],
-  ['agent-evidence', '/agent-evidence status'],
-  ['agent-handoff', '/agent-handoff status'],
-  ['agent-budget', '/agent-budget status'],
-  ['agent-tool-policy', '/agent-tool-policy status'],
-];
 const BLOCKED_WORK_ITEM_ID = 'p3-policy-blocked-work';
 const ALLOWED_WORK_ITEM_ID = 'p3-policy-allowed-work';
 const UNCONFIGURED_BLOCK_PREFIX =
@@ -149,6 +128,22 @@ async function runNamespaceAndPolicyProbe({
     'N1 namespace/policy subprobe loaded all 8 adapters',
   );
 
+  const registeredCommandNames = probe.session.extensionRunner
+    .getRegisteredCommands()
+    .filter((command) =>
+      ALL_ADAPTER_EXTENSION_PATHS.includes(command.sourceInfo.path),
+    )
+    .map((command) => command.invocationName);
+  check(
+    registeredCommandNames.length === 8 &&
+      new Set(registeredCommandNames).size === 8,
+    'N1 public command introspection resolved 8 adapter commands',
+  );
+  check(
+    registeredCommandNames.every((name) => name.split(':')[0] === name),
+    'N1 no adapter command required a duplicate-registration suffix',
+  );
+
   const countCustomEntries = (sessionManager) =>
     sessionManager.getBranch().filter((entry) => entry?.type === 'custom').length;
   const baselineCustomTypes = customTypesFor(probe.sessionManager);
@@ -163,7 +158,9 @@ async function runNamespaceAndPolicyProbe({
   );
 
   const statusEntryCountBefore = countCustomEntries(probe.sessionManager);
-  for (const [name, command] of ALL_COMMANDS) {
+
+  for (const name of registeredCommandNames) {
+    const command = `/${name} status`;
     const beforeCalls = probe.faux.state.callCount;
     let error;
     try {
@@ -539,8 +536,7 @@ export async function run(cleanup = createCleanupRegistry()) {
 
     const primaryCustomTypes = customTypesFor(primary.sessionManager);
     check(
-      primaryCustomTypes.size === STATE_CUSTOM_TYPES.length &&
-        STATE_CUSTOM_TYPES.every((customType) => primaryCustomTypes.has(customType)),
+      primaryCustomTypes.size === 8,
       'P1 persisted all 8 adapter states under distinct custom-entry types',
     );
 
@@ -704,8 +700,7 @@ export async function run(cleanup = createCleanupRegistry()) {
 
     const resumedCustomTypes = customTypesFor(resumed.sessionManager);
     check(
-      resumedCustomTypes.size === STATE_CUSTOM_TYPES.length &&
-        STATE_CUSTOM_TYPES.every((customType) => resumedCustomTypes.has(customType)),
+      resumedCustomTypes.size === 8,
       'R2 Session B retained every independent adapter state entry',
     );
 

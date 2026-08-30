@@ -182,7 +182,7 @@ describe('Agent Evidence Pi registration and namespaces', () => {
     );
   });
 
-  it('uses namespaces distinct from all four existing adapters', () => {
+  it('uses namespaces distinct from the other adapters\' namespaces', () => {
     const existingCommands = new Set([
       'context-guard',
       'agent-state',

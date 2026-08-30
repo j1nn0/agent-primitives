@@ -172,7 +172,7 @@ This package does not retry work, choose a retry strategy, declare task completi
 
 ## Coexistence with the other Pi adapters
 
-This adapter can be loaded alongside the four existing adapters. It uses independent namespaces:
+This adapter can be loaded alongside the other Pi adapters in this repository. It uses independent namespaces:
 
 | Adapter | Command | Tools | Session entry |
 | --- | --- | --- | --- |
