@@ -8,7 +8,7 @@
 
 `@j1nn0/agent-retry-guard` is the harness-agnostic core primitive. **Every retry judgment comes from its `judgeRetry(...)` function.** The adapter only records the caller-declared attempts and policy, builds the core input, formats the returned verdict, and persists raw inputs. It never reimplements streak or strategy-run logic and never persists derived values such as `consecutiveFailures`, `consecutiveNoProgress`, `strategyRun`, or `retryAllowed`.
 
-The adapter is tested against `@earendil-works/pi-coding-agent` `0.84.2`. Its Pi peer dependency intentionally remains wide.
+The adapter is tested against `@earendil-works/pi-coding-agent` `0.84.4`. Its Pi peer dependency intentionally remains wide.
 
 ## Installation
 

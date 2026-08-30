@@ -9,7 +9,7 @@
 
 `@j1nn0/agent-progress` is the harness-agnostic core primitive. **All progress judgment comes from its `judgeProgress(...)` function.** The adapter never compares milestone sets itself and never implements a second progress policy. It only maintains the caller-declared current set and cumulative baseline, builds the core input with the correct missing-baseline semantics, displays the returned verdict, and persists state.
 
-The adapter is tested against Pi `0.84.2`. Its Pi peer dependency intentionally remains wide.
+The adapter is tested against Pi `0.84.4`. Its Pi peer dependency intentionally remains wide.
 
 ## Installation
 

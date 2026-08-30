@@ -40,7 +40,7 @@ For a registry installation, the Pi npm package syntax is:
 pi install npm:@j1nn0/agent-context-guard-pi
 ```
 
-The adapter is tested against @earendil-works/pi-coding-agent 0.84.2; the peer dependency range intentionally stays wide.
+The adapter is tested against @earendil-works/pi-coding-agent 0.84.4; the peer dependency range intentionally stays wide.
 
 ## Pi configuration
 

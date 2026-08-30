@@ -10,7 +10,7 @@
 
 Before every successful packet creation, the adapter validates the raw packet via `createHandoff(raw)` in a guarded step. If the core rejects it, the mutation is rejected, state is unchanged, and no session entry is appended. For persistence restore, the adapter validates the outer envelope (`schemaVersion`, `packets` array) and each raw packet via `createHandoff(raw)`, and rejects duplicate packet ids across the registry. This makes the core validator authoritative.
 
-The adapter is tested against `@earendil-works/pi-coding-agent` `0.84.2`. Its Pi peer dependency intentionally remains wide (`*`).
+The adapter is tested against `@earendil-works/pi-coding-agent` `0.84.4`. Its Pi peer dependency intentionally remains wide (`*`).
 
 ## Installation
 

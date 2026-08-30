@@ -11,7 +11,7 @@
 
 This package owns only the Pi integration: command and tool registration, Pi session custom-entry persistence, and restoration on `session_start`. It uses `restoreAgentState(...)` for every restored snapshot and for the objective command's rebuilt snapshot. It does not add a setter or other API to the core.
 
-The adapter is tested against Pi `0.84.2`. Its Pi peer dependency intentionally remains wide.
+The adapter is tested against Pi `0.84.4`. Its Pi peer dependency intentionally remains wide.
 
 ## Installation
 

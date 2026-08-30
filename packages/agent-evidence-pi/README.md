@@ -10,7 +10,7 @@
 
 Before every successful claim add/remove, evidence add/replace/remove, or confirmed clear, the adapter builds the complete candidate `{ claims, evidence }` state and calls `judgeEvidence({ claims, evidence })` in a guarded validation step. The returned verdict is discarded. If the core rejects the candidate, the mutation is rejected, the current state is unchanged, and no session entry is appended. This makes the core validator authoritative without duplicating its rules in the adapter.
 
-The adapter is tested against `@earendil-works/pi-coding-agent` `0.84.2`. Its Pi peer dependency intentionally remains wide (`*`).
+The adapter is tested against `@earendil-works/pi-coding-agent` `0.84.4`. Its Pi peer dependency intentionally remains wide (`*`).
 
 ## Installation
 
