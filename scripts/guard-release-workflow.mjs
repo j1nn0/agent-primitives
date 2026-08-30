@@ -290,6 +290,23 @@ function checkProvenanceIdentityStep({ step }, packageLabel) {
   if (!run.includes(expectedReleaseCommitEnv)) {
     addViolation(`release.yml ${packageLabel} provenance verification step must reference ${expectedReleaseCommitEnv} in its run script.`);
   }
+
+  if (packageLabel === 'core') {
+    const hasStateWiring =
+      (env?.REGISTRY_STATE === '${{ steps.registry_preflight.outputs.state }}' ||
+        run.includes('steps.registry_preflight.outputs.state')) &&
+      run.includes('REGISTRY_STATE');
+    if (!hasStateWiring) {
+      addViolation(
+        'release.yml core provenance verification step must wire REGISTRY_STATE from steps.registry_preflight.outputs.state and use it.'
+      );
+    }
+    if (!run.includes('hashlib.sha512') || !run.includes('hexdigest')) {
+      addViolation(
+        'release.yml core provenance verification step must compute a tarball SHA-512 hexdigest for State B subject binding.'
+      );
+    }
+  }
 }
 
 function checkRegistryVisibilityStep({ step }, packageLabel, visibleVariable) {

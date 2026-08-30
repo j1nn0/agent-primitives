@@ -2441,6 +2441,8 @@ jobs:
         if: ${{ success() && steps.registry_preflight.outputs.publish_adapter == 'true' }}
         env:
           CORE_VERSION: ${{ inputs.core_version }}
+          REGISTRY_STATE: ${{ steps.registry_preflight.outputs.state }}
+          CORE_TARBALL: ${{ steps.validated_tarballs.outputs.core_tarball }}
           RELEASE_COMMIT: ${{ github.sha }}
         shell: bash
         run: |
@@ -2461,9 +2463,12 @@ jobs:
             )"
             if [[ "$core_attestation_status" == "200" ]] && python3 - "$attestation_file" <<'PY'
           import base64
+          import hashlib
           import json
           import os
+          import re
           import sys
+          import urllib.parse
 
           required = {
               "https://github.com/npm/attestation/tree/main/specs/publish/v0.1",
@@ -2538,34 +2543,85 @@ jobs:
           if not isinstance(digest, dict):
               digest = {}
 
-          expected_commit = os.environ.get("RELEASE_COMMIT")
-          if not expected_commit:
-              raise SystemExit(
-                  "buildDefinition.resolvedDependencies[0].digest.gitCommit mismatch: "
-                  "expected the RELEASE_COMMIT environment value, actual environment value is missing"
-              )
+          registry_state = os.environ.get("REGISTRY_STATE")
           expected_identity = {
               "buildDefinition.externalParameters.workflow.repository": "https://github.com/j1nn0/agent-primitives",
               "buildDefinition.externalParameters.workflow.path": ".github/workflows/release.yml",
               "buildDefinition.externalParameters.workflow.ref": "refs/heads/main",
-              "buildDefinition.resolvedDependencies[0].digest.gitCommit": expected_commit,
           }
           actual_identity = {
               "buildDefinition.externalParameters.workflow.repository": workflow.get("repository"),
               "buildDefinition.externalParameters.workflow.path": workflow.get("path"),
               "buildDefinition.externalParameters.workflow.ref": workflow.get("ref"),
-              "buildDefinition.resolvedDependencies[0].digest.gitCommit": digest.get("gitCommit"),
           }
+          if registry_state != "B":
+              expected_commit = os.environ.get("RELEASE_COMMIT")
+              if not expected_commit:
+                  raise SystemExit(
+                      "buildDefinition.resolvedDependencies[0].digest.gitCommit mismatch: "
+                      "expected the RELEASE_COMMIT environment value, actual environment value is missing"
+                  )
+              expected_identity["buildDefinition.resolvedDependencies[0].digest.gitCommit"] = expected_commit
+              actual_identity["buildDefinition.resolvedDependencies[0].digest.gitCommit"] = digest.get("gitCommit")
           for field, expected_value in expected_identity.items():
               actual_value = actual_identity[field]
               if actual_value != expected_value:
                   raise SystemExit(
                       f"{field} mismatch: expected {expected_value!r}, actual {actual_value!r}"
                   )
+
+          if registry_state == "B":
+              actual_commit = digest.get("gitCommit")
+              if not isinstance(actual_commit, str) or re.fullmatch(r"[0-9a-f]{40}", actual_commit) is None:
+                  raise SystemExit(
+                      "State B core provenance gitCommit must be a 40-character lowercase hexadecimal string."
+                  )
+
+              core_package_name = os.environ.get("CORE_PKG_NAME")
+              core_version = os.environ.get("CORE_VERSION")
+              core_tarball = os.environ.get("CORE_TARBALL")
+              if not core_package_name or not core_version or not core_tarball:
+                  raise SystemExit(
+                      "State B core provenance verification is missing package, version, or tarball environment data."
+                  )
+              expected_subject_name = (
+                  "pkg:npm/"
+                  + urllib.parse.quote(core_package_name, safe="/")
+                  + "@"
+                  + core_version
+              )
+              subjects = slsa_statement.get("subject")
+              if not isinstance(subjects, list) or len(subjects) != 1:
+                  raise SystemExit("State B core provenance statement must contain exactly one subject.")
+              subject = subjects[0]
+              if not isinstance(subject, dict):
+                  raise SystemExit("State B core provenance subject must be an object.")
+              if subject.get("name") != expected_subject_name:
+                  raise SystemExit(
+                      f"State B core provenance subject name mismatch: expected {expected_subject_name!r}, "
+                      f"actual {subject.get('name')!r}"
+                  )
+              subject_digest = subject.get("digest")
+              if not isinstance(subject_digest, dict):
+                  raise SystemExit("State B core provenance subject has no digest object.")
+              try:
+                  with open(core_tarball, "rb") as handle:
+                      tarball_sha512 = hashlib.sha512(handle.read()).hexdigest()
+              except OSError as error:
+                  raise SystemExit(f"State B core tarball could not be read: {error}") from error
+              if subject_digest.get("sha512") != tarball_sha512:
+                  raise SystemExit(
+                      "State B core provenance subject sha512 mismatch: "
+                      f"expected {tarball_sha512!r}, actual {subject_digest.get('sha512')!r}"
+                  )
           PY
             then
               core_attestation_visible=true
               break
+            fi
+            if [[ "$REGISTRY_STATE" == "B" ]]; then
+              echo "Core provenance attestation verification failed in State B; failing closed." >&2
+              exit 1
             fi
             if (( attempt < max_attempts )); then
               echo "Waiting for the core provenance attestation (attempt $attempt/$max_attempts); retrying in ${retry_delay}s."

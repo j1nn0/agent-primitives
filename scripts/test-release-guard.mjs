@@ -1301,6 +1301,40 @@ const mutations = [
         'case DW step',
       ),
   },
+  {
+    name: 'DX core provenance State B wiring is removed',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        '      - name: Verify core provenance attestation before the adapter',
+        '      - name: Publish Pi adapter',
+        (step) =>
+          replaceRequired(
+            step,
+            '          REGISTRY_STATE: ${{ steps.registry_preflight.outputs.state }}\n',
+            '',
+            'case DX',
+          ),
+        'case DX step',
+      ),
+  },
+  {
+    name: 'DY core provenance State B tarball digest binding is removed',
+    mutate: (source) =>
+      replaceStep(
+        source,
+        '      - name: Verify core provenance attestation before the adapter',
+        '      - name: Publish Pi adapter',
+        (step) =>
+          replaceRequired(
+            step,
+            '                      tarball_sha512 = hashlib.sha512(handle.read()).hexdigest()\n',
+            '                      tarball_sha512 = hashlib.sha512(handle.read()).digest()\n',
+            'case DY',
+          ),
+        'case DY step',
+      ),
+  }
 ];
 
 const positiveMutations = [
