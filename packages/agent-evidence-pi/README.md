@@ -181,6 +181,9 @@ This adapter can be loaded alongside the other Pi adapters in this repository. I
 | Agent Progress Pi | `/agent-progress` | `agent_progress_*` | `agent-progress-state` |
 | Agent Retry Guard Pi | `/agent-retry` | `agent_retry_*` | `agent-retry-state` |
 | Agent Evidence Pi | `/agent-evidence` | `agent_evidence_*` | `agent-evidence-state` |
+| Agent Handoff Pi | `/agent-handoff` | `agent_handoff_*` | `agent-handoff-state` |
+| Agent Budget Pi | `/agent-budget` | `agent_budget_*` | `agent-budget-state` |
+| Agent Tool Policy Pi | `/agent-tool-policy` | none | `agent-tool-policy-state` |
 
 It has no dependency on the other adapters, does not merge their state, and does not map their verdicts or entries.
 

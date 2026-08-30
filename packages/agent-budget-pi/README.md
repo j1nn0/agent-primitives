@@ -116,6 +116,7 @@ This adapter can be loaded alongside the other Pi adapters in this repository. E
 | Agent Evidence | `/agent-evidence` | `agent_evidence_*` | `agent-evidence-state` |
 | Agent Handoff | `/agent-handoff` | `agent_handoff_*` | `agent-handoff-state` |
 | Agent Budget | `/agent-budget` | `agent_budget_*` | `agent-budget-state` |
+| Agent Tool Policy | `/agent-tool-policy` | none | `agent-tool-policy-state` |
 
 It has no dependency on the other adapters, does not merge their state, and does not map their entries.
 

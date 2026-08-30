@@ -14,10 +14,13 @@ import { TOOL_NAMES as EVIDENCE_TOOL_NAMES } from '../../agent-evidence-pi/src/t
 import { TOOL_NAMES as STATE_TOOL_NAMES } from '../../agent-state-pi/src/tools.js';
 import { TOOL_NAMES as PROGRESS_TOOL_NAMES } from '../../agent-progress-pi/src/tools.js';
 import { TOOL_NAMES as RETRY_TOOL_NAMES } from '../../agent-retry-guard-pi/src/tools.js';
+import { TOOL_NAMES as BUDGET_TOOL_NAMES } from '../../agent-budget-pi/src/tools.js';
 import { STATE_CUSTOM_TYPE as EVIDENCE_STATE_CUSTOM_TYPE } from '../../agent-evidence-pi/src/state.js';
 import { STATE_CUSTOM_TYPE as STATE_STATE_CUSTOM_TYPE } from '../../agent-state-pi/src/state.js';
 import { STATE_CUSTOM_TYPE as PROGRESS_STATE_CUSTOM_TYPE } from '../../agent-progress-pi/src/state.js';
 import { STATE_CUSTOM_TYPE as RETRY_STATE_CUSTOM_TYPE } from '../../agent-retry-guard-pi/src/state.js';
+import { STATE_CUSTOM_TYPE as BUDGET_STATE_CUSTOM_TYPE } from '../../agent-budget-pi/src/state.js';
+import { STATE_CUSTOM_TYPE as TOOL_POLICY_STATE_CUSTOM_TYPE } from '../../agent-tool-policy-pi/src/state.js';
 import { FakePiHarness, type AppendedEntry } from './harness.js';
 
 function text(result: AgentToolResult<unknown>): string {
@@ -88,7 +91,15 @@ describe('Agent Handoff Pi registration and namespaces', () => {
   });
 
   it('uses namespaces distinct from the other adapters\' namespaces', () => {
-    const existingCommands = new Set(['agent-evidence', 'agent-state', 'agent-progress', 'agent-retry']);
+    const existingCommands = new Set([
+      'context-guard',
+      'agent-evidence',
+      'agent-state',
+      'agent-progress',
+      'agent-retry',
+      'agent-budget',
+      'agent-tool-policy',
+    ]);
     expect(existingCommands.has(COMMAND_NAME)).toBe(false);
 
     const existingTools = new Set<string>([
@@ -96,6 +107,7 @@ describe('Agent Handoff Pi registration and namespaces', () => {
       ...STATE_TOOL_NAMES,
       ...PROGRESS_TOOL_NAMES,
       ...RETRY_TOOL_NAMES,
+      ...BUDGET_TOOL_NAMES,
     ]);
     expect(TOOL_NAMES.every((name) => !existingTools.has(name))).toBe(true);
     expect(TOOL_NAMES.every((name) => name.startsWith('agent_handoff_'))).toBe(true);
@@ -105,6 +117,9 @@ describe('Agent Handoff Pi registration and namespaces', () => {
       STATE_STATE_CUSTOM_TYPE,
       PROGRESS_STATE_CUSTOM_TYPE,
       RETRY_STATE_CUSTOM_TYPE,
+      'agent-context-guard-state',
+      BUDGET_STATE_CUSTOM_TYPE,
+      TOOL_POLICY_STATE_CUSTOM_TYPE,
     ]);
     expect(existingCustomTypes.has(STATE_CUSTOM_TYPE)).toBe(false);
     expect(STATE_CUSTOM_TYPE).toBe('agent-handoff-state');

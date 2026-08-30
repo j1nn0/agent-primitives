@@ -20,6 +20,8 @@ import { TOOL_NAMES as PROGRESS_TOOL_NAMES } from '../../agent-progress-pi/src/t
 import { TOOL_NAMES as STATE_TOOL_NAMES } from '../../agent-state-pi/src/tools.js';
 import { STATE_CUSTOM_TYPE as CONTEXT_STATE_CUSTOM_TYPE } from '../../context-guard-pi/src/state.js';
 import { TOOL_NAMES as RETRY_TOOL_NAMES } from '../../agent-retry-guard-pi/src/tools.js';
+import { TOOL_NAMES as HANDOFF_TOOL_NAMES } from '../../agent-handoff-pi/src/tools.js';
+import { TOOL_NAMES as BUDGET_TOOL_NAMES } from '../../agent-budget-pi/src/tools.js';
 import { FakePiHarness, type AppendedEntry } from './harness.js';
 
 function text(result: AgentToolResult<unknown>): string {
@@ -188,6 +190,9 @@ describe('Agent Evidence Pi registration and namespaces', () => {
       'agent-state',
       'agent-progress',
       'agent-retry',
+      'agent-handoff',
+      'agent-budget',
+      'agent-tool-policy',
     ]);
     expect(existingCommands.has(COMMAND_NAME)).toBe(false);
 
@@ -195,6 +200,8 @@ describe('Agent Evidence Pi registration and namespaces', () => {
       ...STATE_TOOL_NAMES,
       ...PROGRESS_TOOL_NAMES,
       ...RETRY_TOOL_NAMES,
+      ...HANDOFF_TOOL_NAMES,
+      ...BUDGET_TOOL_NAMES,
     ]);
     expect(TOOL_NAMES.every((name) => !existingTools.has(name))).toBe(true);
     expect(TOOL_NAMES.every((name) => name.startsWith('agent_evidence_'))).toBe(
@@ -206,6 +213,9 @@ describe('Agent Evidence Pi registration and namespaces', () => {
       'agent-state-state',
       'agent-progress-state',
       'agent-retry-state',
+      'agent-handoff-state',
+      'agent-budget-state',
+      'agent-tool-policy-state',
     ]);
     expect(existingEntryTypes.has(STATE_CUSTOM_TYPE)).toBe(false);
   });

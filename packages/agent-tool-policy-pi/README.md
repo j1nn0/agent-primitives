@@ -130,7 +130,7 @@ The disabled marker has the same envelope shape with `"policy": null`. Verdicts 
 
 ## Coexistence with the other Pi adapters
 
-This adapter can be loaded alongside the other seven Pi adapters. Each adapter owns an independent command namespace, tool family, and session entry type:
+This adapter can be loaded alongside the other Pi adapters in this repository. Each adapter owns an independent command namespace, tool family, and session entry type:
 
 | Adapter | Command | Tools | Session entry |
 | --- | --- | --- | --- |
