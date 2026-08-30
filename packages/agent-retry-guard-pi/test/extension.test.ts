@@ -10,9 +10,23 @@ import {
 } from '../src/state.js';
 import { TOOL_NAMES } from '../src/tools.js';
 import { FakePiHarness } from './harness.js';
-import { TOOL_NAMES as PROGRESS_TOOL_NAMES } from '../../agent-progress-pi/src/tools.js';
-import { TOOL_NAMES as STATE_TOOL_NAMES } from '../../agent-state-pi/src/tools.js';
-import { STATE_CUSTOM_TYPE as CONTEXT_STATE_CUSTOM_TYPE } from '../../context-guard-pi/src/state.js';
+// Mirrored from the sibling adapters so this package's typecheck stays
+// family-scoped (the real-harness suite covers the cross-adapter wiring).
+const PROGRESS_TOOL_NAMES = [
+  'agent_progress_add_milestone',
+  'agent_progress_withdraw_milestone',
+  'agent_progress_judge',
+  'agent_progress_get',
+];
+
+const STATE_TOOL_NAMES = [
+  'agent_state_add_work_item',
+  'agent_state_set_work_item_status',
+  'agent_state_add_decision',
+  'agent_state_get',
+];
+
+const CONTEXT_STATE_CUSTOM_TYPE = 'agent-context-guard-state';
 
 function text(result: AgentToolResult<unknown>): string {
   const content = result.content[0];
