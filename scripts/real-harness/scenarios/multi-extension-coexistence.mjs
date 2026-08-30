@@ -53,6 +53,21 @@ const STATE_CUSTOM_TYPES = [
   'agent-tool-policy-state',
 ];
 
+const ALL_COMMANDS = [
+  ['context-guard', '/context-guard status'],
+  ['agent-state', '/agent-state status'],
+  ['agent-progress', '/agent-progress status'],
+  ['agent-retry', '/agent-retry status'],
+  ['agent-evidence', '/agent-evidence status'],
+  ['agent-handoff', '/agent-handoff status'],
+  ['agent-budget', '/agent-budget status'],
+  ['agent-tool-policy', '/agent-tool-policy status'],
+];
+const BLOCKED_WORK_ITEM_ID = 'p3-policy-blocked-work';
+const ALLOWED_WORK_ITEM_ID = 'p3-policy-allowed-work';
+const UNCONFIGURED_BLOCK_PREFIX =
+  'Agent Tool Policy: no policy configured; tool call blocked.';
+
 function createEchoTool(invocations) {
   return {
     name: CUSTOM_TOOL_NAME,
@@ -109,6 +124,229 @@ function customTypesFor(sessionManager) {
       .filter((entry) => entry?.type === 'custom')
       .map((entry) => entry.customType),
   );
+}
+
+async function runNamespaceAndPolicyProbe({
+  isolation,
+  registerCleanup,
+  check,
+  invocations,
+}) {
+  const probe = await createIsolatedSession({
+    isolation,
+    storage: 'memory',
+    additionalExtensionPaths: ALL_ADAPTER_EXTENSION_PATHS,
+    expectedExtensionPaths: ALL_ADAPTER_EXTENSION_PATHS,
+    customTools: [createEchoTool(invocations)],
+  });
+  registerCleanup(() => probe.session.dispose());
+  check(
+    probe.assertInMemorySession(),
+    'N1 namespace/policy subprobe session is in-memory only',
+  );
+  check(
+    probe.extensionsResult.extensions.length === 8,
+    'N1 namespace/policy subprobe loaded all 8 adapters',
+  );
+
+  const countCustomEntries = (sessionManager) =>
+    sessionManager.getBranch().filter((entry) => entry?.type === 'custom').length;
+  const baselineCustomTypes = customTypesFor(probe.sessionManager);
+  const baselineCustomEntryCount = countCustomEntries(probe.sessionManager);
+  check(
+    baselineCustomTypes.size === 0,
+    'N1 namespace/policy subprobe starts with no durable custom-entry types',
+  );
+  check(
+    baselineCustomEntryCount === 0,
+    'N1 namespace/policy subprobe starts with no durable custom entries',
+  );
+
+  const statusEntryCountBefore = countCustomEntries(probe.sessionManager);
+  for (const [name, command] of ALL_COMMANDS) {
+    const beforeCalls = probe.faux.state.callCount;
+    let error;
+    try {
+      await probe.session.prompt(command);
+    } catch (caughtError) {
+      error = caughtError;
+    }
+    await new Promise((resolvePromise) => setImmediate(resolvePromise));
+    const afterCalls = probe.faux.state.callCount;
+    check(
+      error === undefined && afterCalls === beforeCalls,
+      `N1 ${command} (${name}) executed as an extension command without a model completion`,
+    );
+  }
+  const statusEntryCountAfter = countCustomEntries(probe.sessionManager);
+  check(
+    statusEntryCountAfter === statusEntryCountBefore,
+    'N1 status commands created no durable state entries',
+  );
+  const statusCustomTypes = customTypesFor(probe.sessionManager);
+  check(
+    statusEntryCountBefore === 0 &&
+      statusCustomTypes.size === baselineCustomTypes.size &&
+      [...statusCustomTypes].every((customType) => baselineCustomTypes.has(customType)),
+    'N1 status commands preserved the empty durable custom-entry type set',
+  );
+  probe.assertNoPendingFauxResponses();
+
+  const autoRecordCommand = '/agent-retry auto-record on';
+  const beforeAutoRecordCalls = probe.faux.state.callCount;
+  let autoRecordError;
+  try {
+    await probe.session.prompt(autoRecordCommand);
+  } catch (caughtError) {
+    autoRecordError = caughtError;
+  }
+  await new Promise((resolvePromise) => setImmediate(resolvePromise));
+  check(
+    autoRecordError === undefined &&
+      probe.faux.state.callCount === beforeAutoRecordCalls,
+    `N2 ${autoRecordCommand} executed as an extension command without a model completion`,
+  );
+  const autoRecordEntries = stateEntriesFor(
+    probe.sessionManager,
+    'agent-retry-auto-record',
+  );
+  const marker = autoRecordEntries.at(-1)?.data;
+  check(
+    marker?.schemaVersion === 1 && marker?.enabled === true,
+    'N2 auto-record enabled marker persisted',
+  );
+  check(
+    stateEntriesFor(probe.sessionManager, 'agent-retry-state').length === 0,
+    'N2 no retry attempts existed before the blocked turn',
+  );
+
+  const blockedEvents = await runScriptedTurn(
+    probe,
+    'Add the blocked policy work item.',
+    [
+      fauxAssistantMessage(
+        fauxToolCall('agent_state_add_work_item', {
+          id: BLOCKED_WORK_ITEM_ID,
+          content: 'This marker must never be persisted while blocked.',
+          status: 'open',
+        }),
+      ),
+      fauxAssistantMessage(fauxText('done')),
+    ],
+  );
+  const blockedResult = latestToolResult(
+    probe.session,
+    'agent_state_add_work_item',
+  );
+  const blockedOutput =
+    blockedResult === undefined ? '' : messageText(blockedResult);
+  check(
+    blockedResult?.isError === true,
+    'N3 blocked production adapter tool surfaced an error tool result',
+  );
+  check(
+    blockedOutput.includes(UNCONFIGURED_BLOCK_PREFIX),
+    'N3 surfaced the unconfigured-policy block reason',
+  );
+  check(
+    blockedEvents.some(
+      (event) =>
+        event.type === 'tool_execution_start' &&
+        event.toolName === 'agent_state_add_work_item',
+    ),
+    'N3 blocked production adapter tool emitted a tool execution start event',
+  );
+
+  const agentStateAfterBlock = latestStateEnvelope(
+    probe.sessionManager,
+    'agent-state-state',
+  );
+  check(
+    agentStateAfterBlock === undefined &&
+      stateEntriesFor(probe.sessionManager, 'agent-state-state').length === 0,
+    'N3 blocked call did not persist any Agent State mutation',
+  );
+  const retryEntriesAfterBlock = stateEntriesFor(
+    probe.sessionManager,
+    'agent-retry-state',
+  );
+  check(
+    retryEntriesAfterBlock.length === 0,
+    'N4 auto-record did not record the blocked non-executed tool',
+  );
+  const autoRecordEntriesAfterBlock = stateEntriesFor(
+    probe.sessionManager,
+    'agent-retry-auto-record',
+  );
+  check(
+    autoRecordEntriesAfterBlock.length === 1 &&
+      autoRecordEntriesAfterBlock.at(-1)?.data?.schemaVersion === 1 &&
+      autoRecordEntriesAfterBlock.at(-1)?.data?.enabled === true,
+    'N4 auto-record marker remained enabled without duplicate entries',
+  );
+
+  await runCommand(
+    probe,
+    `/agent-tool-policy set ${JSON.stringify(POLICY_ALLOW)}`,
+  );
+  const policyState = latestStateEnvelope(
+    probe.sessionManager,
+    'agent-tool-policy-state',
+  );
+  check(
+    policyState?.schemaVersion === 1 &&
+      JSON.stringify(policyState.policy) === JSON.stringify(POLICY_ALLOW),
+    'N4 allow-all policy persisted through the extension command',
+  );
+
+  const allowedEvents = await runScriptedTurn(
+    probe,
+    'Add the allowed policy work item.',
+    [
+      fauxAssistantMessage(
+        fauxToolCall('agent_state_add_work_item', {
+          id: ALLOWED_WORK_ITEM_ID,
+          content: 'This marker must persist after policy allows execution.',
+          status: 'open',
+        }),
+      ),
+      fauxAssistantMessage(fauxText('done')),
+    ],
+  );
+  checkToolExecution(
+    check,
+    allowedEvents,
+    'agent_state_add_work_item',
+    'N4 allowed production adapter tool emitted a tool execution event',
+  );
+  const allowedResult = latestToolResult(
+    probe.session,
+    'agent_state_add_work_item',
+  );
+  const allowedOutput =
+    allowedResult === undefined ? '' : messageText(allowedResult);
+  check(
+    allowedResult?.isError === false &&
+      allowedOutput.includes(ALLOWED_WORK_ITEM_ID),
+    'N4 allowed production adapter tool returned the persisted work item',
+  );
+  const agentStateAfterAllow = latestStateEnvelope(
+    probe.sessionManager,
+    'agent-state-state',
+  );
+  check(
+    agentStateAfterAllow?.schemaVersion === 1 &&
+      agentStateAfterAllow.state?.workItems?.some(
+        (item) =>
+          item?.id === ALLOWED_WORK_ITEM_ID && item?.status === 'open',
+      ),
+    'N4 allowed production adapter tool persisted its Agent State marker',
+  );
+  check(
+    stateEntriesFor(probe.sessionManager, 'agent-retry-state').length === 0,
+    'N4 successful tool was not recorded as an automatic retry failure',
+  );
+  probe.assertNoPendingFauxResponses();
 }
 
 export const name = 'multi-extension-coexistence';
@@ -424,6 +662,13 @@ export async function run(cleanup = createCleanupRegistry()) {
         JSON.stringify(policyState.policy) === JSON.stringify(POLICY_ALLOW),
       'P2 Agent Tool Policy state persisted independently',
     );
+
+    await runNamespaceAndPolicyProbe({
+      isolation,
+      registerCleanup,
+      check,
+      invocations,
+    });
 
     const sessionFile = primary.sessionFile;
     check(
