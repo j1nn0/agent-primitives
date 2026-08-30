@@ -1,7 +1,7 @@
 {
   "name": "@j1nn0/agent-retry-guard-pi",
-  "version": "0.1.1",
-  "description": "Minimal Retry Guard Pi adapter for recording and judging caller-declared retry attempts.",
+  "version": "0.2.0",
+  "description": "Minimal Retry Guard Pi adapter for recording and judging retry attempts, with opt-in automatic failure recording.",
   "license": "MIT",
   "author": "j1nn0",
   "type": "module",
