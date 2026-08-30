@@ -103,6 +103,10 @@ const adapterDistPaths = [
   },
 ];
 
+export const ALL_ADAPTER_EXTENSION_PATHS = adapterDistPaths.map(
+  ({ extensionPath }) => extensionPath,
+);
+
 function collectTypeScriptFiles(directory) {
   const files = [];
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -166,7 +170,7 @@ export function makeIsolation() {
   };
 }
 
-function assertExtensionLoaderContract(extensionsResult, expectedExtensionPath) {
+function assertExtensionLoaderContract(extensionsResult, expectedPaths) {
   if (
     extensionsResult === undefined ||
     !Array.isArray(extensionsResult.extensions) ||
@@ -181,19 +185,33 @@ function assertExtensionLoaderContract(extensionsResult, expectedExtensionPath) 
     );
   }
 
-  const expectedPath = resolve(expectedExtensionPath);
-  const matchingExtensions = extensionsResult.extensions.filter(
-    (extension) => extension.resolvedPath === expectedPath,
+  const expectedResolvedPaths = expectedPaths.map((path) => resolve(path));
+  const expectedPathSet = new Set(expectedResolvedPaths);
+  const loadedPaths = extensionsResult.extensions.map(
+    (extension) => extension.resolvedPath ?? extension.path ?? '<unknown>',
   );
-  if (
-    extensionsResult.extensions.length !== 1 ||
-    matchingExtensions.length !== 1
-  ) {
-    const loadedPaths = extensionsResult.extensions.map(
-      (extension) => extension.resolvedPath ?? extension.path ?? '<unknown>',
-    );
+  const loadedResolvedPaths = extensionsResult.extensions.map((extension) =>
+    typeof extension.resolvedPath === 'string'
+      ? resolve(extension.resolvedPath)
+      : undefined,
+  );
+  const loadedPathSet = new Set(loadedResolvedPaths);
+  const exactPathSet =
+    extensionsResult.extensions.length === expectedResolvedPaths.length &&
+    expectedPathSet.size === expectedResolvedPaths.length &&
+    loadedPathSet.size === loadedResolvedPaths.length &&
+    loadedResolvedPaths.every(
+      (path) => path !== undefined && expectedPathSet.has(path),
+    ) &&
+    expectedPathSet.size === loadedPathSet.size;
+
+  if (!exactPathSet) {
+    const expectation =
+      expectedResolvedPaths.length === 1
+        ? `expected exactly one extension resolving to ${expectedResolvedPaths[0]}`
+        : `expected ${expectedResolvedPaths.length} extensions resolving to ${safeSerialize(expectedResolvedPaths)}`;
     throw new Error(
-      `extension loader contract failed: expected exactly one extension resolving to ${expectedPath}; loaded ${safeSerialize(loadedPaths)}`,
+      `extension loader contract failed: ${expectation}; loaded ${safeSerialize(loadedPaths)}`,
     );
   }
 }
@@ -352,6 +370,7 @@ export async function createIsolatedSession({
   storage = 'memory',
   additionalExtensionPaths = [],
   expectedExtensionPath,
+  expectedExtensionPaths,
   customTools = [],
   sessionManager: suppliedSessionManager,
   settingsManager: suppliedSettingsManager,
@@ -362,12 +381,23 @@ export async function createIsolatedSession({
   if (storage !== 'memory' && storage !== 'file') {
     throw new Error(`real-harness storage mode is invalid: ${storage}`);
   }
-  if (typeof expectedExtensionPath !== 'string') {
+  const expectedPaths =
+    expectedExtensionPaths === undefined
+      ? typeof expectedExtensionPath === 'string'
+        ? [expectedExtensionPath]
+        : undefined
+      : expectedExtensionPaths;
+  if (
+    !Array.isArray(expectedPaths) ||
+    !expectedPaths.every((path) => typeof path === 'string')
+  ) {
     throw new Error('real-harness expectedExtensionPath is required');
   }
 
-  const adapter = adapterForExtensionPath(expectedExtensionPath);
-  assertDistFresh(adapter);
+  const normalizedExpectedPaths = expectedPaths.map((path) => resolve(path));
+  for (const expectedPath of normalizedExpectedPaths) {
+    assertDistFresh(adapterForExtensionPath(expectedPath));
+  }
 
   const settingsManager =
     suppliedSettingsManager ??
@@ -455,7 +485,7 @@ export async function createIsolatedSession({
   };
 
   try {
-    assertExtensionLoaderContract(extensionsResult, expectedExtensionPath);
+    assertExtensionLoaderContract(extensionsResult, normalizedExpectedPaths);
     assertSessionStorage();
     await session.bindExtensions({});
   } catch (error) {

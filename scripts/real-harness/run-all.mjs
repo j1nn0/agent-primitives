@@ -6,6 +6,7 @@ import * as agentEvidenceScenario from './scenarios/agent-evidence.mjs';
 import * as agentHandoffScenario from './scenarios/agent-handoff.mjs';
 import * as agentBudgetScenario from './scenarios/agent-budget.mjs';
 import * as agentToolPolicyScenario from './scenarios/agent-tool-policy.mjs';
+import * as multiExtensionCoexistenceScenario from './scenarios/multi-extension-coexistence.mjs';
 import { runScenarioList } from './runner.mjs';
 
 const scenarios = [
@@ -17,6 +18,7 @@ const scenarios = [
   agentHandoffScenario,
   agentBudgetScenario,
   agentToolPolicyScenario,
+  multiExtensionCoexistenceScenario,
 ];
 
 await runScenarioList(scenarios, {
