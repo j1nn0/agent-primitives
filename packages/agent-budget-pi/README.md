@@ -105,7 +105,7 @@ The adapter does not know the units of a quantity, what contributes to `consumed
 
 ## Coexistence with the other Pi adapters
 
-This adapter can be loaded alongside the six other Pi adapters. Each uses an independent command namespace, tool family, and session entry type:
+This adapter can be loaded alongside the other Pi adapters in this repository. Each uses an independent command namespace, tool family, and session entry type:
 
 | Adapter | Command | Tools | Session entry |
 | --- | --- | --- | --- |
