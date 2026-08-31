@@ -109,6 +109,12 @@ Each isolated group elects its own winner. Other eligible proposals are `suppres
 
 Supervisor operational persistence must never be assumed to hold full observation history, full transcripts, full tool results, raw stdout, or raw file contents. Persisted state is the small, JSON-safe, feature-owned envelope only. The contracts in this package do not add filesystem access, network access, telemetry, or model calls.
 
+## Deterministic benchmark contract
+
+S0-B adds a pure, dependency-free benchmark data contract, frozen release policy, exact aggregation, and JSON-safe evaluator. The evaluator validates the dataset first, binds the plan policy ID, evaluates all 14 hard gates in fixed order, and applies `fail` before `insufficient-data` before `pass`. See [`BENCHMARK.md`](BENCHMARK.md) for the contract.
+
+The checked-in benchmark fixture is synthetic control data for contract tests only. It is not evidence of model quality or a real benchmark run; no runner, provider call, network access, filesystem access, or telemetry is included, and no performance claim is made.
+
 ## Reserved initial names
 
 `kernel` is a permanently reserved authority/source namespace, not a feature ID that a future or third-party feature may claim.

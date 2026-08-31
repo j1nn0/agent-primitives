@@ -7,7 +7,9 @@ export type SupervisorContractErrorCode =
   | 'duplicate_feature'
   | 'invalid_fact'
   | 'invalid_state'
-  | 'invalid_dispatch';
+  | 'invalid_dispatch'
+  | 'invalid_benchmark_plan'
+  | 'invalid_benchmark_dataset';
 
 export class SupervisorContractError extends Error {
   readonly code: SupervisorContractErrorCode;

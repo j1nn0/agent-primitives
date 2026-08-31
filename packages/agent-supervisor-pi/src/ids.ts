@@ -11,7 +11,7 @@ const SUPERVISOR_NAMESPACED_ID_PATTERN =
   /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*:[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 
 // The same strict segment grammar is used on both sides of the namespace separator.
-function isSupervisorIdSegment(value: unknown): value is string {
+export function isSupervisorIdSegment(value: unknown): value is string {
   return typeof value === 'string' && SUPERVISOR_ID_SEGMENT_PATTERN.test(value);
 }
 

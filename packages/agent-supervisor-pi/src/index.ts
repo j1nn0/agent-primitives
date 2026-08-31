@@ -19,6 +19,7 @@ export {
   isSupervisorFactKind,
   isRegistrableSupervisorFeatureId,
   isSupervisorFeatureId,
+  isSupervisorIdSegment,
   isSupervisorNamespacedId,
   isSupervisorReasonCode,
 } from './ids.js';
@@ -109,3 +110,72 @@ export type {
 
 export { SUPERVISOR_INTENT_RANKS, arbitrateInterventions } from './arbitration.js';
 export type { SupervisorArbitrationResult } from './arbitration.js';
+
+export {
+  canonicalizeSupervisorBenchmarkPlan,
+  computeSupervisorBenchmarkPlanFingerprint,
+} from './benchmark/plan.js';
+export { validateSupervisorBenchmarkDataset, validateSupervisorBenchmarkPlan } from './benchmark/validate.js';
+export { indexSupervisorBenchmarkPairs } from './benchmark/pairing.js';
+export type {
+  SupervisorBenchmarkCompletedRun,
+  SupervisorBenchmarkDatasetV1,
+  SupervisorBenchmarkExpectedPair,
+  SupervisorBenchmarkInfrastructureErrorRun,
+  SupervisorBenchmarkOracle,
+  SupervisorBenchmarkPlanV1,
+  SupervisorBenchmarkRun,
+  SupervisorBenchmarkRunMetrics,
+  SupervisorBenchmarkVariant,
+} from './benchmark/types.js';
+export type {
+  SupervisorBenchmarkPairIndex,
+  SupervisorBenchmarkPairIndexEntry,
+} from './benchmark/pairing.js';
+
+export {
+  compareRationals,
+  computeExactPairedSignTest,
+  computePairwiseOverhead,
+  computeReductionRatio,
+  medianRational,
+  rationalMeetsThreshold,
+  rationalToNumber,
+  reductionMeetsThreshold,
+} from './benchmark/statistics.js';
+export type {
+  SupervisorBenchmarkExactPairedSignTest,
+  SupervisorBenchmarkRational,
+  SupervisorBenchmarkReductionRatio,
+} from './benchmark/statistics.js';
+export { aggregateSupervisorBenchmarkDataset } from './benchmark/aggregate.js';
+export type {
+  SupervisorBenchmarkAggregate,
+  SupervisorBenchmarkScenarioAggregate,
+} from './benchmark/aggregate.js';
+
+export {
+  SUPERVISOR_RELEASE_BENCHMARK_POLICY_V1,
+} from './benchmark/policy.js';
+export type {
+  SupervisorBenchmarkRatioThreshold,
+  SupervisorReleaseBenchmarkCoveragePolicy,
+  SupervisorReleaseBenchmarkOverheadPolicy,
+  SupervisorReleaseBenchmarkPolicyV1,
+  SupervisorReleaseBenchmarkReductionPolicy,
+} from './benchmark/policy.js';
+export {
+  evaluateSupervisorBenchmark,
+  evaluateSupervisorBenchmarkDataset,
+} from './benchmark/evaluate.js';
+export type {
+  SupervisorBenchmarkCoverageReport,
+  SupervisorBenchmarkGateResult,
+  SupervisorBenchmarkGateStatus,
+  SupervisorBenchmarkOutcomesReport,
+  SupervisorBenchmarkOverheadReport,
+  SupervisorBenchmarkReportV1,
+  SupervisorBenchmarkScenarioCoverageReport,
+  SupervisorBenchmarkSignTestReport,
+  SupervisorBenchmarkVerdict,
+} from './benchmark/evaluate.js';
