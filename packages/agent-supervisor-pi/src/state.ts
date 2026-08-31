@@ -1,5 +1,5 @@
 import { SupervisorContractError } from './errors.js';
-import { isSupervisorFeatureId } from './ids.js';
+import { isRegistrableSupervisorFeatureId } from './ids.js';
 import { isJsonValue, type JsonValue } from './json.js';
 import { hasOnlyAllowedKeys, hasOwn, isPlainObject } from './internal.js';
 
@@ -51,7 +51,7 @@ export function validateSupervisorFeatureStateEnvelope(
     // Feature state migration is the feature's responsibility; the kernel treats data as opaque JSON.
     if (
       schemaVersion !== 1 ||
-      !isSupervisorFeatureId(featureId) ||
+      !isRegistrableSupervisorFeatureId(featureId) ||
       typeof featureSchemaVersion !== 'number' ||
       !Number.isSafeInteger(featureSchemaVersion) ||
       featureSchemaVersion <= 0 ||

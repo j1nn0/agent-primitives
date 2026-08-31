@@ -178,7 +178,7 @@ describe('supervisor dispatch', () => {
                 intent: 'stop',
                 delivery: 'block',
                 priority: 1,
-                reasonCode: 'reason:delegated',
+                reasonCode: 'feature-b:delegated',
               },
             ],
           }),
@@ -188,6 +188,25 @@ describe('supervisor dispatch', () => {
 
     await expect(promise).rejects.toBeInstanceOf(SupervisorContractError);
     await expect(promise).rejects.toMatchObject({ code: 'invalid_intervention' });
+  });
+
+  it.each([
+    ['reserved kernel ID', ['kernel']],
+    ['syntactically invalid ID', ['Feature-a']],
+    ['duplicate ID', ['feature-a', 'feature-a']],
+  ] as const)('rejects %s before invoking any runtime', async (_case, featureIds) => {
+    const calls: string[] = [];
+    const runtime = (featureId: string): SupervisorFeatureRuntime => ({
+      onObservation: () => {
+        calls.push(featureId);
+      },
+    });
+    const features = featureIds.map((featureId) => dispatchFeature(featureId, runtime(featureId)));
+
+    await expect(dispatchObservation(dispatchInput(features))).rejects.toBeInstanceOf(
+      SupervisorContractError,
+    );
+    expect(calls).toEqual([]);
   });
 
   it('returns nextState as a whole-state replacement keyed by feature ID', async () => {

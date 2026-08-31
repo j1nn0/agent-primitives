@@ -43,7 +43,7 @@ Capability IDs, fact kinds, and reason codes use exactly two such segments separ
 <segment>:<segment>
 ```
 
-Examples include `provider-x:ready`, `feature-a:signal`, and `policy:review`. The namespace is meaningful for fact candidates: a feature may propose only fact kinds in its own namespace, while kernel-sourced facts use the `kernel` namespace.
+Examples include `provider-x:ready`, `feature-a:signal`, and `feature-a:review`. `kernel` matches the segment grammar syntactically but is a reserved authority/source namespace: no registered feature may use the feature ID `kernel`. Feature facts own `<feature-id>:*`, feature intervention reason codes own `<feature-id>:*`, and only kernel-sourced facts may use `kernel:*`.
 
 Observation kinds are unprefixed segment IDs. Built-in kinds are available as a constant, but future kinds can be added without changing the type contract.
 
@@ -61,7 +61,7 @@ The install-and-forget default is:
 
 Each feature entry may contain a mode and JSON-safe settings. The kernel checks only that settings are JSON-safe; a registered feature owns semantic settings validation.
 
-A well-formed entry for an unknown future feature is preserved rather than rejected, so its setting can be reused when that feature ships. An invalid per-feature entry, including invalid settings, is excluded and isolated to that feature; sibling entries remain usable. A corrupt top-level configuration is degraded to an `observe` ceiling. It never silently falls back to global `autonomous`.
+A well-formed entry for an unknown future feature, other than a reserved ID such as `kernel`, is preserved rather than rejected, so its setting can be reused when that feature ships. An invalid per-feature entry, including invalid settings, is excluded and isolated to that feature; a reserved `kernel` entry is likewise excluded with a distinct reserved-ID diagnostic, and sibling entries remain usable. A corrupt top-level configuration is degraded to an `observe` ceiling. It never silently falls back to global `autonomous`.
 
 ## Registry and plan resolution
 
@@ -71,7 +71,7 @@ Capability dependencies resolve by least fixed point. Kernel capabilities and ca
 
 ## Dispatch and fact visibility
 
-The dispatcher invokes subscribed, available features in ascending feature-ID order. It buffers emitted facts and proposals, validates them, and assigns fact sequences in dispatch order. A feature cannot emit a proposal on behalf of another feature.
+The dispatcher validates feature identities as registrable IDs and rejects invalid or duplicate IDs before invoking any runtime. It invokes subscribed, available features in ascending feature-ID order. It buffers emitted facts and proposals, validates them, and assigns fact sequences in dispatch order. A feature cannot emit a proposal on behalf of another feature.
 
 ### SAME-DISPATCH FACT VISIBILITY RULE
 
@@ -82,6 +82,8 @@ Fact identity and ordering are kernel-owned. Feature fact candidates carry only 
 ## Intervention arbitration
 
 Arbitration groups proposals by boundary. Tool-call proposals are additionally isolated by target tool-call ID; stream and settled proposals use a `null` target. A tool-call proposal never competes with a settled proposal, and different tool-call targets never compete.
+
+`arbitrateInterventions` validates every incoming proposal itself before grouping; a malformed proposal is a hard contract rejection.
 
 Only proposals from `autonomous` features are eligible to win. Proposals from `observe` features are placed in `observedOnly` and cannot win or suppress anything. Proposals from `off`, `unavailable`, or unknown features are `ineligible`.
 
@@ -108,6 +110,8 @@ Each isolated group elects its own winner. Other eligible proposals are `suppres
 Supervisor operational persistence must never be assumed to hold full observation history, full transcripts, full tool results, raw stdout, or raw file contents. Persisted state is the small, JSON-safe, feature-owned envelope only. The contracts in this package do not add filesystem access, network access, telemetry, or model calls.
 
 ## Reserved initial names
+
+`kernel` is a permanently reserved authority/source namespace, not a feature ID that a future or third-party feature may claim.
 
 The planned initial built-in feature IDs are:
 

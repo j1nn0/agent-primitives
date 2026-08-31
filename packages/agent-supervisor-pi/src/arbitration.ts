@@ -4,6 +4,7 @@ import {
   type SupervisorInterventionBoundary,
   type SupervisorInterventionIntent,
   type SupervisorInterventionProposal,
+  validateSupervisorInterventionProposal,
 } from './intervention.js';
 import { hasOwn } from './internal.js';
 
@@ -69,12 +70,15 @@ export function arbitrateInterventions(input: {
   readonly proposals: readonly SupervisorInterventionProposal[];
   readonly featureModes: Readonly<Record<string, EffectiveFeatureMode>>;
 }): readonly SupervisorArbitrationResult[] {
+  const canonicalProposals = input.proposals.map((proposal) =>
+    validateSupervisorInterventionProposal(proposal),
+  );
   const groupsByBoundary = new Map<
     SupervisorInterventionBoundary,
     Map<string, ProposalGroup>
   >();
 
-  for (const proposal of input.proposals) {
+  for (const proposal of canonicalProposals) {
     const targetToolCallId =
       proposal.boundary === 'tool-call' ? proposal.targetToolCallId ?? '' : null;
     const targetKey = targetToolCallId ?? '';

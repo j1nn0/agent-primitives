@@ -27,6 +27,7 @@ describe('supervisor feature state', () => {
   it.each([
     { schemaVersion: 2 },
     { featureId: 'Feature-a' },
+    { featureId: 'kernel' },
     { featureSchemaVersion: 0 },
     { featureSchemaVersion: -1 },
     { featureSchemaVersion: 1.5 },

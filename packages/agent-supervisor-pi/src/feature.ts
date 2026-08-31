@@ -1,7 +1,7 @@
 import { SupervisorContractError } from './errors.js';
 import {
+  isRegistrableSupervisorFeatureId,
   isSupervisorCapabilityId,
-  isSupervisorFeatureId,
 } from './ids.js';
 import {
   SUPERVISOR_INTERVENTION_INTENTS,
@@ -124,7 +124,7 @@ export function validateSupervisorFeatureDescriptor(
     const usesAuxiliaryModel = value.usesAuxiliaryModel;
 
     if (
-      !isSupervisorFeatureId(id) ||
+      !isRegistrableSupervisorFeatureId(id) ||
       schemaVersion !== 1 ||
       !isFeatureMaturity(maturity) ||
       !isFeatureMode(defaultMode) ||
@@ -137,7 +137,7 @@ export function validateSupervisorFeatureDescriptor(
     const observes = readUniqueArray(value.observes, isSupervisorObservationKind);
     const provides = readUniqueArray(value.provides, isSupervisorCapabilityId);
     const requires = readUniqueArray(value.requires, isSupervisorCapabilityId);
-    const conflictsWith = readUniqueArray(value.conflictsWith, isSupervisorFeatureId);
+    const conflictsWith = readUniqueArray(value.conflictsWith, isRegistrableSupervisorFeatureId);
     const interventionIntents = readUniqueArray(value.interventionIntents, isInterventionIntent);
 
     if (

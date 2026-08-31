@@ -1,5 +1,5 @@
 import { SupervisorContractError } from './errors.js';
-import { isSupervisorFeatureId, isSupervisorReasonCode } from './ids.js';
+import { isRegistrableSupervisorFeatureId, isSupervisorReasonCode } from './ids.js';
 import { hasOnlyAllowedKeys, hasOwn, isPlainObject } from './internal.js';
 
 export const SUPERVISOR_INTERVENTION_BOUNDARIES = ['tool-call', 'stream', 'settled'] as const;
@@ -76,7 +76,7 @@ export function validateSupervisorInterventionProposal(
     const reasonCode = value.reasonCode;
 
     if (
-      !isSupervisorFeatureId(sourceFeatureId) ||
+      !isRegistrableSupervisorFeatureId(sourceFeatureId) ||
       !isMember(SUPERVISOR_INTERVENTION_BOUNDARIES, boundary) ||
       !isMember(SUPERVISOR_INTERVENTION_INTENTS, intent) ||
       !isMember(SUPERVISOR_INTERVENTION_DELIVERIES, delivery) ||
@@ -86,6 +86,11 @@ export function validateSupervisorInterventionProposal(
       priority > 100 ||
       !isSupervisorReasonCode(reasonCode)
     ) {
+      return invalidIntervention();
+    }
+
+    const reasonNamespace = reasonCode.slice(0, reasonCode.indexOf(':'));
+    if (reasonNamespace !== sourceFeatureId) {
       return invalidIntervention();
     }
 

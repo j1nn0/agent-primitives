@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  SupervisorContractError,
   arbitrateInterventions,
   validateSupervisorInterventionProposal,
 } from '../src/index.js';
@@ -22,7 +23,7 @@ function proposal(
     intent,
     delivery: 'steer',
     priority,
-    reasonCode: `reason:${sourceFeatureId}`,
+    reasonCode: `${sourceFeatureId}:reason`,
     ...overrides,
   });
 }
@@ -67,19 +68,19 @@ describe('supervisor intervention arbitration', () => {
   it('uses source ID and then reason code for a full tie', () => {
     const results = arbitrate(
       [
-        proposal('feature-b', 'verify', 5, { reasonCode: 'reason:a' }),
-        proposal('feature-a', 'verify', 5, { reasonCode: 'reason:z' }),
-        proposal('feature-a', 'verify', 5, { reasonCode: 'reason:a' }),
+        proposal('feature-b', 'verify', 5, { reasonCode: 'feature-b:a' }),
+        proposal('feature-a', 'verify', 5, { reasonCode: 'feature-a:z' }),
+        proposal('feature-a', 'verify', 5, { reasonCode: 'feature-a:a' }),
       ],
       { 'feature-a': 'autonomous', 'feature-b': 'autonomous' },
     );
     expect(results[0]?.winner).toMatchObject({
       sourceFeatureId: 'feature-a',
-      reasonCode: 'reason:a',
+      reasonCode: 'feature-a:a',
     });
     expect(results[0]?.suppressed.map((item) => item.reasonCode)).toEqual([
-      'reason:z',
-      'reason:a',
+      'feature-a:z',
+      'feature-b:a',
     ]);
   });
 
@@ -180,5 +181,101 @@ describe('supervisor intervention arbitration', () => {
 
     expect(results[1]).toEqual(results[0]);
     expect(results[2]).toEqual(results[0]);
+  });
+
+  it.each([
+    [
+      'tool-call proposal without target',
+      {
+        sourceFeatureId: 'feature-a',
+        boundary: 'tool-call',
+        intent: 'verify',
+        delivery: 'steer',
+        priority: 1,
+        reasonCode: 'feature-a:reason',
+      },
+    ],
+    [
+      'tool-call proposal with an empty target',
+      {
+        sourceFeatureId: 'feature-a',
+        boundary: 'tool-call',
+        intent: 'verify',
+        delivery: 'steer',
+        priority: 1,
+        reasonCode: 'feature-a:reason',
+        targetToolCallId: '',
+      },
+    ],
+    [
+      'non-tool-call proposal with a target',
+      {
+        sourceFeatureId: 'feature-a',
+        boundary: 'stream',
+        intent: 'verify',
+        delivery: 'steer',
+        priority: 1,
+        reasonCode: 'feature-a:reason',
+        targetToolCallId: 'call-1',
+      },
+    ],
+    [
+      'proposal with an out-of-range priority',
+      {
+        sourceFeatureId: 'feature-a',
+        boundary: 'stream',
+        intent: 'verify',
+        delivery: 'steer',
+        priority: 101,
+        reasonCode: 'feature-a:reason',
+      },
+    ],
+    [
+      'proposal with a reason namespace owned by another feature',
+      {
+        sourceFeatureId: 'feature-a',
+        boundary: 'stream',
+        intent: 'verify',
+        delivery: 'steer',
+        priority: 1,
+        reasonCode: 'feature-b:reason',
+      },
+    ],
+    [
+      'proposal from the kernel source',
+      {
+        sourceFeatureId: 'kernel',
+        boundary: 'stream',
+        intent: 'verify',
+        delivery: 'steer',
+        priority: 1,
+        reasonCode: 'kernel:reason',
+      },
+    ],
+  ] as const)('hard-rejects malformed proposal %s before grouping', (_description, invalidProposal) => {
+    expect(() =>
+      arbitrateInterventions({
+        proposals: [invalidProposal as unknown as SupervisorInterventionProposal],
+        featureModes: { 'feature-a': 'autonomous', 'feature-b': 'autonomous' },
+      }),
+    ).toThrow(SupervisorContractError);
+  });
+
+  it('returns canonicalized proposal copies', () => {
+    const inputProposal = {
+      sourceFeatureId: 'feature-a',
+      boundary: 'stream',
+      intent: 'verify',
+      delivery: 'steer',
+      priority: 1,
+      reasonCode: 'feature-a:reason',
+    } as const;
+    const [result] = arbitrateInterventions({
+      proposals: [inputProposal as unknown as SupervisorInterventionProposal],
+      featureModes: { 'feature-a': 'autonomous' },
+    });
+
+    expect(result?.winner).toEqual(inputProposal);
+    expect(result?.winner).not.toBe(inputProposal);
   });
 });

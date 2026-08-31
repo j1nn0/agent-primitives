@@ -55,6 +55,39 @@ describe('supervisor configuration and resolution', () => {
     }
   });
 
+  it('isolates a reserved kernel config entry from a valid sibling', () => {
+    const config = {
+      schemaVersion: 1,
+      mode: 'autonomous',
+      features: {
+        kernel: { mode: 'autonomous' },
+        'feature-a': {},
+      },
+    };
+    const parsed = parseSupervisorConfig(config);
+
+    expect(parsed.status).toBe('valid');
+    if (parsed.status === 'valid') {
+      expect(parsed.config.features).toEqual({ 'feature-a': {} });
+      expect(parsed.featureDiagnostics).toEqual([
+        { code: 'reserved-feature-id', featureId: 'kernel' },
+      ]);
+    }
+
+    const plan = resolveSupervisorPlan({
+      features: [feature('feature-a')],
+      config,
+      kernelCapabilities: [],
+    });
+    expect(plan.configStatus).toBe('valid');
+    expect(plan.configDiagnostics).toEqual([
+      { code: 'reserved-feature-id', featureId: 'kernel' },
+    ]);
+    expect(plan.features).toEqual([
+      expect.objectContaining({ id: 'feature-a', effectiveMode: 'autonomous' }),
+    ]);
+  });
+
   it('applies overrides in both directions and honors explicit off', () => {
     const registry = new SupervisorFeatureRegistry();
     registry.register(feature('feature-a', 'autonomous'));

@@ -28,6 +28,7 @@ describe('supervisor feature descriptors', () => {
 
   it.each([
     { id: 'Feature-a' },
+    { id: 'kernel' },
     { schemaVersion: 2 },
     { provides: ['bad-capability'] },
     { provides: ['capability:one', 'capability:one'] },
@@ -36,6 +37,7 @@ describe('supervisor feature descriptors', () => {
     { observes: ['tool-result', 'tool-result'] },
     { interventionIntents: ['verify', 'verify'] },
     { conflictsWith: ['feature-a'] },
+    { conflictsWith: ['kernel'] },
     { maturity: 'experimental', defaultMode: 'autonomous' },
   ])('rejects one invalid descriptor rule %#', (override) => {
     expectInvalid(descriptor(override));

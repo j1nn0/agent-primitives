@@ -8,7 +8,7 @@ function proposal(overrides: Record<string, unknown> = {}): Record<string, unkno
     intent: 'verify',
     delivery: 'steer',
     priority: 50,
-    reasonCode: 'policy:review',
+    reasonCode: 'feature-a:review',
     ...overrides,
   };
 }
@@ -21,9 +21,33 @@ describe('supervisor intervention proposals', () => {
       intent: 'verify',
       delivery: 'steer',
       priority: 50,
-      reasonCode: 'policy:review',
+      reasonCode: 'feature-a:review',
       message: 'Please verify.',
     });
+  });
+
+  it('accepts a reason code owned by the source feature', () => {
+    expect(validateSupervisorInterventionProposal(proposal({ reasonCode: 'feature-a:reason' }))).toMatchObject({
+      sourceFeatureId: 'feature-a',
+      reasonCode: 'feature-a:reason',
+    });
+  });
+
+  it.each(['feature-b:reason', 'kernel:reason', 'reason:feature-a'])(
+    'rejects a reason code not owned by the source feature: %s',
+    (reasonCode) => {
+      expect(() => validateSupervisorInterventionProposal(proposal({ reasonCode }))).toThrow(
+        SupervisorContractError,
+      );
+    },
+  );
+
+  it('rejects the reserved kernel source even with a matching reason namespace', () => {
+    expect(() =>
+      validateSupervisorInterventionProposal(
+        proposal({ sourceFeatureId: 'kernel', reasonCode: 'kernel:reason' }),
+      ),
+    ).toThrow(SupervisorContractError);
   });
 
   it.each([0, 100])('accepts boundary priority %s', (priority) => {

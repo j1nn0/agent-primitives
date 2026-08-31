@@ -1,7 +1,8 @@
 import { SupervisorContractError } from './errors.js';
 import { isJsonValue, type JsonValue } from './json.js';
 import {
-  isSupervisorFeatureId,
+  SUPERVISOR_KERNEL_SOURCE_ID,
+  isRegistrableSupervisorFeatureId,
   isSupervisorNamespacedId,
 } from './ids.js';
 import { hasOnlyAllowedKeys, hasOwn, isDenseArray, isPlainObject } from './internal.js';
@@ -25,7 +26,7 @@ export interface SupervisorFactRecord {
   readonly data: JsonValue;
 }
 
-export const SUPERVISOR_KERNEL_FACT_NAMESPACE = 'kernel';
+export const SUPERVISOR_KERNEL_FACT_NAMESPACE = SUPERVISOR_KERNEL_SOURCE_ID;
 
 const ALLOWED_FACT_CANDIDATE_KEYS = new Set(['kind', 'evidenceRefs', 'data']);
 
@@ -88,7 +89,8 @@ export function createSupervisorFactRecord(input: {
     const candidate = validateSupervisorFactCandidate(input.candidate);
     const { sourceFeatureId, rootRequestId, sequence } = input;
     if (
-      !isSupervisorFeatureId(sourceFeatureId) ||
+      (sourceFeatureId !== SUPERVISOR_KERNEL_SOURCE_ID &&
+        !isRegistrableSupervisorFeatureId(sourceFeatureId)) ||
       (rootRequestId !== null && typeof rootRequestId !== 'string') ||
       !Number.isSafeInteger(sequence) ||
       sequence < 0
@@ -99,7 +101,7 @@ export function createSupervisorFactRecord(input: {
     const separatorIndex = candidate.kind.indexOf(':');
     const namespace = candidate.kind.slice(0, separatorIndex);
     const expectedNamespace =
-      sourceFeatureId === SUPERVISOR_KERNEL_FACT_NAMESPACE
+      sourceFeatureId === SUPERVISOR_KERNEL_SOURCE_ID
         ? SUPERVISOR_KERNEL_FACT_NAMESPACE
         : sourceFeatureId;
     if (namespace !== expectedNamespace) {

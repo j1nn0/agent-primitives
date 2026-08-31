@@ -1,5 +1,5 @@
 import { isJsonValue, type JsonValue } from './json.js';
-import { isSupervisorFeatureId } from './ids.js';
+import { isRegistrableSupervisorFeatureId, isSupervisorFeatureId } from './ids.js';
 import { hasOnlyAllowedKeys, hasOwn, isPlainObject } from './internal.js';
 import type { SupervisorFeatureMode, SupervisorMode } from './feature.js';
 
@@ -27,7 +27,8 @@ export type SupervisorConfigDiagnosticCode =
   | 'invalid-schema-version'
   | 'invalid-mode'
   | 'invalid-features'
-  | 'invalid-feature-entry';
+  | 'invalid-feature-entry'
+  | 'reserved-feature-id';
 
 export interface SupervisorConfigDiagnostic {
   readonly code: SupervisorConfigDiagnosticCode;
@@ -162,13 +163,18 @@ export function parseSupervisorConfig(value: unknown): SupervisorConfigParseResu
 
     const features: Record<string, SupervisorFeatureConfigEntry> = {};
     for (const featureId of featureIds) {
+      if (isSupervisorFeatureId(featureId) && !isRegistrableSupervisorFeatureId(featureId)) {
+        featureDiagnostics.push({ code: 'reserved-feature-id', featureId });
+        continue;
+      }
+
       let entry: SupervisorFeatureConfigEntry | null = null;
       try {
         entry = parseFeatureEntry(featureValues[featureId]);
       } catch {
         entry = null;
       }
-      if (!isSupervisorFeatureId(featureId) || entry === null) {
+      if (!isRegistrableSupervisorFeatureId(featureId) || entry === null) {
         featureDiagnostics.push({ code: 'invalid-feature-entry', featureId });
         continue;
       }

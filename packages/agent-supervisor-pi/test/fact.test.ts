@@ -75,6 +75,28 @@ describe('supervisor facts', () => {
     expect(record.kind).toBe('kernel:signal');
   });
 
+  it.each([
+    ['kernel', 'kernel:signal', true],
+    ['kernel', 'feature-a:signal', false],
+    ['feature-a', 'feature-a:signal', true],
+    ['feature-a', 'feature-b:signal', false],
+    ['feature-a', 'kernel:signal', false],
+  ] as const)('enforces fact namespace ownership for %s and %s', (sourceFeatureId, kind, valid) => {
+    const createRecord = () =>
+      createSupervisorFactRecord({
+        candidate: validateSupervisorFactCandidate(candidate({ kind })),
+        sourceFeatureId,
+        rootRequestId: null,
+        sequence: 0,
+      });
+
+    if (valid) {
+      expect(createRecord).not.toThrow();
+    } else {
+      expect(createRecord).toThrow(SupervisorContractError);
+    }
+  });
+
   it('rejects a fact whose namespace does not match its source', () => {
     expect(() =>
       createSupervisorFactRecord({

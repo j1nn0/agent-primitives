@@ -8,13 +8,16 @@ export type { JsonPrimitive, JsonValue } from './json.js';
 
 export {
   SUPERVISOR_ID_SEGMENT_PATTERN,
+  SUPERVISOR_KERNEL_SOURCE_ID,
   assertSupervisorCapabilityId,
   assertSupervisorFactKind,
+  assertRegistrableSupervisorFeatureId,
   assertSupervisorFeatureId,
   assertSupervisorNamespacedId,
   assertSupervisorReasonCode,
   isSupervisorCapabilityId,
   isSupervisorFactKind,
+  isRegistrableSupervisorFeatureId,
   isSupervisorFeatureId,
   isSupervisorNamespacedId,
   isSupervisorReasonCode,

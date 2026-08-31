@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  SUPERVISOR_KERNEL_SOURCE_ID,
+  assertRegistrableSupervisorFeatureId,
   assertSupervisorCapabilityId,
   assertSupervisorFeatureId,
   assertSupervisorFactKind,
   assertSupervisorNamespacedId,
   assertSupervisorReasonCode,
+  isRegistrableSupervisorFeatureId,
   isSupervisorCapabilityId,
   isSupervisorFactKind,
   isSupervisorFeatureId,
@@ -17,6 +20,15 @@ describe('supervisor identifiers', () => {
     for (const value of ['feature-a', 'feature1', 'feature-a-long']) {
       expect(isSupervisorFeatureId(value)).toBe(true);
     }
+  });
+
+  it('recognizes kernel syntactically but reserves it from registration', () => {
+    expect(SUPERVISOR_KERNEL_SOURCE_ID).toBe('kernel');
+    expect(isSupervisorFeatureId(SUPERVISOR_KERNEL_SOURCE_ID)).toBe(true);
+    expect(isRegistrableSupervisorFeatureId(SUPERVISOR_KERNEL_SOURCE_ID)).toBe(false);
+    expect(() => assertRegistrableSupervisorFeatureId(SUPERVISOR_KERNEL_SOURCE_ID)).toThrow(
+      'Invalid registrable supervisor feature ID.',
+    );
   });
 
   it('rejects malformed feature IDs', () => {

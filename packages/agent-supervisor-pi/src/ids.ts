@@ -1,6 +1,12 @@
 import { SupervisorContractError } from './errors.js';
 
 export const SUPERVISOR_ID_SEGMENT_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
+
+export const SUPERVISOR_KERNEL_SOURCE_ID = 'kernel';
+
+const SUPERVISOR_RESERVED_FEATURE_IDS: ReadonlySet<string> = new Set([
+  SUPERVISOR_KERNEL_SOURCE_ID,
+]);
 const SUPERVISOR_NAMESPACED_ID_PATTERN =
   /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*:[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 
@@ -11,6 +17,10 @@ function isSupervisorIdSegment(value: unknown): value is string {
 
 export function isSupervisorFeatureId(value: unknown): value is string {
   return isSupervisorIdSegment(value);
+}
+
+export function isRegistrableSupervisorFeatureId(value: unknown): value is string {
+  return isSupervisorFeatureId(value) && !SUPERVISOR_RESERVED_FEATURE_IDS.has(value);
 }
 
 export function isSupervisorNamespacedId(value: unknown): value is string {
@@ -32,6 +42,12 @@ export function isSupervisorReasonCode(value: unknown): value is string {
 export function assertSupervisorFeatureId(value: unknown): asserts value is string {
   if (!isSupervisorFeatureId(value)) {
     throw new SupervisorContractError('invalid_id', 'Invalid supervisor feature ID.');
+  }
+}
+
+export function assertRegistrableSupervisorFeatureId(value: unknown): asserts value is string {
+  if (!isRegistrableSupervisorFeatureId(value)) {
+    throw new SupervisorContractError('invalid_id', 'Invalid registrable supervisor feature ID.');
   }
 }
 

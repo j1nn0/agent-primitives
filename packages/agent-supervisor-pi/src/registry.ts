@@ -132,9 +132,20 @@ export function resolveSupervisorPlan(input: {
   readonly config: unknown;
   readonly kernelCapabilities: readonly string[];
 }): SupervisorPlan {
+  const validatedFeatures: SupervisorFeatureRegistration[] = [];
+  const seenFeatureIds = new Set<string>();
+  for (const feature of input.features) {
+    const descriptor = validateSupervisorFeatureDescriptor(feature.descriptor);
+    if (seenFeatureIds.has(descriptor.id)) {
+      throw new SupervisorContractError('duplicate_feature', 'Duplicate supervisor feature.');
+    }
+    seenFeatureIds.add(descriptor.id);
+    validatedFeatures.push({ descriptor });
+  }
+
   try {
     const parsedConfig = parseSupervisorConfig(input.config);
-    const registered = [...input.features].sort((left, right) =>
+    const registered = [...validatedFeatures].sort((left, right) =>
       compareStrings(left.descriptor.id, right.descriptor.id),
     );
 
@@ -257,7 +268,10 @@ export function resolveSupervisorPlan(input: {
       effectiveGlobalMode,
       features: resolved,
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof SupervisorContractError) {
+      throw error;
+    }
     return degradedPlan();
   }
 }

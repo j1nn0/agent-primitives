@@ -16,6 +16,7 @@ import {
   type SupervisorFeatureRuntime,
 } from './module.js';
 import { assertJsonValue, type JsonValue } from './json.js';
+import { isRegistrableSupervisorFeatureId } from './ids.js';
 import type { SupervisorObservation, SupervisorObservationKind } from './observation.js';
 import { hasOnlyAllowedKeys, hasOwn, isDenseArray, isPlainObject } from './internal.js';
 
@@ -57,6 +58,16 @@ function compareStrings(left: string, right: string): number {
   return 0;
 }
 
+function validateDispatchFeatureIdentities(features: readonly SupervisorDispatchFeature[]): void {
+  const seen = new Set<string>();
+  for (const feature of features) {
+    if (!isRegistrableSupervisorFeatureId(feature.featureId) || seen.has(feature.featureId)) {
+      return invalidDispatch();
+    }
+    seen.add(feature.featureId);
+  }
+}
+
 function validateEmission(value: unknown): SupervisorFeatureEmission | undefined {
   if (value === undefined) {
     return undefined;
@@ -75,6 +86,7 @@ function readCandidates(value: unknown): readonly unknown[] {
 }
 
 export async function dispatchObservation(input: SupervisorDispatchInput): Promise<SupervisorDispatchResult> {
+  validateDispatchFeatureIdentities(input.features);
   if (!Number.isSafeInteger(input.nextFactSequence) || input.nextFactSequence < 0) {
     return invalidDispatch();
   }
