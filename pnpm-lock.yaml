@@ -156,6 +156,8 @@ importers:
         specifier: workspace:^
         version: link:../agent-state
 
+  packages/agent-supervisor-pi: {}
+
   packages/agent-tool-policy: {}
 
   packages/agent-tool-policy-pi:

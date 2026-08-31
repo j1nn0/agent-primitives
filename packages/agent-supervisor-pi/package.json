@@ -1,0 +1,18 @@
+{
+  "name": "@j1nn0/agent-supervisor-pi",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "license": "MIT",
+  "author": "j1nn0",
+  "description": "Private contract modules for an autonomous agent supervisor.",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  }
+}
