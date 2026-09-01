@@ -16,6 +16,34 @@ export type SupervisorInterventionBoundary = (typeof SUPERVISOR_INTERVENTION_BOU
 export type SupervisorInterventionIntent = (typeof SUPERVISOR_INTERVENTION_INTENTS)[number];
 export type SupervisorInterventionDelivery = (typeof SUPERVISOR_INTERVENTION_DELIVERIES)[number];
 
+/** Allowed delivery boundaries and whether a delivery requires a non-empty message. */
+export const SUPERVISOR_INTERVENTION_COMPATIBILITY_MATRIX: Readonly<
+  Record<
+    SupervisorInterventionDelivery,
+    {
+      readonly boundaries: readonly SupervisorInterventionBoundary[];
+      readonly messageRequired: boolean;
+    }
+  >
+> = Object.freeze({
+  block: Object.freeze({
+    boundaries: Object.freeze(['tool-call'] as const),
+    messageRequired: true,
+  }),
+  steer: Object.freeze({
+    boundaries: Object.freeze(['tool-call', 'stream'] as const),
+    messageRequired: true,
+  }),
+  'follow-up': Object.freeze({
+    boundaries: Object.freeze(['stream', 'settled'] as const),
+    messageRequired: true,
+  }),
+  none: Object.freeze({
+    boundaries: Object.freeze([...SUPERVISOR_INTERVENTION_BOUNDARIES]),
+    messageRequired: false,
+  }),
+});
+
 export interface SupervisorInterventionProposal {
   readonly sourceFeatureId: string;
   readonly boundary: SupervisorInterventionBoundary;
@@ -85,6 +113,17 @@ export function validateSupervisorInterventionProposal(
       priority < 0 ||
       priority > 100 ||
       !isSupervisorReasonCode(reasonCode)
+    ) {
+      return invalidIntervention();
+    }
+
+    const compatibility = SUPERVISOR_INTERVENTION_COMPATIBILITY_MATRIX[delivery];
+    if (
+      !compatibility.boundaries.includes(boundary) ||
+      (compatibility.messageRequired &&
+        (!hasOwn(value, 'message') ||
+          typeof value.message !== 'string' ||
+          value.message.length === 0))
     ) {
       return invalidIntervention();
     }

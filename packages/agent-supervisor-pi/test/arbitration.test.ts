@@ -24,6 +24,7 @@ function proposal(
     delivery: 'steer',
     priority,
     reasonCode: `${sourceFeatureId}:reason`,
+    message: 'Please inspect.',
     ...overrides,
   });
 }
@@ -118,7 +119,7 @@ describe('supervisor intervention arbitration', () => {
           boundary: 'tool-call',
           targetToolCallId: 'call-a',
         }),
-        proposal('feature-b', 'continue', 1, { boundary: 'settled' }),
+        proposal('feature-b', 'continue', 1, { boundary: 'settled', delivery: 'follow-up' }),
       ],
       { 'feature-a': 'autonomous', 'feature-b': 'autonomous' },
     );
@@ -163,7 +164,7 @@ describe('supervisor intervention arbitration', () => {
         boundary: 'tool-call',
         targetToolCallId: 'call-a',
       }),
-      proposal('feature-e', 'stop', 7, { boundary: 'settled' }),
+      proposal('feature-e', 'stop', 7, { boundary: 'settled', delivery: 'follow-up' }),
     ];
     const featureModes = {
       'feature-a': 'observe',
@@ -193,6 +194,7 @@ describe('supervisor intervention arbitration', () => {
         delivery: 'steer',
         priority: 1,
         reasonCode: 'feature-a:reason',
+        message: 'Please inspect.',
       },
     ],
     [
@@ -204,6 +206,7 @@ describe('supervisor intervention arbitration', () => {
         delivery: 'steer',
         priority: 1,
         reasonCode: 'feature-a:reason',
+        message: 'Please inspect.',
         targetToolCallId: '',
       },
     ],
@@ -216,6 +219,7 @@ describe('supervisor intervention arbitration', () => {
         delivery: 'steer',
         priority: 1,
         reasonCode: 'feature-a:reason',
+        message: 'Please inspect.',
         targetToolCallId: 'call-1',
       },
     ],
@@ -228,6 +232,7 @@ describe('supervisor intervention arbitration', () => {
         delivery: 'steer',
         priority: 101,
         reasonCode: 'feature-a:reason',
+        message: 'Please inspect.',
       },
     ],
     [
@@ -239,6 +244,7 @@ describe('supervisor intervention arbitration', () => {
         delivery: 'steer',
         priority: 1,
         reasonCode: 'feature-b:reason',
+        message: 'Please inspect.',
       },
     ],
     [
@@ -250,6 +256,7 @@ describe('supervisor intervention arbitration', () => {
         delivery: 'steer',
         priority: 1,
         reasonCode: 'kernel:reason',
+        message: 'Please inspect.',
       },
     ],
   ] as const)('hard-rejects malformed proposal %s before grouping', (_description, invalidProposal) => {
@@ -269,6 +276,7 @@ describe('supervisor intervention arbitration', () => {
       delivery: 'steer',
       priority: 1,
       reasonCode: 'feature-a:reason',
+      message: 'Please inspect.',
     } as const;
     const [result] = arbitrateInterventions({
       proposals: [inputProposal as unknown as SupervisorInterventionProposal],

@@ -37,3 +37,4 @@ jobs:
       - if: matrix.node == '24.x'
         run: pnpm test:registry-poll
       - run: pnpm test:real-harness
+      - run: pnpm test:supervisor-harness

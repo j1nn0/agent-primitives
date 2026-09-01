@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { SupervisorContractError, validateSupervisorInterventionProposal } from '../src/index.js';
+import {
+  SUPERVISOR_INTERVENTION_COMPATIBILITY_MATRIX,
+  SupervisorContractError,
+  validateSupervisorInterventionProposal,
+} from '../src/index.js';
 
 function proposal(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -9,6 +13,7 @@ function proposal(overrides: Record<string, unknown> = {}): Record<string, unkno
     delivery: 'steer',
     priority: 50,
     reasonCode: 'feature-a:review',
+    message: 'Please verify.',
     ...overrides,
   };
 }
@@ -85,5 +90,76 @@ describe('supervisor intervention proposals', () => {
         ),
       ).toThrow(SupervisorContractError);
     }
+  });
+
+  it('exports a frozen delivery compatibility matrix', () => {
+    expect(Object.isFrozen(SUPERVISOR_INTERVENTION_COMPATIBILITY_MATRIX)).toBe(true);
+    for (const compatibility of Object.values(SUPERVISOR_INTERVENTION_COMPATIBILITY_MATRIX)) {
+      expect(Object.isFrozen(compatibility)).toBe(true);
+      expect(Object.isFrozen(compatibility.boundaries)).toBe(true);
+    }
+  });
+
+  it.each([
+    ['block', 'tool-call'],
+    ['steer', 'tool-call'],
+    ['steer', 'stream'],
+    ['follow-up', 'stream'],
+    ['follow-up', 'settled'],
+    ['none', 'tool-call'],
+    ['none', 'stream'],
+    ['none', 'settled'],
+  ] as const)('accepts compatible delivery %s at %s', (delivery, boundary) => {
+    const parsed = validateSupervisorInterventionProposal(
+      proposal({
+        delivery,
+        boundary,
+        message: 'Please verify.',
+        ...(boundary === 'tool-call' ? { targetToolCallId: 'call-1' } : {}),
+      }),
+    );
+    expect(parsed.delivery).toBe(delivery);
+    expect(parsed.boundary).toBe(boundary);
+  });
+
+  it.each([
+    ['block', 'stream'],
+    ['block', 'settled'],
+    ['steer', 'settled'],
+    ['follow-up', 'tool-call'],
+  ] as const)('rejects incompatible delivery %s at %s', (delivery, boundary) => {
+    expect(() =>
+      validateSupervisorInterventionProposal(
+        proposal({
+          delivery,
+          boundary,
+          message: 'Please verify.',
+          ...(boundary === 'tool-call' ? { targetToolCallId: 'call-1' } : {}),
+        }),
+      ),
+    ).toThrow(SupervisorContractError);
+  });
+
+  it.each([
+    ['block', 'tool-call'],
+    ['steer', 'stream'],
+    ['follow-up', 'settled'],
+  ] as const)('requires a non-empty message for %s at %s', (delivery, boundary) => {
+    const input = proposal({
+      delivery,
+      boundary,
+      ...(boundary === 'tool-call' ? { targetToolCallId: 'call-1' } : {}),
+    });
+    delete input.message;
+    expect(() => validateSupervisorInterventionProposal(input)).toThrow(SupervisorContractError);
+    expect(() =>
+      validateSupervisorInterventionProposal({ ...input, message: '' }),
+    ).toThrow(SupervisorContractError);
+  });
+
+  it('allows an omitted message for none delivery', () => {
+    const input = proposal({ delivery: 'none', boundary: 'stream' });
+    delete input.message;
+    expect(validateSupervisorInterventionProposal(input).message).toBeUndefined();
   });
 });

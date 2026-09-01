@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_SUPERVISOR_CONFIG,
+  SUPERVISOR_CONFIG_CUSTOM_TYPE,
   SupervisorFeatureRegistry,
   parseSupervisorConfig,
   resolveSupervisorPlan,
@@ -37,6 +38,10 @@ describe('supervisor configuration and resolution', () => {
     });
     expect(Object.isFrozen(DEFAULT_SUPERVISOR_CONFIG)).toBe(true);
     expect(Object.isFrozen(DEFAULT_SUPERVISOR_CONFIG.features)).toBe(true);
+  });
+
+  it('uses the reserved supervisor config custom type name', () => {
+    expect(SUPERVISOR_CONFIG_CUSTOM_TYPE).toBe('agent-supervisor-config');
   });
 
   it('parses valid per-feature settings and preserves unknown future entries', () => {

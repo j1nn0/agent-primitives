@@ -2,6 +2,7 @@ import { SupervisorContractError } from './errors.js';
 import {
   isRegistrableSupervisorFeatureId,
   isSupervisorCapabilityId,
+  SUPERVISOR_KERNEL_SOURCE_ID,
 } from './ids.js';
 import {
   SUPERVISOR_INTERVENTION_INTENTS,
@@ -14,6 +15,21 @@ export type SupervisorMode = 'autonomous' | 'observe' | 'off';
 export type SupervisorFeatureMode = 'autonomous' | 'observe' | 'off';
 /** `unavailable` is a runtime resolution result and is never a persisted user setting. */
 export type EffectiveFeatureMode = 'autonomous' | 'observe' | 'off' | 'unavailable';
+
+export const SUPERVISOR_KERNEL_CAPABILITY_NAMESPACE = SUPERVISOR_KERNEL_SOURCE_ID;
+
+export const SUPERVISOR_KERNEL_CAPABILITIES_V1 = Object.freeze([
+  `${SUPERVISOR_KERNEL_CAPABILITY_NAMESPACE}:observation`,
+  `${SUPERVISOR_KERNEL_CAPABILITY_NAMESPACE}:persistence`,
+  `${SUPERVISOR_KERNEL_CAPABILITY_NAMESPACE}:intervention`,
+] as const);
+
+export function isSupervisorKernelCapabilityId(value: unknown): value is string {
+  return (
+    isSupervisorCapabilityId(value) &&
+    value.slice(0, value.indexOf(':')) === SUPERVISOR_KERNEL_CAPABILITY_NAMESPACE
+  );
+}
 
 /**
  * `experimental` is new behavior normally introduced in observe mode; `validated` has benchmark
@@ -146,6 +162,7 @@ export function validateSupervisorFeatureDescriptor(
       requires === null ||
       conflictsWith === null ||
       interventionIntents === null ||
+      provides.some(isSupervisorKernelCapabilityId) ||
       conflictsWith.includes(id)
     ) {
       return invalidDescriptor();

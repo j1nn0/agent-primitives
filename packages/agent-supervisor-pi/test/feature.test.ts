@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { SupervisorContractError, validateSupervisorFeatureDescriptor } from '../src/index.js';
+import {
+  SUPERVISOR_KERNEL_CAPABILITIES_V1,
+  SUPERVISOR_KERNEL_CAPABILITY_NAMESPACE,
+  SUPERVISOR_KERNEL_SOURCE_ID,
+  SupervisorContractError,
+  isSupervisorKernelCapabilityId,
+  validateSupervisorFeatureDescriptor,
+} from '../src/index.js';
 
 function descriptor(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -26,6 +33,33 @@ describe('supervisor feature descriptors', () => {
     expect(validateSupervisorFeatureDescriptor(descriptor())).toEqual(descriptor());
   });
 
+  it('defines the reserved kernel capabilities without reserving other namespaces', () => {
+    expect(SUPERVISOR_KERNEL_CAPABILITY_NAMESPACE).toBe(SUPERVISOR_KERNEL_SOURCE_ID);
+    expect(SUPERVISOR_KERNEL_CAPABILITIES_V1).toEqual([
+      'kernel:observation',
+      'kernel:persistence',
+      'kernel:intervention',
+    ]);
+    expect(Object.isFrozen(SUPERVISOR_KERNEL_CAPABILITIES_V1)).toBe(true);
+    expect(isSupervisorKernelCapabilityId('kernel:observation')).toBe(true);
+    expect(isSupervisorKernelCapabilityId('provider-x:ready')).toBe(false);
+    expect(isSupervisorKernelCapabilityId('kernel')).toBe(false);
+  });
+
+  it('allows kernel requirements and open non-kernel capability namespaces', () => {
+    expect(
+      validateSupervisorFeatureDescriptor(
+        descriptor({
+          provides: ['evidence:source', 'progress:milestone', 'provider-x:ready'],
+          requires: ['kernel:observation'],
+        }),
+      ),
+    ).toMatchObject({
+      provides: ['evidence:source', 'progress:milestone', 'provider-x:ready'],
+      requires: ['kernel:observation'],
+    });
+  });
+
   it.each([
     { id: 'Feature-a' },
     { id: 'kernel' },
@@ -38,6 +72,7 @@ describe('supervisor feature descriptors', () => {
     { interventionIntents: ['verify', 'verify'] },
     { conflictsWith: ['feature-a'] },
     { conflictsWith: ['kernel'] },
+    { provides: ['kernel:observation'] },
     { maturity: 'experimental', defaultMode: 'autonomous' },
   ])('rejects one invalid descriptor rule %#', (override) => {
     expectInvalid(descriptor(override));

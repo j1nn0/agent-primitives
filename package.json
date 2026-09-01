@@ -25,7 +25,8 @@
     "example:agent-tool-policy": "node examples/agent-tool-policy/basic.ts",
     "test:release-guard": "node scripts/test-release-guard.mjs",
     "test:registry-poll": "node scripts/test-registry-poll.mjs",
-    "test:real-harness": "node scripts/real-harness/run-all.mjs"
+    "test:real-harness": "node scripts/real-harness/run-all.mjs",
+    "test:supervisor-harness": "node scripts/supervisor-harness/run-all.mjs"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",

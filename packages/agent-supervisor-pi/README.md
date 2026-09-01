@@ -2,11 +2,121 @@
 
 ## Status
 
-This package is experimental, private, and not published to npm. It contains pure TypeScript contracts and unit tests for a future Autonomous Agent Supervisor.
+This package is experimental, private, and not published to npm.
 
-This is **not yet a Pi extension**. There is no extension entrypoint, no Pi event wiring, and installing this package currently provides **no autonomous behavior**. S0-A defines contracts and unit tests only.
+This **is now a Pi extension**. The Kernel runtime is active after installation: it normalizes Pi lifecycle events, tracks Root Requests, owns Supervisor persistence, resolves the feature plan, and owns intervention transport.
 
-The eventual product goal is install-and-forget autonomous improvement. The default global mode is `autonomous`, so the intended product profile requires no setup.
+There are still **no autonomous product features** in S1. The current built-in feature count is **zero**, so installing S1 alone **does not yet improve task effectiveness**. What S1 delivers is the control plane that S2 features will run on.
+
+The Supervisor registers **no model-callable tools**. The model cannot operate the Supervisor; only a human operator can, through one command namespace.
+
+The default global mode is `autonomous`, so the intended product profile requires no setup. Features are independently configurable.
+
+S2 introduces the first autonomous behavior.
+
+## Kernel runtime
+
+The extension entrypoint is `./dist/extension.js`. Its default export registers the production profile, which has no built-in features. A named `createAgentSupervisorExtension({ features })` factory exists for tests and future built-ins; it is not a supported public API.
+
+Only the Kernel touches Pi. Features receive no `pi` handle, no extension context, and no `sendUserMessage` or `appendEntry`. The Kernel owns runtime lifecycle, persistence, and intervention transport.
+
+### Kernel capabilities
+
+The Kernel provides `kernel:observation`, `kernel:persistence`, and `kernel:intervention`. `kernel:assessment` is not provided; auxiliary LLM assessment is a later stage.
+
+A feature may `require` a `kernel:*` capability. A feature may **not** `provide` one: a descriptor whose `provides` contains any `kernel:*` capability is hard-rejected. Non-kernel capability namespaces stay open and are not tied to feature IDs.
+
+### Observation pipeline
+
+Pi event objects never reach a feature. The Kernel normalizes them:
+
+| Pi event | Observation kind |
+| --- | --- |
+| `input` (`interactive` / `rpc`) | `root-request-started` |
+| `tool_call` | `before-tool-call` |
+| `tool_result` | `tool-result` |
+| `turn_end` | `turn-ended` |
+| `agent_settled` | `agent-settled` |
+| `session_start` | `session-started` |
+| `session_shutdown` | `session-shutdown` |
+| `session_before_compact` | `before-compact` |
+| `session_compact` | `compacted` |
+| `session_compact_failed` | `compaction-failed` |
+| `context` | `context-changed` |
+
+An `input` whose source is `extension` produces no observation; it only reactivates the current Root Request.
+
+Observation IDs and sequences are deterministic and runtime-local (`observation-0`, `observation-1`, …). Time is never an ordering authority.
+
+Payloads carry metadata only. Tool input and tool result content appear solely as canonical SHA-256 digests, and a value that cannot be canonicalized yields a `null` digest rather than an error. Prompt text, tool inputs, tool results, assistant responses, stdout, file contents, and compaction error text never enter an observation payload.
+
+### Root Requests
+
+An `interactive` or `rpc` input starts a new Root Request with a deterministic ID (`root-1`, `root-2`, …). An `extension` input never starts one: it rejoins the current Root Request, including after that root has settled. `agent_settled` marks the current root `settled` but keeps its ID, so a Supervisor follow-up stays in the same episode.
+
+A session start leaves the current root `null`; a resumed session never reactivates a stale root. The next Root Request sequence is persisted, so IDs are not reused across a resume.
+
+### Facts
+
+Facts are **root-local and ephemeral**. They are never persisted. Within one Root Request a fact emitted in one dispatch is visible to later dispatches; a new Root Request clears the buffer and resets the fact sequence.
+
+### Feature runtime
+
+Only features whose effective mode is `autonomous` or `observe` are instantiated, in ascending feature-ID order. Effective configuration resolves as structural config parsing, then plan resolution, then the module's own `validateConfig`, then runtime creation. A module without `validateConfig` receives `settings ?? null`. The result must be JSON-safe.
+
+Runtime status is `active`, `off`, `unavailable`, or `quarantined`. A failure is isolated to one feature and never terminates the agent or the Supervisor:
+
+| Situation | Result |
+| --- | --- |
+| `validateConfig` throws or returns non-JSON-safe | `unavailable` / `configuration-invalid` |
+| persisted state schema differs from the module codec | `unavailable` / `schema-mismatch` |
+| restored state fails the module codec | `unavailable` / `state-invalid` |
+| `create()` throws | `unavailable` / `initialization-failed` |
+| `onObservation` throws or emits an invalid emission | `quarantined` / `observation-failed` |
+| a stateless module emits `nextState` | `quarantined` / `state-emission-without-codec` |
+
+A quarantined feature performs no further work and proposes no further intervention for the rest of the session. Kernel health is `healthy` or `degraded`; while degraded the Supervisor suppresses autonomous intervention and behaves observe-only, and the agent keeps running.
+
+### Intervention transport
+
+`arbitrateInterventions` remains the only winner-selection authority. The Kernel executes at most one winner per isolated group and never merges messages.
+
+Delivery and boundary must be compatible; an incompatible proposal is a hard contract rejection:
+
+| Delivery | Allowed boundary | Message |
+| --- | --- | --- |
+| `block` | `tool-call` | required |
+| `steer` | `tool-call`, `stream` | required |
+| `follow-up` | `stream`, `settled` | required |
+| `none` | any | optional |
+
+A winning `block` is returned to Pi from the tool-call handler. `steer` and `follow-up` are delivered through `sendUserMessage` with the matching `deliverAs`. `none` performs no external action. Proposals from `observe` features never reach transport.
+
+### Persistence
+
+Two reserved session custom types, both excluded from LLM context:
+
+- `agent-supervisor-config` holds `SupervisorConfigV1`. When no entry exists, the effective configuration is the install-and-forget default and **nothing is persisted**. A change that has no effect appends nothing.
+- `agent-supervisor-state` holds explicitly discriminated runtime and feature records. A runtime record carries the next Root Request sequence. A feature record carries one feature's state envelope. Records for features that are not currently registered are preserved.
+
+Any unparsable `agent-supervisor-state` entry degrades kernel health rather than being silently discarded. If the latest runtime record is invalid, the next Root Request sequence is the monotonic supremum of the valid runtime records, so an ID is never reused. A runtime record is written only when the sequence changes; a feature record only when a feature emits a new state.
+
+### Operator command
+
+One namespace, `/agent-supervisor`. It registers no tools and never opens a confirmation or selection dialog; an explicit command applies immediately.
+
+```text
+/agent-supervisor
+/agent-supervisor status
+/agent-supervisor mode autonomous|observe|off
+/agent-supervisor feature <id> autonomous|observe|off|default
+```
+
+`/agent-supervisor` alone is `status`. `feature <id> default` removes only the mode override and keeps that feature's settings, returning it to its descriptor default.
+
+While the top-level persisted configuration is corrupt, a `feature` command is refused and the operator is told to repair the global mode first, so a feature-only edit can never regenerate a global `autonomous` configuration. An explicit `mode` command in that state is treated as an operator repair: because a corrupt document cannot be trusted to yield feature settings, the repair writes a fresh configuration with the selected mode and **no feature entries**, so any feature settings from an earlier configuration are superseded rather than guessed at. Older entries remain in session history but no longer take effect. A `feature` command for an unregistered ID is refused and never creates a configuration entry.
+
+A healthy agent run produces zero Supervisor notifications. Output appears only for `status` and as a short confirmation after an explicit successful command.
 
 ## Feature model
 
@@ -134,13 +244,12 @@ The feature set is open-ended. These are planned initial built-ins, not an exhau
 
 ## Not in this stage
 
-S0-A deliberately omits:
+S1 delivers the Kernel control plane and deliberately omits:
 
-- the Pi extension runtime and event wiring;
-- retry-loop behavior and completion-gating behavior;
-- auxiliary LLM assessment;
+- every autonomous product feature, including retry-loop behavior and completion gating;
+- auxiliary LLM assessment and any model call of the Supervisor's own;
 - automatic state/progress behavior;
 - context recovery;
 - automatic handoff;
-- real benchmark execution;
+- the benchmark runner and any real benchmark execution;
 - npm release.

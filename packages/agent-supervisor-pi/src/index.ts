@@ -6,6 +6,8 @@ export type { SupervisorContractErrorCode } from './errors.js';
 export { assertJsonValue, isJsonValue } from './json.js';
 export type { JsonPrimitive, JsonValue } from './json.js';
 
+export { computeSupervisorJsonDigest } from './digest.js';
+
 export {
   SUPERVISOR_ID_SEGMENT_PATTERN,
   SUPERVISOR_KERNEL_SOURCE_ID,
@@ -48,13 +50,25 @@ export type {
 } from './fact.js';
 
 export {
+  DEFAULT_SUPERVISOR_RUNTIME_STATE,
   SUPERVISOR_STATE_CUSTOM_TYPE,
+  parseSupervisorStateRecord,
   validateSupervisorFeatureStateEnvelope,
 } from './state.js';
-export type { SupervisorFeatureStateEnvelope } from './state.js';
+export type {
+  SupervisorFeatureStateEnvelope,
+  SupervisorFeatureStateRecordV1,
+  SupervisorRuntimeStateRecordV1,
+  SupervisorRuntimeStateV1,
+  SupervisorStateDiagnostic,
+  SupervisorStateDiagnosticCode,
+  SupervisorStateRecordParseResult,
+  SupervisorStateRecordV1,
+} from './state.js';
 
 export {
   SUPERVISOR_INTERVENTION_BOUNDARIES,
+  SUPERVISOR_INTERVENTION_COMPATIBILITY_MATRIX,
   SUPERVISOR_INTERVENTION_DELIVERIES,
   SUPERVISOR_INTERVENTION_INTENTS,
   validateSupervisorInterventionProposal,
@@ -66,7 +80,12 @@ export type {
   SupervisorInterventionProposal,
 } from './intervention.js';
 
-export { validateSupervisorFeatureDescriptor } from './feature.js';
+export {
+  SUPERVISOR_KERNEL_CAPABILITIES_V1,
+  SUPERVISOR_KERNEL_CAPABILITY_NAMESPACE,
+  isSupervisorKernelCapabilityId,
+  validateSupervisorFeatureDescriptor,
+} from './feature.js';
 export type {
   EffectiveFeatureMode,
   FeatureMaturity,
@@ -76,15 +95,24 @@ export type {
   SupervisorMode,
 } from './feature.js';
 
+export {
+  validateSupervisorFeatureModule,
+  validateSupervisorFeatureStateCodec,
+} from './module.js';
 export type {
   SupervisorFeatureContext,
   SupervisorFeatureEmission,
   SupervisorFeatureModule,
   SupervisorFeatureRuntime,
   SupervisorFeatureRuntimeContext,
+  SupervisorFeatureStateCodec,
 } from './module.js';
 
-export { DEFAULT_SUPERVISOR_CONFIG, parseSupervisorConfig } from './config.js';
+export {
+  DEFAULT_SUPERVISOR_CONFIG,
+  SUPERVISOR_CONFIG_CUSTOM_TYPE,
+  parseSupervisorConfig,
+} from './config.js';
 export type {
   SupervisorConfigDiagnostic,
   SupervisorConfigDiagnosticCode,

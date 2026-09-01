@@ -3,6 +3,8 @@ import { isRegistrableSupervisorFeatureId, isSupervisorFeatureId } from './ids.j
 import { hasOnlyAllowedKeys, hasOwn, isPlainObject } from './internal.js';
 import type { SupervisorFeatureMode, SupervisorMode } from './feature.js';
 
+export const SUPERVISOR_CONFIG_CUSTOM_TYPE = 'agent-supervisor-config';
+
 export interface SupervisorFeatureConfigEntry {
   readonly mode?: SupervisorFeatureMode;
   readonly settings?: JsonValue;

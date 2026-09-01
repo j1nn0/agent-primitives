@@ -1,0 +1,25 @@
+import * as kernelDefaultScenario from './scenarios/kernel-default.mjs';
+import * as kernelRuntimeProbeScenario from './scenarios/kernel-runtime-probe.mjs';
+import * as rootRequestLifecycleScenario from './scenarios/root-request-lifecycle.mjs';
+import * as fileBackedResumeScenario from './scenarios/file-backed-resume.mjs';
+import * as factVisibilityScenario from './scenarios/fact-visibility.mjs';
+import * as featureFailureIsolationScenario from './scenarios/feature-failure-isolation.mjs';
+import * as featureConfigSemanticsScenario from './scenarios/feature-config-semantics.mjs';
+import * as modeCommandRuntimeScenario from './scenarios/mode-command-runtime.mjs';
+import { runScenarioList } from './runner.mjs';
+
+const scenarios = [
+  kernelDefaultScenario,
+  kernelRuntimeProbeScenario,
+  rootRequestLifecycleScenario,
+  fileBackedResumeScenario,
+  factVisibilityScenario,
+  featureFailureIsolationScenario,
+  featureConfigSemanticsScenario,
+  modeCommandRuntimeScenario,
+];
+
+await runScenarioList(scenarios, {
+  label: 'FULL',
+  allowSkip: false,
+});
