@@ -25,6 +25,7 @@ const ASSESSMENT_TRACE_ENV = 'SUPERVISOR_HARNESS_ASSESSMENT_TRACE_PATH';
 const SIBLING_TRACE_ENV = 'SUPERVISOR_HARNESS_ASSESSMENT_SIBLING_TRACE_PATH';
 const ASSESSMENT_KIND = 'kernel:completion-assessment';
 const OBSERVER_ID = 'assessment-observer';
+const LIFECYCLE_OBSERVER_ID = 'assessment-lifecycle-observer';
 const SIBLING_ID = 'assessment-sibling';
 const TARGET_TOOL_NAME = 'supervisor_harness_assessment_foundation_target';
 const EVIDENCE_ID = 'e1';
@@ -43,6 +44,14 @@ function messageText(message) {
     .map((part) => part.text)
     .filter((text) => typeof text === 'string')
     .join('\n');
+}
+
+function latestAssistantText(messages) {
+  return messages
+    .filter((message) => message?.role === 'assistant')
+    .map(messageText)
+    .reverse()
+    .find((text) => text.length > 0) ?? '';
 }
 
 function notifyText(messages) {
@@ -195,7 +204,8 @@ async function runAssessmentTurn(harness, label, assistantText, assessmentKind) 
   );
   const modelCalls = harness.faux.state.callCount - callsBefore;
   harness.assertNoPendingFauxResponses();
-  const results = harness.session.messages.slice(messageStart).filter(
+  const messages = harness.session.messages.slice(messageStart);
+  const results = messages.filter(
     (message) => message?.role === 'toolResult' && message.toolName === TARGET_TOOL_NAME,
   );
   return {
@@ -203,6 +213,7 @@ async function runAssessmentTurn(harness, label, assistantText, assessmentKind) 
     modelCalls,
     agentModelCalls: 2,
     auxiliaryCalls: modelCalls - 2,
+    finalAssistantText: latestAssistantText(messages),
     results,
   };
 }
@@ -218,10 +229,11 @@ function checkCommonTestHarness(check, harness, status, label) {
     `${label}: loaded only the explicit assessment fixture extension with the public Supervisor command`,
   );
   check(
-    status.text.includes('Registered features: 2') &&
+    status.text.includes('Registered features: 3') &&
       featureIsActive(status.text, OBSERVER_ID) &&
+      featureIsActive(status.text, LIFECYCLE_OBSERVER_ID) &&
       featureIsActive(status.text, SIBLING_ID),
-    `${label}: assessment observer and deterministic sibling are active in autonomous mode`,
+    `${label}: assessment observers and deterministic sibling are active in autonomous mode`,
   );
 }
 
@@ -234,8 +246,26 @@ function checkAgentLifecycle(check, run, label) {
   );
 }
 
+function observationKinds(trace) {
+  return trace.map((entry) => entry?.observationKind ?? '<missing>');
+}
+
+function formatObservationOrder(trace) {
+  const kinds = observationKinds(trace);
+  return kinds.length === 0 ? 'none' : kinds.join(' -> ');
+}
+
+function findObservation(trace, featureId, kind) {
+  return trace.find(
+    (entry) => entry?.featureId === featureId && entry?.observationKind === kind,
+  );
+}
+
 function assessmentFacts(trace) {
-  return Array.isArray(trace[0]?.assessmentFacts) ? trace[0].assessmentFacts : [];
+  const readyObservation = findObservation(trace, OBSERVER_ID, 'assessment-ready');
+  return Array.isArray(readyObservation?.assessmentFacts)
+    ? readyObservation.assessmentFacts
+    : [];
 }
 
 async function runPartA(check, cleanup) {
@@ -266,8 +296,9 @@ async function runPartA(check, cleanup) {
   check(
     initialStatus.text.includes('Registered features: 1') &&
       featureIsActive(initialStatus.text, 'retry-loop-breaker') &&
+      initialStatus.text.includes('Assessment: idle') &&
       !initialStatus.text.includes(`- ${OBSERVER_ID}:`),
-    'A: retry-loop-breaker is active and no assessment consumer is present',
+    'A: retry-loop-breaker is active, assessment is idle, and no assessment consumer is present',
   );
 
   const callsBefore = harness.faux.state.callCount;
@@ -289,7 +320,17 @@ async function runPartA(check, cleanup) {
       countEvents(events, 'turn_end') === 1,
     'A: the normal scripted turn had no automatic follow-up turn',
   );
-  console.log('  TRACE assessment-foundation A: modelCalls=1, auxiliaryCalls=0');
+  const finalStatus = await captureStatus(harness, 'part A final status');
+  const finalAssessmentStatus = finalStatus.text
+    .split('\n')
+    .find((line) => line.startsWith('Assessment:'));
+  check(
+    finalAssessmentStatus === 'Assessment: idle' && modelCalls === 1,
+    'A: production assessment stayed idle with no auxiliary call, so no assessment-ready was emitted',
+  );
+  console.log(
+    `  TRACE assessment-foundation A: modelCalls=${modelCalls}, auxiliaryCalls=0, observationOrder=none`,
+  );
   harness.assertNoAuthCredentials();
 }
 
@@ -316,27 +357,44 @@ async function runPartB(check, cleanup) {
 
   const status = await captureStatus(harness, 'part B final status');
   const trace = readJsonl(tracePath);
+  const settledObservation = findObservation(trace, LIFECYCLE_OBSERVER_ID, 'agent-settled');
+  const readyObservation = findObservation(trace, OBSERVER_ID, 'assessment-ready');
   const facts = assessmentFacts(trace);
   const fact = facts[0];
   const claim = fact?.data?.claims?.[0];
   const reference = claim?.evidence?.[0];
   check(
-    trace.length === 1 &&
-      trace[0]?.observationKind === 'agent-settled' &&
-      trace[0]?.runtimeContextKeys?.join(',') === 'effectiveMode,facts,featureId,state',
-    'B: the observer received an isolated runtime context at agent-settled',
+    trace.length === 2 &&
+      JSON.stringify(observationKinds(trace)) ===
+        JSON.stringify(['agent-settled', 'assessment-ready']) &&
+      settledObservation?.featureId === LIFECYCLE_OBSERVER_ID &&
+      readyObservation?.featureId === OBSERVER_ID &&
+      (settledObservation?.observationSequence ?? Number.MAX_SAFE_INTEGER) <
+        (readyObservation?.observationSequence ?? -1) &&
+      settledObservation?.assessmentFacts?.length === 0 &&
+      readyObservation?.assessmentFacts?.length === 1 &&
+      settledObservation?.runtimeContextKeys?.join(',') === 'effectiveMode,facts,featureId,state' &&
+      readyObservation?.runtimeContextKeys?.join(',') === 'effectiveMode,facts,featureId,state',
+    'B: agent-settled was observed before assessment-ready; only the ready consumer saw the fact',
+  );
+  check(
+    readyObservation?.observationPayload !== undefined &&
+      JSON.stringify(readyObservation.observationPayload) ===
+        JSON.stringify({ assessmentId: 'assessment-1', runSequence: 1 }),
+    'B: assessment-ready carried only the assessment id and run sequence',
   );
   check(
     facts.length === 1 &&
       fact?.kind === ASSESSMENT_KIND &&
-      fact.sourceFeatureId === 'kernel' &&
-      fact.evidenceRefs.includes(EVIDENCE_ID),
-    'B: the observer saw one Kernel completion-assessment fact before agent-settled dispatch completed',
+      fact?.sourceFeatureId === 'kernel' &&
+      fact?.evidenceRefs?.includes(EVIDENCE_ID),
+    'B: the assessment-ready consumer saw one Kernel completion-assessment fact',
   );
   check(
-    claim?.kind === 'completion' &&
+    run.finalAssistantText === FINAL_ASSISTANT_TEXT &&
+      claim?.kind === 'completion' &&
       typeof claim.quote === 'string' &&
-      FINAL_ASSISTANT_TEXT.includes(claim.quote) &&
+      run.finalAssistantText.includes(claim.quote) &&
       claim.quote === CLAIM_QUOTE,
     'B: the assessment claim quote is an exact substring of the final assistant response',
   );
@@ -351,11 +409,12 @@ async function runPartB(check, cleanup) {
     'B: the raw evidence quote text is absent from the committed fact',
   );
   check(
-    status.text.includes('Kernel health: healthy'),
+    status.text.includes('Kernel health: healthy') &&
+      status.text.includes('Assessment: success'),
     'B: valid assessment left Kernel health healthy',
   );
   console.log(
-    `  TRACE assessment-foundation B: modelCalls=${run.modelCalls}, auxiliaryCalls=${run.auxiliaryCalls}, facts=${facts.length}, claims=${Array.isArray(fact?.data?.claims) ? fact.data.claims.length : 0}`,
+    `  TRACE assessment-foundation B: modelCalls=${run.modelCalls}, auxiliaryCalls=${run.auxiliaryCalls}, observationOrder=${formatObservationOrder(trace)}, facts=${facts.length}, claims=${Array.isArray(fact?.data?.claims) ? fact.data.claims.length : 0}`,
   );
   harness.assertNoAuthCredentials();
 }
@@ -384,25 +443,31 @@ async function runPartC(check, cleanup) {
   const uiMessagesAfterRun = harness.uiMessages.length;
 
   const trace = readJsonl(tracePath);
+  const settledObservation = findObservation(trace, LIFECYCLE_OBSERVER_ID, 'agent-settled');
+  const readyObservation = findObservation(trace, OBSERVER_ID, 'assessment-ready');
   const facts = assessmentFacts(trace);
   const fact = facts[0];
   const status = await captureStatus(harness, 'part C final status');
   check(
-    trace.length === 1 &&
-      trace[0]?.observationKind === 'agent-settled' &&
+    trace.length === 2 &&
+      JSON.stringify(observationKinds(trace)) ===
+        JSON.stringify(['agent-settled', 'assessment-ready']) &&
+      settledObservation?.assessmentFacts?.length === 0 &&
+      readyObservation?.assessmentFacts?.length === 1 &&
       facts.length === 1 &&
       fact?.kind === ASSESSMENT_KIND &&
       Array.isArray(fact?.data?.claims) &&
       fact.data.claims.length === 0,
-    'C: the observer saw a valid assessment fact with zero claims',
+    'C: an empty claims result committed a fact and emitted assessment-ready after agent-settled',
   );
   check(
     uiMessagesAfterRun === uiMessagesBefore &&
-      status.text.includes('Kernel health: healthy'),
+      status.text.includes('Kernel health: healthy') &&
+      status.text.includes('Assessment: success'),
     'C: the no-claim assessment caused no intervention and kept Kernel health healthy',
   );
   console.log(
-    `  TRACE assessment-foundation C: modelCalls=${run.modelCalls}, auxiliaryCalls=${run.auxiliaryCalls}, facts=${facts.length}, claims=0`,
+    `  TRACE assessment-foundation C: modelCalls=${run.modelCalls}, auxiliaryCalls=${run.auxiliaryCalls}, observationOrder=${formatObservationOrder(trace)}, facts=${facts.length}, claims=0`,
   );
   harness.assertNoAuthCredentials();
 }
@@ -432,13 +497,17 @@ async function runPartD(check, cleanup) {
 
   const trace = readJsonl(tracePath);
   const siblingTrace = readJsonl(siblingTracePath);
+  const lifecycleObservation = findObservation(trace, LIFECYCLE_OBSERVER_ID, 'agent-settled');
   const facts = assessmentFacts(trace);
   const status = await captureStatus(harness, 'part D final status');
   check(
     trace.length === 1 &&
-      trace[0]?.observationKind === 'agent-settled' &&
+      JSON.stringify(observationKinds(trace)) === JSON.stringify(['agent-settled']) &&
+      lifecycleObservation?.featureId === LIFECYCLE_OBSERVER_ID &&
+      lifecycleObservation?.assessmentFacts?.length === 0 &&
+      findObservation(trace, OBSERVER_ID, 'assessment-ready') === undefined &&
       facts.length === 0,
-    'D: the observer received no successful completion-assessment fact',
+    'D: agent-settled was delivered but malformed assessment emitted no assessment-ready or fact',
   );
   check(
     status.text.includes('Kernel health: healthy') &&
@@ -459,7 +528,7 @@ async function runPartD(check, cleanup) {
     'D: malformed assessment caused no intervention',
   );
   console.log(
-    `  TRACE assessment-foundation D: modelCalls=${run.modelCalls}, auxiliaryCalls=${run.auxiliaryCalls}, facts=${facts.length}, siblingObservations=${siblingTrace.length}`,
+    `  TRACE assessment-foundation D: modelCalls=${run.modelCalls}, auxiliaryCalls=${run.auxiliaryCalls}, observationOrder=${formatObservationOrder(trace)}, facts=${facts.length}, siblingObservations=${siblingTrace.length}`,
   );
   harness.assertNoAuthCredentials();
 }

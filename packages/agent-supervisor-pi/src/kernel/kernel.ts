@@ -74,6 +74,13 @@ interface CurrentRoot {
   status: SupervisorRootStatus;
 }
 
+interface PendingSupervisorAssessment {
+  readonly identity: SupervisorAssessmentIdentity;
+  readonly input: SupervisorAssessmentInput;
+  readonly assessmentEnabled: boolean;
+  readonly assessmentLifecycleGeneration: number;
+}
+
 const USAGE_MESSAGE =
   'Usage: /agent-supervisor [status|mode autonomous|observe|off|feature <id> autonomous|observe|off|default]';
 
@@ -394,7 +401,10 @@ export class SupervisorKernel {
     const queued = this.enqueue(async () => {
       try {
         await this.ensureLoaded(ctx);
-        completion = this.processAgentSettled(event, ctx);
+        const pendingAssessment = await this.processAgentSettled(event, ctx);
+        if (pendingAssessment !== undefined) {
+          completion = this.completeAssessment(pendingAssessment, ctx);
+        }
       } catch {
         this.markDegraded();
       }
@@ -404,47 +414,110 @@ export class SupervisorKernel {
     });
   }
 
-  private processAgentSettled(event: AgentSettledEvent, ctx: ExtensionContext): Promise<void> {
+  private processAgentSettled(
+    event: AgentSettledEvent,
+    ctx: ExtensionContext,
+  ): Promise<PendingSupervisorAssessment | undefined> {
     return this.safe(undefined, async () => {
       // Activation is deliberately checked before any model or request work.
       const assessmentEnabled = isSupervisorAssessmentEnabled(this.runtimeManager.getPlan());
       const root = this.currentRoot;
       const rootRequestId = root?.id ?? null;
+      if (root !== null && root.status === 'settled') {
+        return undefined;
+      }
       if (root !== null) {
         root.status = 'settled';
       }
 
       const identity = root === null ? undefined : this.readAssessmentIdentity(ctx);
-      if (identity === undefined) {
-        await this.dispatchEvent(event, rootRequestId);
+      let pendingAssessment: PendingSupervisorAssessment | undefined;
+      if (identity !== undefined) {
+        const assessmentLifecycleGeneration = this.assessmentLifecycleGeneration;
+        const capturedInput = this.assessmentCapture.getSnapshot();
+        const input: SupervisorAssessmentInput =
+          this.finalAssistantRunGeneration === this.runGeneration
+            ? capturedInput
+            : {
+                ...(capturedInput.taskText === undefined ? {} : { taskText: capturedInput.taskText }),
+                evidence: capturedInput.evidence,
+              };
+        pendingAssessment = {
+          identity,
+          input,
+          assessmentEnabled,
+          assessmentLifecycleGeneration,
+        };
+      }
+
+      // Pi lifecycle delivery is complete before any asynchronous assessment work begins.
+      await this.dispatchEvent(event, rootRequestId);
+      return pendingAssessment;
+    });
+  }
+
+  private completeAssessment(
+    pending: PendingSupervisorAssessment,
+    ctx: ExtensionContext,
+  ): Promise<void> {
+    return this.safe(undefined, async () => {
+      if (
+        !this.isAssessmentIdentityCurrent(
+          ctx,
+          pending.identity,
+          pending.assessmentLifecycleGeneration,
+        )
+      ) {
         return;
       }
 
-      const assessmentLifecycleGeneration = this.assessmentLifecycleGeneration;
-
-      const capturedInput = this.assessmentCapture.getSnapshot();
-      const input: SupervisorAssessmentInput = this.finalAssistantRunGeneration === this.runGeneration
-        ? capturedInput
-        : {
-            ...(capturedInput.taskText === undefined ? {} : { taskText: capturedInput.taskText }),
-            evidence: capturedInput.evidence,
-          };
       const outcome = await this.assessmentController.assess(
         ctx,
-        input,
-        identity,
-        () => this.isAssessmentIdentityCurrent(ctx, identity, assessmentLifecycleGeneration),
-        assessmentEnabled,
+        pending.input,
+        pending.identity,
+        () =>
+          this.isAssessmentIdentityCurrent(
+            ctx,
+            pending.identity,
+            pending.assessmentLifecycleGeneration,
+          ),
+        pending.assessmentEnabled,
       );
-      const assessmentIsCurrent = this.isAssessmentIdentityCurrent(
-        ctx,
-        identity,
-        assessmentLifecycleGeneration,
-      );
-      if (assessmentIsCurrent && outcome.kind === 'success') {
-        this.commitAssessmentFact(outcome, identity, input);
+      if (
+        outcome.kind !== 'success' ||
+        !this.isAssessmentIdentityCurrent(
+          ctx,
+          pending.identity,
+          pending.assessmentLifecycleGeneration,
+        )
+      ) {
+        return;
       }
-      await this.dispatchEvent(event, rootRequestId);
+
+      // Serialize the commit and ready observation with Root Request lifecycle dispatches. The
+      // identity check happens inside the queue so a newly submitted root cannot inherit this
+      // result while it is waiting behind another operation.
+      await this.enqueue(async () => {
+        if (
+          !this.isAssessmentIdentityCurrent(
+            ctx,
+            pending.identity,
+            pending.assessmentLifecycleGeneration,
+          )
+        ) {
+          return;
+        }
+        const assessmentId = this.commitAssessmentFact(outcome, pending.identity, pending.input);
+        if (assessmentId === undefined) {
+          return;
+        }
+        const observation = this.normalizer.createInternal(
+          'assessment-ready',
+          { assessmentId, runSequence: pending.identity.runGeneration },
+          pending.identity.rootRequestId,
+        );
+        await this.dispatchAndIntervene(observation, undefined);
+      });
     });
   }
 
@@ -497,16 +570,17 @@ export class SupervisorKernel {
     outcome: Extract<SupervisorAssessmentOutcome, { readonly kind: 'success' }>,
     identity: SupervisorAssessmentIdentity,
     input: SupervisorAssessmentInput,
-  ): void {
+  ): string | undefined {
     if (this.nextFactSequence === Number.MAX_SAFE_INTEGER) {
-      return;
+      return undefined;
     }
 
+    const assessmentId = `assessment-${identity.runGeneration}`;
     const candidate: SupervisorFactCandidate = {
       kind: SUPERVISOR_COMPLETION_ASSESSMENT_KIND,
       evidenceRefs: input.evidence.map((record) => record.id),
       data: {
-        assessmentId: `assessment-${identity.runGeneration}`,
+        assessmentId,
         rootRequestId: identity.rootRequestId,
         runSequence: identity.runGeneration,
         claims: outcome.output.claims.map((claim, index) => ({
@@ -540,8 +614,10 @@ export class SupervisorKernel {
       });
       this.facts = [...this.facts, record];
       this.nextFactSequence += 1;
+      return assessmentId;
     } catch {
       // A model result never degrades the Kernel if a defensive fact boundary rejects it.
+      return undefined;
     }
   }
 

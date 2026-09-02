@@ -7,6 +7,7 @@ const ASSESSMENT_TRACE_ENV = 'SUPERVISOR_HARNESS_ASSESSMENT_TRACE_PATH';
 const SIBLING_TRACE_ENV = 'SUPERVISOR_HARNESS_ASSESSMENT_SIBLING_TRACE_PATH';
 const ASSESSMENT_KIND = 'kernel:completion-assessment';
 const OBSERVER_ID = 'assessment-observer';
+const LIFECYCLE_OBSERVER_ID = 'assessment-lifecycle-observer';
 const SIBLING_ID = 'assessment-sibling';
 const FORBIDDEN_HANDLE_KEYS = ['pi', 'model', 'modelRegistry'];
 
@@ -51,9 +52,53 @@ export function createAssessmentObserver() {
       schemaVersion: 1,
       maturity: 'validated',
       defaultMode: 'autonomous',
-      observes: ['agent-settled'],
+      observes: ['assessment-ready'],
       provides: [],
       requires: ['kernel:assessment'],
+      conflictsWith: [],
+      usesAuxiliaryModel: true,
+      interventionIntents: [],
+    },
+    create(context) {
+      assertNoForbiddenHandles(context);
+      return {
+        onObservation(observation, runtimeContext) {
+          assertNoForbiddenHandles(runtimeContext);
+          if (observation.kind !== 'assessment-ready') {
+            return undefined;
+          }
+
+          const assessmentFacts = runtimeContext.facts
+            .byKind(ASSESSMENT_KIND)
+            .map(copyFact);
+          appendTrace(ASSESSMENT_TRACE_ENV, {
+            featureId: OBSERVER_ID,
+            observationKind: observation.kind,
+            observationId: observation.id,
+            observationSequence: observation.sequence,
+            observationPayload: observation.payload,
+            rootRequestId: observation.rootRequestId,
+            runtimeContextKeys: Object.keys(runtimeContext).sort(),
+            assessmentFacts,
+          });
+          return undefined;
+        },
+      };
+    },
+  };
+}
+
+/** Test-only consumer used to record settled-before-ready ordering and fact visibility. */
+export function createAssessmentLifecycleObserver() {
+  return {
+    descriptor: {
+      id: LIFECYCLE_OBSERVER_ID,
+      schemaVersion: 1,
+      maturity: 'validated',
+      defaultMode: 'autonomous',
+      observes: ['agent-settled'],
+      provides: [],
+      requires: [],
       conflictsWith: [],
       usesAuxiliaryModel: false,
       interventionIntents: [],
@@ -71,10 +116,11 @@ export function createAssessmentObserver() {
             .byKind(ASSESSMENT_KIND)
             .map(copyFact);
           appendTrace(ASSESSMENT_TRACE_ENV, {
-            featureId: OBSERVER_ID,
+            featureId: LIFECYCLE_OBSERVER_ID,
             observationKind: observation.kind,
             observationId: observation.id,
             observationSequence: observation.sequence,
+            observationPayload: observation.payload,
             rootRequestId: observation.rootRequestId,
             runtimeContextKeys: Object.keys(runtimeContext).sort(),
             assessmentFacts,
@@ -124,7 +170,11 @@ export function createAssessmentSibling() {
 }
 
 export function createAssessmentFeatures() {
-  return [createAssessmentObserver(), createAssessmentSibling()];
+  return [
+    createAssessmentObserver(),
+    createAssessmentLifecycleObserver(),
+    createAssessmentSibling(),
+  ];
 }
 
 export default function assessmentFoundationExtension(pi) {

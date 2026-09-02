@@ -165,6 +165,7 @@ export function validateSupervisorFeatureDescriptor(
       conflictsWith === null ||
       interventionIntents === null ||
       provides.some(isSupervisorKernelCapabilityId) ||
+      (!usesAuxiliaryModel && requires.includes(SUPERVISOR_KERNEL_ASSESSMENT_CAPABILITY)) ||
       conflictsWith.includes(id)
     ) {
       return invalidDescriptor();

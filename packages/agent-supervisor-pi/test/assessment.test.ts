@@ -39,6 +39,7 @@ import type {
   SupervisorFeatureMode,
 } from '../src/feature.js';
 import { SupervisorKernel } from '../src/kernel/kernel.js';
+import type { SupervisorObservation } from '../src/observation.js';
 import type { SupervisorFeatureModule, SupervisorFeatureRuntime } from '../src/module.js';
 import type { ResolvedSupervisorFeature, SupervisorPlan } from '../src/registry.js';
 
@@ -62,6 +63,7 @@ class AssessmentRecordingPi {
   public readonly handlers = new Map<string, EventHandler>();
   public readonly commands = new Map<string, (args: string, context: ExtensionCommandContext) => Promise<void>>();
   public readonly notifications: string[] = [];
+  public readonly sentMessages: { readonly content: unknown; readonly options: unknown }[] = [];
 
   public readonly pi: ExtensionAPI;
 
@@ -95,7 +97,9 @@ class AssessmentRecordingPi {
       appendEntry: (customType: string, data?: unknown): void => {
         this.branch.push(customEntry(customType, data));
       },
-      sendUserMessage: (): void => undefined,
+      sendUserMessage: (content: unknown, options?: unknown): void => {
+        this.sentMessages.push({ content, options });
+      },
     } as unknown as ExtensionAPI;
   }
 
@@ -157,9 +161,10 @@ type AssessmentObservationHandler = NonNullable<SupervisorFeatureRuntime<never>[
 function assessmentConsumer(
   id = 'assessment-consumer',
   onObservation?: AssessmentObservationHandler,
+  observes: readonly string[] = ['agent-settled'],
 ): SupervisorFeatureModule {
   return {
-    descriptor: descriptor([CAPABILITY], id, ['agent-settled']),
+    descriptor: descriptor([CAPABILITY], id, observes),
     create: () => (onObservation === undefined ? {} : { onObservation }),
   };
 }
@@ -253,14 +258,17 @@ function blockingFeature(): SupervisorFeatureModule {
   };
 }
 
-function captureObserver(onObservation: AssessmentObservationHandler): SupervisorFeatureModule {
+function captureObserver(
+  onObservation: AssessmentObservationHandler,
+  observes: readonly string[] = ['tool-result', 'turn-ended'],
+): SupervisorFeatureModule {
   return {
     descriptor: validateSupervisorFeatureDescriptor({
       id: 'capture-observer',
       schemaVersion: 1,
       maturity: 'validated',
       defaultMode: 'autonomous',
-      observes: ['tool-result', 'turn-ended'],
+      observes: [...observes],
       provides: [],
       requires: [],
       conflictsWith: [],
@@ -268,6 +276,75 @@ function captureObserver(onObservation: AssessmentObservationHandler): Superviso
       interventionIntents: [],
     }),
     create: () => ({ onObservation }),
+  };
+}
+
+function assessmentReadyFactFeature(emittedRoots: string[]): SupervisorFeatureModule {
+  return {
+    descriptor: validateSupervisorFeatureDescriptor({
+      id: 'assessment-ready-fact',
+      schemaVersion: 1,
+      maturity: 'validated',
+      defaultMode: 'autonomous',
+      observes: ['assessment-ready'],
+      provides: [],
+      requires: [],
+      conflictsWith: [],
+      usesAuxiliaryModel: false,
+      interventionIntents: [],
+    }),
+    create: () => ({
+      onObservation: (observation) => {
+        if (observation.kind !== 'assessment-ready') {
+          return undefined;
+        }
+        emittedRoots.push(observation.rootRequestId ?? 'null');
+        return {
+          facts: [
+            {
+              kind: 'assessment-ready-fact:seen',
+              evidenceRefs: ['assessment-ready'],
+              data: { rootRequestId: observation.rootRequestId },
+            },
+          ],
+        };
+      },
+    }),
+  };
+}
+
+function assessmentReadyInterventionFeature(): SupervisorFeatureModule {
+  return {
+    descriptor: validateSupervisorFeatureDescriptor({
+      id: 'assessment-ready-intervention',
+      schemaVersion: 1,
+      maturity: 'validated',
+      defaultMode: 'autonomous',
+      observes: ['assessment-ready'],
+      provides: [],
+      requires: [],
+      conflictsWith: [],
+      usesAuxiliaryModel: false,
+      interventionIntents: ['continue'],
+    }),
+    create: () => ({
+      onObservation: (observation) =>
+        observation.kind === 'assessment-ready'
+          ? {
+              interventions: [
+                {
+                  sourceFeatureId: 'assessment-ready-intervention',
+                  boundary: 'settled',
+                  intent: 'continue',
+                  delivery: 'follow-up',
+                  priority: 1,
+                  reasonCode: 'assessment-ready-intervention:follow-up',
+                  message: 'assessment ready follow-up',
+                },
+              ],
+            }
+          : undefined,
+    }),
   };
 }
 
@@ -871,12 +948,21 @@ async function settleAssessmentRoot(
 describe('Supervisor assessment Kernel requests', () => {
   it('makes no auxiliary call for a production-style kernel with no consumers', async () => {
     const recording = new AssessmentRecordingPi();
-    const kernel = createAssessmentKernel(recording, []);
+    const observations: string[] = [];
+    const kernel = createAssessmentKernel(recording, [captureObserver(
+      (observation) => {
+        if (observation.kind === 'agent-settled' || observation.kind === 'assessment-ready') {
+          observations.push(observation.kind);
+        }
+      },
+      ['agent-settled', 'assessment-ready'],
+    )]);
     recording.model = assessmentModel();
     recording.completionHandler = async () => assessmentResponse(assessmentOutput(ASSESSMENT_CLAIM_QUOTE));
 
     await settleAssessmentRoot(recording);
 
+    expect(observations).toEqual(['agent-settled']);
     expect(recording.completionCalls).toHaveLength(0);
     expect(kernel.getFacts()).toEqual([]);
   });
@@ -891,6 +977,30 @@ describe('Supervisor assessment Kernel requests', () => {
 
     expect(recording.completionCalls).toHaveLength(1);
     expect(kernel.getFacts()).toHaveLength(1);
+  });
+
+  it('treats an empty claims result as a successful assessment', async () => {
+    const recording = new AssessmentRecordingPi();
+    const observations: string[] = [];
+    const kernel = createAssessmentKernel(recording, [assessmentConsumer(
+      'assessment-observer',
+      (observation) => {
+        if (observation.kind === 'agent-settled' || observation.kind === 'assessment-ready') {
+          observations.push(observation.kind);
+        }
+      },
+      ['agent-settled', 'assessment-ready'],
+    )]);
+    recording.model = assessmentModel();
+    recording.completionHandler = async () =>
+      assessmentResponse(assessmentJson({ schemaVersion: 1, claims: [] }));
+
+    await settleAssessmentRoot(recording);
+
+    expect(observations).toEqual(['agent-settled', 'assessment-ready']);
+    expect(recording.completionCalls).toHaveLength(1);
+    expect(kernel.getFacts()).toHaveLength(1);
+    expect((kernel.getFacts()[0]?.data as { readonly claims?: readonly unknown[] } | undefined)?.claims).toEqual([]);
   });
 
   it('shares one call between two consumers', async () => {
@@ -910,18 +1020,36 @@ describe('Supervisor assessment Kernel requests', () => {
 
   it('deduplicates a duplicate settled event and permits one later run in the same root', async () => {
     const recording = new AssessmentRecordingPi();
-    const kernel = createAssessmentKernel(recording, [assessmentConsumer()]);
+    const observations: string[] = [];
+    const kernel = createAssessmentKernel(recording, [assessmentConsumer(
+      'assessment-observer',
+      (observation) => {
+        if (observation.kind === 'agent-settled' || observation.kind === 'assessment-ready') {
+          observations.push(observation.kind);
+        }
+      },
+      ['agent-settled', 'assessment-ready'],
+    )]);
     recording.model = assessmentModel();
     recording.completionHandler = async () => assessmentResponse(assessmentOutput(ASSESSMENT_CLAIM_QUOTE));
 
     await settleAssessmentRoot(recording);
+    expect(observations).toEqual(['agent-settled', 'assessment-ready']);
     await recording.emit('agent_settled', { type: 'agent_settled' });
     expect(recording.completionCalls).toHaveLength(1);
+    expect(kernel.getFacts()).toHaveLength(1);
+    expect(observations).toEqual(['agent-settled', 'assessment-ready']);
 
     await recording.emit('input', inputEvent('extension', 'supervisor follow-up'));
     await settleCurrentAssessmentRun(recording);
 
     expect(recording.completionCalls).toHaveLength(2);
+    expect(observations).toEqual([
+      'agent-settled',
+      'assessment-ready',
+      'agent-settled',
+      'assessment-ready',
+    ]);
     expect(kernel.getFacts().map((fact) => (fact.data as { assessmentId: string }).assessmentId)).toEqual([
       'assessment-1',
       'assessment-2',
@@ -1081,15 +1209,104 @@ describe('Supervisor assessment Kernel requests', () => {
     expect(kernel.getHealth()).toBe('healthy');
   });
 
-  it('dispatches agent-settled when an assessment result is stale', async () => {
+  it('discards a pending assessment when a same-root extension follow-up advances the run', async () => {
     const recording = new AssessmentRecordingPi();
     const observations: string[] = [];
-    const kernel = createAssessmentKernel(recording, [assessmentConsumer(
-      'assessment-observer',
-      (observation) => {
-        observations.push(observation.kind);
-      },
-    )]);
+    const kernel = createAssessmentKernel(recording, [
+      assessmentConsumer(
+        'assessment-observer',
+        (observation) => {
+          if (observation.kind === 'agent-settled' || observation.kind === 'assessment-ready') {
+            observations.push(observation.kind);
+          }
+        },
+        ['agent-settled', 'assessment-ready'],
+      ),
+    ]);
+    recording.model = assessmentModel();
+    const response = assessmentDeferred<unknown>();
+    const started = assessmentDeferred<void>();
+    let signal: AbortSignal | undefined;
+    recording.completionHandler = async (_model, _context, options) => {
+      signal = (options as AssessmentCompletionOptions).signal;
+      started.resolve(undefined);
+      return response.promise;
+    };
+
+    await recording.emit('input', inputEvent('interactive', 'task'));
+    await recording.emit('turn_end', turnEndEvent([{ type: 'text', text: ASSESSMENT_FINAL_TEXT }]));
+    const settled = recording.emit('agent_settled', { type: 'agent_settled' });
+    await started.promise;
+    expect(observations).toEqual(['agent-settled']);
+    expect(kernel.getCurrentRoot()).toEqual({ id: 'root-1', status: 'settled' });
+
+    await recording.emit('input', inputEvent('extension', 'supervisor follow-up'));
+    expect(kernel.getCurrentRoot()).toEqual({ id: 'root-1', status: 'active' });
+    expect(signal?.aborted).toBe(true);
+
+    response.resolve(assessmentResponse(assessmentOutput(ASSESSMENT_CLAIM_QUOTE)));
+    await settled;
+
+    expect(recording.completionCalls).toHaveLength(1);
+    expect(observations).toEqual(['agent-settled']);
+    expect(kernel.getFacts()).toEqual([]);
+    expect(kernel.getCurrentRoot()).toEqual({ id: 'root-1', status: 'active' });
+    expect(kernel.getHealth()).toBe('healthy');
+  });
+
+  it('delivers settled before a replacement root and discards every stale assessment effect', async () => {
+    const recording = new AssessmentRecordingPi();
+    const trace: string[] = [];
+    const readyRoots: string[] = [];
+    const kernel = createAssessmentKernel(recording, [
+      assessmentConsumer(
+        'assessment-observer',
+        (observation) => {
+          if (
+            observation.kind === 'root-request-started' ||
+            observation.kind === 'agent-settled' ||
+            observation.kind === 'assessment-ready'
+          ) {
+            trace.push(`${observation.rootRequestId ?? 'null'} ${observation.kind}`);
+          }
+        },
+        ['root-request-started', 'agent-settled', 'assessment-ready'],
+      ),
+      assessmentReadyFactFeature(readyRoots),
+    ]);
+    recording.model = assessmentModel();
+    const response = assessmentDeferred<unknown>();
+    const started = assessmentDeferred<void>();
+    recording.completionHandler = async () => {
+      started.resolve(undefined);
+      return response.promise;
+    };
+
+    await recording.emit('input', inputEvent('interactive', 'task'));
+    trace.length = 0;
+    await recording.emit('turn_end', turnEndEvent([{ type: 'text', text: ASSESSMENT_FINAL_TEXT }]));
+    const settled = recording.emit('agent_settled', { type: 'agent_settled' });
+    await started.promise;
+    expect(trace).toEqual(['root-1 agent-settled']);
+
+    await recording.emit('input', inputEvent('interactive', 'replacement task'));
+    expect(trace).toEqual(['root-1 agent-settled', 'root-2 root-request-started']);
+    response.resolve(assessmentResponse(assessmentOutput(ASSESSMENT_CLAIM_QUOTE)));
+    await settled;
+
+    expect(trace).not.toEqual(['root-2 root-request-started', 'root-1 agent-settled']);
+    expect(readyRoots).toEqual([]);
+    expect(kernel.getFacts()).toEqual([]);
+    expect(kernel.getCurrentRoot()?.id).toBe('root-2');
+    expect(kernel.getHealth()).toBe('healthy');
+  });
+
+  it('does not let a stale assessment-ready result intervene', async () => {
+    const recording = new AssessmentRecordingPi();
+    const kernel = createAssessmentKernel(recording, [
+      assessmentConsumer(),
+      assessmentReadyInterventionFeature(),
+    ]);
     recording.model = assessmentModel();
     const response = assessmentDeferred<unknown>();
     const started = assessmentDeferred<void>();
@@ -1106,13 +1323,23 @@ describe('Supervisor assessment Kernel requests', () => {
     response.resolve(assessmentResponse(assessmentOutput(ASSESSMENT_CLAIM_QUOTE)));
     await settled;
 
-    expect(observations).toEqual(['agent-settled']);
+    expect(recording.sentMessages).toEqual([]);
     expect(kernel.getFacts()).toEqual([]);
+    expect(kernel.getHealth()).toBe('healthy');
   });
 
   it('aborts a pending assessment on session shutdown', async () => {
     const recording = new AssessmentRecordingPi();
-    const kernel = createAssessmentKernel(recording, [assessmentConsumer()]);
+    const observations: string[] = [];
+    const kernel = createAssessmentKernel(recording, [assessmentConsumer(
+      'assessment-observer',
+      (observation) => {
+        if (observation.kind === 'agent-settled' || observation.kind === 'assessment-ready') {
+          observations.push(observation.kind);
+        }
+      },
+      ['agent-settled', 'assessment-ready'],
+    )]);
     recording.model = assessmentModel();
     const response = assessmentDeferred<unknown>();
     const started = assessmentDeferred<void>();
@@ -1127,6 +1354,7 @@ describe('Supervisor assessment Kernel requests', () => {
     await recording.emit('turn_end', turnEndEvent([{ type: 'text', text: ASSESSMENT_FINAL_TEXT }]));
     const settled = recording.emit('agent_settled', { type: 'agent_settled' });
     await started.promise;
+    expect(observations).toEqual(['agent-settled']);
     await recording.emit('session_shutdown', { type: 'session_shutdown', reason: 'reload' });
     response.resolve(assessmentResponse(assessmentOutput(ASSESSMENT_CLAIM_QUOTE)));
     await settled;
@@ -1135,6 +1363,7 @@ describe('Supervisor assessment Kernel requests', () => {
     expect(kernel.getCurrentRoot()).toBeNull();
     expect(kernel.getFacts()).toEqual([]);
     expect(kernel.getHealth()).toBe('healthy');
+    expect(observations).toEqual(['agent-settled']);
   });
 
   it('aborts a pending assessment when a session starts or reloads', async () => {
@@ -1220,11 +1449,24 @@ describe('Supervisor assessment Kernel requests', () => {
 
   it.each(assessmentFailureCases)('fails open for $name and preserves sibling intervention ability', async (failureCase) => {
     const recording = new AssessmentRecordingPi();
-    const kernel = createAssessmentKernel(recording, [assessmentConsumer(), blockingFeature()]);
+    const observations: string[] = [];
+    const kernel = createAssessmentKernel(recording, [
+      assessmentConsumer(
+        'assessment-observer',
+        (observation) => {
+          if (observation.kind === 'agent-settled' || observation.kind === 'assessment-ready') {
+            observations.push(observation.kind);
+          }
+        },
+        ['agent-settled', 'assessment-ready'],
+      ),
+      blockingFeature(),
+    ]);
     recording.model = assessmentModel();
     recording.completionHandler = failureCase.handler ?? (async () => failureCase.response);
 
     await settleAssessmentRoot(recording, ASSESSMENT_FINAL_TEXT, failureCase.evidenceText);
+    expect(observations).toEqual(['agent-settled']);
 
     expect(kernel.getFacts()).toEqual([]);
     expect(kernel.getHealth()).toBe('healthy');
@@ -1238,17 +1480,37 @@ describe('Supervisor assessment Kernel requests', () => {
     expect(result).toEqual({ block: true, reason: 'blocked' });
   });
 
-  it('commits a sanitized deterministic fact before agent-settled feature dispatch', async () => {
+  it('delivers agent-settled before assessment-ready and exposes the fact only to ready consumers', async () => {
     const recording = new AssessmentRecordingPi();
-    const factSnapshots: (readonly unknown[])[] = [];
-    const kernel = createAssessmentKernel(recording, [assessmentConsumer(
-      'assessment-observer',
-      (observation, context) => {
-        if (observation.kind === 'agent-settled') {
-          factSnapshots.push(context.facts.all());
-        }
-      },
-    )]);
+    const trace: string[] = [];
+    const settledFactSnapshots: (readonly unknown[])[] = [];
+    const readyFactSnapshots: (readonly unknown[])[] = [];
+    const settledSequences: number[] = [];
+    const readyObservations: SupervisorObservation[] = [];
+    const kernel = createAssessmentKernel(recording, [
+      assessmentConsumer(
+        'assessment-settled-observer',
+        (observation, context) => {
+          if (observation.kind === 'agent-settled') {
+            trace.push('agent-settled');
+            settledSequences.push(observation.sequence);
+            settledFactSnapshots.push(context.facts.all());
+          }
+        },
+        ['agent-settled'],
+      ),
+      assessmentConsumer(
+        'assessment-ready-observer',
+        (observation, context) => {
+          if (observation.kind === 'assessment-ready') {
+            trace.push('assessment-ready');
+            readyObservations.push(observation);
+            readyFactSnapshots.push(context.facts.all());
+          }
+        },
+        ['assessment-ready'],
+      ),
+    ]);
     recording.model = assessmentModel();
     recording.completionHandler = async () => assessmentResponse(assessmentOutput(
       ASSESSMENT_CLAIM_QUOTE,
@@ -1257,6 +1519,16 @@ describe('Supervisor assessment Kernel requests', () => {
     ));
 
     await settleAssessmentRoot(recording, ASSESSMENT_FINAL_TEXT, 'tests pass');
+
+    expect(trace).toEqual(['agent-settled', 'assessment-ready']);
+    expect(settledFactSnapshots).toEqual([[]]);
+    expect(settledSequences).toHaveLength(1);
+    expect(readyObservations).toHaveLength(1);
+    expect(readyObservations[0]?.payload).toEqual({
+      assessmentId: 'assessment-1',
+      runSequence: 1,
+    });
+    expect(readyObservations[0]?.sequence).toBe((settledSequences[0] ?? 0) + 1);
 
     const [fact] = kernel.getFacts();
     expect(fact).toEqual({
@@ -1290,8 +1562,7 @@ describe('Supervisor assessment Kernel requests', () => {
     if (fact === undefined) {
       return;
     }
-    expect(factSnapshots).toHaveLength(1);
-    expect(factSnapshots[0]).toEqual([fact]);
+    expect(readyFactSnapshots).toEqual([[fact]]);
     const serialized = JSON.stringify(fact);
     expect(serialized).toContain(ASSESSMENT_CLAIM_QUOTE);
     expect(serialized).not.toContain('tests pass');

@@ -15,7 +15,11 @@ import type {
 type SessionCompactFailedEvent = Extract<ExtensionEvent, { type: 'session_compact_failed' }>;
 import { computeSupervisorJsonDigest } from '../digest.js';
 import { assertJsonValue, type JsonValue } from '../json.js';
-import { validateSupervisorObservation, type SupervisorObservation } from '../observation.js';
+import {
+  validateSupervisorObservation,
+  type SupervisorObservation,
+  type SupervisorObservationKind,
+} from '../observation.js';
 
 export type SupervisorPiObservationEvent =
   | InputEvent
@@ -37,6 +41,35 @@ function unsupportedEvent(): never {
 /** Converts Pi lifecycle events into the privacy-safe supervisor observation envelope. */
 export class SupervisorObservationNormalizer {
   private nextSequence = 0;
+
+  /** Creates a Kernel-owned observation in the canonical Pi observation sequence. */
+  public createInternal(
+    kind: SupervisorObservationKind,
+    payload: JsonValue,
+    rootRequestId: string | null,
+  ): SupervisorObservation {
+    return this.createObservation(kind, payload, rootRequestId);
+  }
+
+  private createObservation(
+    kind: SupervisorObservationKind,
+    payload: JsonValue,
+    rootRequestId: string | null,
+  ): SupervisorObservation {
+    const sequence = this.nextSequence;
+    if (sequence === Number.MAX_SAFE_INTEGER) {
+      throw new Error('Supervisor observation sequence exhausted.');
+    }
+    this.nextSequence += 1;
+    return validateSupervisorObservation({
+      schemaVersion: 1,
+      id: `observation-${sequence}`,
+      sequence,
+      rootRequestId,
+      kind,
+      payload: assertJsonValue(payload),
+    });
+  }
 
   public normalize(
     event: SupervisorPiObservationEvent,
@@ -119,18 +152,6 @@ export class SupervisorObservationNormalizer {
         return unsupportedEvent();
     }
 
-    const sequence = this.nextSequence;
-    if (sequence === Number.MAX_SAFE_INTEGER) {
-      throw new Error('Supervisor observation sequence exhausted.');
-    }
-    this.nextSequence += 1;
-    return validateSupervisorObservation({
-      schemaVersion: 1,
-      id: `observation-${sequence}`,
-      sequence,
-      rootRequestId,
-      kind,
-      payload: assertJsonValue(payload),
-    });
+    return this.createObservation(kind, payload, rootRequestId);
   }
 }

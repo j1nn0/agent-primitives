@@ -3,12 +3,21 @@ import { isJsonValue, type JsonValue } from './json.js';
 import { isSupervisorFeatureId } from './ids.js';
 import { hasOnlyAllowedKeys, hasOwn, isPlainObject } from './internal.js';
 
+/**
+ * The observation kind set remains open-ended. `assessment-ready` is a Kernel-owned
+ * internal observation, not a normalized Pi event: it announces that a structurally
+ * valid `kernel:completion-assessment` fact for the exact Root Request and run is
+ * committed and visible in the fact snapshot. Its payload contains only the assessment
+ * ID and run sequence, never claim, evidence, or provider response content.
+ */
 export const SUPERVISOR_OBSERVATION_KINDS = [
   'root-request-started',
   'before-tool-call',
   'tool-result',
   'turn-ended',
   'agent-settled',
+  /** Kernel-owned internal observation; not a normalized Pi event. */
+  'assessment-ready',
   'session-started',
   'session-shutdown',
   'before-compact',

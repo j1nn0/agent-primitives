@@ -26,6 +26,8 @@ The Kernel provides `kernel:observation`, `kernel:persistence`, `kernel:interven
 
 A feature may `require` a `kernel:*` capability. A feature may **not** `provide` one: a descriptor whose `provides` contains any `kernel:*` capability is hard-rejected. Non-kernel capability namespaces stay open and are not tied to feature IDs.
 
+`usesAuxiliaryModel` is enforced rather than advisory: requiring `kernel:assessment` causes an auxiliary model call, so a descriptor that requires it while declaring `usesAuxiliaryModel: false` is hard-rejected. The reverse is deliberately not required — `usesAuxiliaryModel: true` is legal without `kernel:assessment`, leaving room for future Kernel-owned auxiliary capabilities.
+
 ### Observation pipeline
 
 Pi event objects never reach a feature. The Kernel normalizes them:
@@ -46,7 +48,9 @@ Pi event objects never reach a feature. The Kernel normalizes them:
 
 An `input` whose source is `extension` produces no observation; it only reactivates the current Root Request.
 
-Observation IDs and sequences are deterministic and runtime-local (`observation-0`, `observation-1`, …). Time is never an ordering authority.
+Not every observation comes from a Pi event. [`assessment-ready`](#ordering-and-why-assessment-gets-its-own-observation) is Kernel-owned and internal. The kind set stays open-ended rather than fixed to Pi's event list.
+
+Observation IDs and sequences are deterministic and runtime-local (`observation-0`, `observation-1`, …), and Kernel-internal observations share that same sequence. Time is never an ordering authority.
 
 Payloads carry metadata only. Tool input and tool result content appear solely as canonical SHA-256 digests, and a value that cannot be canonicalized yields a `null` digest rather than an error. Prompt text, tool inputs, tool results, assistant responses, stdout, file contents, and compaction error text never enter an observation payload.
 
@@ -196,7 +200,30 @@ It uses the active Pi model at the lowest concretely mapped reasoning level, wit
 
 ### Result
 
-A structurally valid result becomes one ephemeral Kernel-owned fact, `kernel:completion-assessment`, committed *before* the `agent-settled` observation is dispatched, so a feature observing `agent-settled` already sees it. Ids are Kernel-assigned and deterministic; the model never chooses one.
+A structurally valid result becomes one ephemeral Kernel-owned fact, `kernel:completion-assessment`. Ids are Kernel-assigned and deterministic; the model never chooses one.
+
+### Ordering, and why assessment gets its own observation
+
+Pi clears its run-active flag *before* awaiting the `agent_settled` extension emit, so a new user prompt can start a new Root Request while a handler is still awaiting. An assessment that blocked `agent-settled` would therefore let a feature observe `root-2 root-request-started` and only afterwards `root-1 agent-settled` — delivered against root-2's live facts, runtime and transport. That is not a valid feature boundary.
+
+So Pi lifecycle delivery and asynchronous assessment completion are separated:
+
+```text
+Pi agent_settled
+  -> mark the root settled, capture identity and bounded input
+  -> dispatch `agent-settled` immediately
+  -> run the assessment
+       failed or stale -> stop
+       success, still current -> commit the fact, then dispatch `assessment-ready`
+```
+
+`agent-settled` is a normalized Pi lifecycle observation. It arrives exactly once in chronological order, never waits for an assessment, never depends on one succeeding, and is never re-dispatched afterwards. Consequently an `agent-settled` consumer does **not** see the current run's assessment fact.
+
+`assessment-ready` is Kernel-owned and internal — not a Pi event. It means a valid `kernel:completion-assessment` fact for that exact Root Request and run has been committed and is visible. Its payload is only `{ assessmentId, runSequence }`; the data stays in the fact. It shares the same canonical observation sequence as normalized Pi events, so there is one ordering authority and no second counter.
+
+If the Root Request or session is replaced while an assessment is in flight, the result is stale: no fact, no `assessment-ready`, no second `agent-settled`, no feature state mutation, and no intervention. Nothing is lost, because `agent-settled` was already delivered before the wait. A feature can never observe anything belonging to a previous root after a new one has started.
+
+A future Completion Gate will therefore observe `assessment-ready`, not `agent-settled`.
 
 The fact holds the claim quotes and evidence *metadata* with digests. It does not hold raw tool output, raw tool input, evidence quote text, the prompt, or the full assistant response — evidence quotes exist only long enough to be validated, then are reduced to a hash. Assessment facts are Root-Request-local and are never persisted.
 

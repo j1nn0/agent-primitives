@@ -62,7 +62,7 @@ describe('supervisor plan resolution', () => {
 
   it('satisfies the assessment dependency from the Kernel capability', () => {
     const plan = resolve(
-      [feature('assessment-consumer', { requires: ['kernel:assessment'] })],
+      [feature('assessment-consumer', { requires: ['kernel:assessment'], usesAuxiliaryModel: true })],
       undefined,
       ['kernel:assessment'],
     );

@@ -33,6 +33,35 @@ describe('supervisor feature descriptors', () => {
     expect(validateSupervisorFeatureDescriptor(descriptor())).toEqual(descriptor());
   });
 
+  it('accepts an assessment consumer that uses the auxiliary model', () => {
+    const validated = validateSupervisorFeatureDescriptor(
+      descriptor({ requires: ['kernel:assessment'], usesAuxiliaryModel: true }),
+    );
+
+    expect(validated.requires).toEqual(['kernel:assessment']);
+    expect(validated.usesAuxiliaryModel).toBe(true);
+  });
+
+  it('rejects an assessment consumer that disables auxiliary model use', () => {
+    expectInvalid(
+      descriptor({ requires: ['kernel:assessment'], usesAuxiliaryModel: false }),
+    );
+  });
+
+  it('accepts auxiliary model use without an assessment requirement', () => {
+    expect(
+      validateSupervisorFeatureDescriptor(descriptor({ usesAuxiliaryModel: true })).usesAuxiliaryModel,
+    ).toBe(true);
+  });
+
+  it('keeps non-assessment features valid without auxiliary model use', () => {
+    expect(
+      validateSupervisorFeatureDescriptor(
+        descriptor({ requires: ['provider-x:base'], usesAuxiliaryModel: false }),
+      ),
+    ).toMatchObject({ requires: ['provider-x:base'], usesAuxiliaryModel: false });
+  });
+
   it('defines the reserved kernel capabilities without reserving other namespaces', () => {
     expect(SUPERVISOR_KERNEL_CAPABILITY_NAMESPACE).toBe(SUPERVISOR_KERNEL_SOURCE_ID);
     expect(SUPERVISOR_KERNEL_CAPABILITIES_V1).toEqual([
