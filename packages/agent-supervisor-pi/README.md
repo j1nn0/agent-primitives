@@ -12,7 +12,7 @@ The Supervisor registers **no model-callable tools**. The model cannot operate t
 
 The default global mode is `autonomous`, so the intended product profile requires no setup. Features are independently configurable.
 
-The Supervisor makes **no model calls of its own**. Nothing here consults an LLM.
+An ordinary installation makes **no model calls of its own**. The Kernel has a bounded [assessment](#kernel-assessment) capability, but it is lazy and no production feature consumes it yet.
 
 ## Kernel runtime
 
@@ -22,7 +22,7 @@ Only the Kernel touches Pi. Features receive no `pi` handle, no extension contex
 
 ### Kernel capabilities
 
-The Kernel provides `kernel:observation`, `kernel:persistence`, and `kernel:intervention`. `kernel:assessment` is not provided; auxiliary LLM assessment is a later stage.
+The Kernel provides `kernel:observation`, `kernel:persistence`, `kernel:intervention`, and [`kernel:assessment`](#kernel-assessment).
 
 A feature may `require` a `kernel:*` capability. A feature may **not** `provide` one: a descriptor whose `provides` contains any `kernel:*` capability is hard-rejected. Non-kernel capability namespaces stay open and are not tied to feature IDs.
 
@@ -164,6 +164,53 @@ One namespace, `/agent-supervisor`. It registers no tools and never opens a conf
 While the top-level persisted configuration is corrupt, a `feature` command is refused and the operator is told to repair the global mode first, so a feature-only edit can never regenerate a global `autonomous` configuration. An explicit `mode` command in that state is treated as an operator repair: because a corrupt document cannot be trusted to yield feature settings, the repair writes a fresh configuration with the selected mode and **no feature entries**, so any feature settings from an earlier configuration are superseded rather than guessed at. Older entries remain in session history but no longer take effect. A `feature` command for an unregistered ID is refused and never creates a configuration entry.
 
 A healthy agent run produces zero Supervisor notifications. Output appears only for `status` and as a short confirmation after an explicit successful command.
+
+## Kernel assessment
+
+The Kernel can make one bounded auxiliary model call per settled agent run to extract *claims* from the final assistant response and link them to tool evidence. Only the Kernel does this; features never receive a model, a model registry, or any Pi handle.
+
+**It is lazy, and today nothing consumes it.** The call happens only when the active plan contains an `autonomous` or `observe` feature whose descriptor `requires` includes `kernel:assessment`. The only production built-in is `retry-loop-breaker`, which does not, so **an ordinary installation makes zero auxiliary model calls**. A feature that is `off` or `unavailable` does not activate it either; a global `observe` ceiling still does, because shadow evaluation is the point.
+
+### What the model is allowed to do
+
+Extract affirmative completion or verification claims, and copy exact supporting quotes from the supplied evidence. That is all. It does not decide whether the task is complete, whether evidence is sufficient, whether to intervene, or whether another turn should run. Those are deterministic decisions that do not belong to a language model.
+
+The response is accepted only in this shape, and only after strict structural gates:
+
+```json
+{
+  "schemaVersion": 1,
+  "claims": [
+    { "kind": "completion", "quote": "…", "evidence": [{ "id": "e1", "quote": "…" }] }
+  ]
+}
+```
+
+Every claim quote must be an exact contiguous substring of the bounded final assistant response, character for character — no normalization, no fuzzy or semantic matching. Every evidence reference must name an id the Kernel supplied, and its quote must be an exact substring of that record. A claim may legitimately have `evidence: []`, and the whole result may be `claims: []`; the model is never pushed into fabricating support. At most four claims, at most four references each, and a single violation rejects the entire assessment rather than partially trusting it.
+
+### Bounds
+
+Everything sent is bounded by explicit constants: the Root Request task text (first 8,000 UTF-16 code units), the final assistant response (trailing 12,000), and at most 8 tool-result evidence records — most recent first, each trailing 4,000, 24,000 in total. Raw tool *input* is never sent; the Kernel already holds its digest. No full transcript, no unrelated session, no Supervisor internals.
+
+It uses the active Pi model at the lowest concretely mapped reasoning level, with a 20-second timeout and a small token bound. There is no separate provider configuration and no provider branching.
+
+### Result
+
+A structurally valid result becomes one ephemeral Kernel-owned fact, `kernel:completion-assessment`, committed *before* the `agent-settled` observation is dispatched, so a feature observing `agent-settled` already sees it. Ids are Kernel-assigned and deterministic; the model never chooses one.
+
+The fact holds the claim quotes and evidence *metadata* with digests. It does not hold raw tool output, raw tool input, evidence quote text, the prompt, or the full assistant response — evidence quotes exist only long enough to be validated, then are reduced to a hash. Assessment facts are Root-Request-local and are never persisted.
+
+**Claims are extracted and linked, not judged.** A linked evidence reference is not proof that a claim is true or that a task is actually done. Nothing yet acts on this.
+
+### When it fails
+
+No active model, a provider error, a timeout, an abort, a non-stop finish, unparseable or invalid output, a claim quote that is not an exact substring, an invented evidence id, an invalid evidence quote, or a stale root or run — every one of these produces no fact and leaves the agent's result fully usable.
+
+An auxiliary failure deliberately does **not** degrade Kernel health, because that would suppress unrelated deterministic features such as `retry-loop-breaker`. Assessment health is tracked separately and surfaces as one compact `/agent-supervisor status` line. Ordinary failures produce no notification.
+
+### Not yet
+
+There is no Completion Gate. Nothing consumes an assessment in production, nothing decides that a completion claim is unsupported, and **no automatic follow-up is ever sent**. This stage builds the bounded extraction service and proves its wiring against a real Pi runtime with a faux provider; that is runtime-correctness evidence, not a formal effectiveness benchmark.
 
 ## retry-loop-breaker
 
@@ -366,10 +413,10 @@ The feature set is open-ended. These are planned initial built-ins, not an exhau
 
 ## Not in this stage
 
-The Kernel control plane and `retry-loop-breaker` are in place. Still deliberately omitted:
+The Kernel control plane, `retry-loop-breaker`, and the bounded assessment capability are in place. Still deliberately omitted:
 
-- completion gating;
-- auxiliary LLM assessment and any model call of the Supervisor's own;
+- completion gating, and any production feature that consumes an assessment — so an ordinary installation still makes no model call of its own;
+- judging whether a claim is supported or a task is actually complete;
 - automatic state/progress behavior;
 - context recovery;
 - automatic handoff;

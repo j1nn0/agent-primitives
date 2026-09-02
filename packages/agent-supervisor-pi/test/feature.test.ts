@@ -39,6 +39,7 @@ describe('supervisor feature descriptors', () => {
       'kernel:observation',
       'kernel:persistence',
       'kernel:intervention',
+      'kernel:assessment',
     ]);
     expect(Object.isFrozen(SUPERVISOR_KERNEL_CAPABILITIES_V1)).toBe(true);
     expect(isSupervisorKernelCapabilityId('kernel:observation')).toBe(true);
@@ -73,6 +74,7 @@ describe('supervisor feature descriptors', () => {
     { conflictsWith: ['feature-a'] },
     { conflictsWith: ['kernel'] },
     { provides: ['kernel:observation'] },
+    { provides: ['kernel:assessment'] },
     { maturity: 'experimental', defaultMode: 'autonomous' },
   ])('rejects one invalid descriptor rule %#', (override) => {
     expectInvalid(descriptor(override));

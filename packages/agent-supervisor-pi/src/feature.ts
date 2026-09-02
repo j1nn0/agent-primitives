@@ -17,11 +17,13 @@ export type SupervisorFeatureMode = 'autonomous' | 'observe' | 'off';
 export type EffectiveFeatureMode = 'autonomous' | 'observe' | 'off' | 'unavailable';
 
 export const SUPERVISOR_KERNEL_CAPABILITY_NAMESPACE = SUPERVISOR_KERNEL_SOURCE_ID;
+export const SUPERVISOR_KERNEL_ASSESSMENT_CAPABILITY = `${SUPERVISOR_KERNEL_CAPABILITY_NAMESPACE}:assessment` as const;
 
 export const SUPERVISOR_KERNEL_CAPABILITIES_V1 = Object.freeze([
   `${SUPERVISOR_KERNEL_CAPABILITY_NAMESPACE}:observation`,
   `${SUPERVISOR_KERNEL_CAPABILITY_NAMESPACE}:persistence`,
   `${SUPERVISOR_KERNEL_CAPABILITY_NAMESPACE}:intervention`,
+  SUPERVISOR_KERNEL_ASSESSMENT_CAPABILITY,
 ] as const);
 
 export function isSupervisorKernelCapabilityId(value: unknown): value is string {

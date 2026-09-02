@@ -81,6 +81,7 @@ export type {
 } from './intervention.js';
 
 export {
+  SUPERVISOR_KERNEL_ASSESSMENT_CAPABILITY,
   SUPERVISOR_KERNEL_CAPABILITIES_V1,
   SUPERVISOR_KERNEL_CAPABILITY_NAMESPACE,
   isSupervisorKernelCapabilityId,
@@ -94,6 +95,18 @@ export type {
   SupervisorFeatureRegistration,
   SupervisorMode,
 } from './feature.js';
+
+export {
+  extractSupervisorAssessmentText,
+  isSupervisorAssessmentEnabled,
+  SUPERVISOR_ASSESSMENT_EVIDENCE_RECORD_MAX_UTF16_CODE_UNITS,
+  SUPERVISOR_ASSESSMENT_EVIDENCE_TOTAL_MAX_UTF16_CODE_UNITS,
+  SUPERVISOR_ASSESSMENT_FINAL_ASSISTANT_TEXT_MAX_UTF16_CODE_UNITS,
+  SUPERVISOR_ASSESSMENT_MAX_EVIDENCE_RECORDS,
+  SUPERVISOR_ASSESSMENT_TASK_TEXT_MAX_UTF16_CODE_UNITS,
+} from './assessment/types.js';
+export type { SupervisorAssessmentEvidence, SupervisorAssessmentInput } from './assessment/types.js';
+export { SupervisorAssessmentCapture, SupervisorAssessmentEvidenceCollector } from './assessment/evidence.js';
 
 export {
   validateSupervisorFeatureModule,

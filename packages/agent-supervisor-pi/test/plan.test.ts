@@ -60,6 +60,15 @@ describe('supervisor plan resolution', () => {
     expect(plan.features[0]?.effectiveMode).toBe('autonomous');
   });
 
+  it('satisfies the assessment dependency from the Kernel capability', () => {
+    const plan = resolve(
+      [feature('assessment-consumer', { requires: ['kernel:assessment'] })],
+      undefined,
+      ['kernel:assessment'],
+    );
+    expect(plan.features[0]?.effectiveMode).toBe('autonomous');
+  });
+
   it('satisfies a dependency from another feature provider', () => {
     const plan = resolve([
       feature('feature-a', { provides: ['feature:ready'] }),

@@ -17,6 +17,13 @@ import type {
   ToolResultEvent,
   TurnEndEvent,
 } from '@earendil-works/pi-coding-agent';
+import { SupervisorAssessmentCapture } from '../assessment/evidence.js';
+import type { SupervisorAssessmentInput } from '../assessment/types.js';
+import {
+  SupervisorAssessmentController,
+  type SupervisorAssessmentIdentity,
+  type SupervisorAssessmentOutcome,
+} from '../assessment/controller.js';
 
 type SessionCompactFailedEvent = Extract<ExtensionEvent, { type: 'session_compact_failed' }>;
 import {
@@ -28,8 +35,14 @@ import {
 } from '../config.js';
 import { arbitrateInterventions, type SupervisorArbitrationResult } from '../arbitration.js';
 import { dispatchObservation } from '../dispatch.js';
+import { isSupervisorAssessmentEnabled } from '../assessment/types.js';
 import type { SupervisorFeatureMode } from '../feature.js';
-import type { SupervisorFactRecord } from '../fact.js';
+import {
+  createSupervisorFactRecord,
+  validateSupervisorFactCandidate,
+  type SupervisorFactCandidate,
+  type SupervisorFactRecord,
+} from '../fact.js';
 import type { SupervisorInterventionDelivery } from '../intervention.js';
 import { hasOwn, isPlainObject } from '../internal.js';
 import { isRegistrableSupervisorFeatureId } from '../ids.js';
@@ -63,6 +76,12 @@ interface CurrentRoot {
 
 const USAGE_MESSAGE =
   'Usage: /agent-supervisor [status|mode autonomous|observe|off|feature <id> autonomous|observe|off|default]';
+
+const SUPERVISOR_COMPLETION_ASSESSMENT_KIND = 'kernel:completion-assessment' as const;
+
+function incrementGeneration(value: number): number {
+  return value === Number.MAX_SAFE_INTEGER ? value : value + 1;
+}
 
 function isRuntimeShaped(value: unknown): boolean {
   try {
@@ -151,6 +170,9 @@ function copyConfig(config: SupervisorConfigV1, mode = config.mode): SupervisorC
   }
   return { schemaVersion: 1, mode, features };
 }
+export interface SupervisorKernelOptions {
+  readonly assessmentTimeoutMs?: number;
+}
 
 /**
  * The Pi adapter kernel. It is the only owner of lifecycle normalization, ephemeral facts,
@@ -158,6 +180,8 @@ function copyConfig(config: SupervisorConfigV1, mode = config.mode): SupervisorC
  */
 export class SupervisorKernel {
   private readonly normalizer = new SupervisorObservationNormalizer();
+  private readonly assessmentCapture = new SupervisorAssessmentCapture();
+  private readonly assessmentController: SupervisorAssessmentController;
 
   private readonly runtimeManager: SupervisorFeatureRuntimeManager;
 
@@ -170,6 +194,13 @@ export class SupervisorKernel {
   private nextFactSequence = 0;
 
   private nextRootRequestSequence = DEFAULT_SUPERVISOR_RUNTIME_STATE.nextRootRequestSequence;
+  private sessionGeneration = 0;
+
+  private rootGeneration = 0;
+
+  private runGeneration = 0;
+  private finalAssistantRunGeneration = 0;
+  private assessmentLifecycleGeneration = 0;
 
   private health: SupervisorKernelHealth = 'healthy';
 
@@ -190,8 +221,15 @@ export class SupervisorKernel {
 
   private operationQueue: Promise<void> = Promise.resolve();
 
-  public constructor(pi: ExtensionAPI, features: readonly SupervisorKernelFeatureModule[]) {
+  public constructor(
+    pi: ExtensionAPI,
+    features: readonly SupervisorKernelFeatureModule[],
+    options: SupervisorKernelOptions = {},
+  ) {
     this.pi = pi;
+    this.assessmentController = new SupervisorAssessmentController(
+      options.assessmentTimeoutMs === undefined ? {} : { timeoutMs: options.assessmentTimeoutMs },
+    );
     this.runtimeManager = new SupervisorFeatureRuntimeManager(features, () => {
       this.markDegraded();
     });
@@ -204,19 +242,22 @@ export class SupervisorKernel {
       handler: (args, ctx) => this.enqueue(() => this.handleCommand(args, ctx)),
     });
 
-    this.pi.on('input', (event, ctx) => this.enqueue(() => this.handleInput(event, ctx)));
+    this.pi.on('input', (event, ctx) => {
+      this.invalidatePendingAssessment();
+      return this.enqueue(() => this.handleInput(event, ctx));
+    });
     this.pi.on('tool_call', (event, ctx) => this.enqueue(() => this.handleToolCall(event, ctx)));
     this.pi.on('tool_result', (event, ctx) => this.enqueue(() => this.handleToolResult(event, ctx)));
     this.pi.on('turn_end', (event, ctx) => this.enqueue(() => this.handleTurnEnd(event, ctx)));
-    this.pi.on('agent_settled', (event, ctx) =>
-      this.enqueue(() => this.handleAgentSettled(event, ctx)),
-    );
-    this.pi.on('session_start', (event, ctx) =>
-      this.enqueue(() => this.handleSessionStart(event, ctx)),
-    );
-    this.pi.on('session_shutdown', (event, ctx) =>
-      this.enqueue(() => this.handleSessionShutdown(event, ctx)),
-    );
+    this.pi.on('agent_settled', (event, ctx) => this.enqueueAgentSettled(event, ctx));
+    this.pi.on('session_start', (event, ctx) => {
+      this.invalidatePendingAssessment();
+      return this.enqueue(() => this.handleSessionStart(event, ctx));
+    });
+    this.pi.on('session_shutdown', (event, ctx) => {
+      this.invalidatePendingAssessment();
+      return this.enqueue(() => this.handleSessionShutdown(event, ctx));
+    });
     this.pi.on('session_before_compact', (event, ctx) =>
       this.enqueue(() => this.handleSessionBeforeCompact(event, ctx)),
     );
@@ -244,6 +285,10 @@ export class SupervisorKernel {
     return this.runtimeManager.getPlan();
   }
 
+  public getAssessmentInput(): SupervisorAssessmentInput {
+    return this.assessmentCapture.getSnapshot();
+  }
+
   public getRuntimeStatuses() {
     return this.runtimeManager.getStatuses();
   }
@@ -261,10 +306,21 @@ export class SupervisorKernel {
     this.health = 'degraded';
   }
 
+  private invalidatePendingAssessment(): void {
+    this.assessmentLifecycleGeneration = incrementGeneration(this.assessmentLifecycleGeneration);
+    this.assessmentController.abortActive();
+  }
+
   private clearRootTracking(): void {
+    this.invalidatePendingAssessment();
+    this.assessmentController.resetForRoot();
+    this.rootGeneration = incrementGeneration(this.rootGeneration);
+    this.runGeneration = 0;
+    this.finalAssistantRunGeneration = 0;
     this.currentRoot = null;
     this.facts = [];
     this.nextFactSequence = 0;
+    this.assessmentCapture.clearRootRequest();
   }
 
   private async handleInput(event: InputEvent, ctx: ExtensionContext): Promise<InputEventResult> {
@@ -273,13 +329,22 @@ export class SupervisorKernel {
       if (event.source === 'extension') {
         if (this.currentRoot !== null) {
           this.currentRoot.status = 'active';
+          this.runGeneration = incrementGeneration(this.runGeneration);
+          this.finalAssistantRunGeneration = 0;
+          this.invalidatePendingAssessment();
         }
         return { action: 'continue' };
       }
 
+      this.invalidatePendingAssessment();
+      this.assessmentController.resetForRoot();
+      this.rootGeneration = incrementGeneration(this.rootGeneration);
+      this.runGeneration = 0;
+      this.finalAssistantRunGeneration = 0;
       if (!this.beginRootRequest()) {
         return { action: 'continue' };
       }
+      this.assessmentCapture.beginRootRequest(event.text);
       const observation = this.normalizer.normalize(event, this.currentRoot?.id ?? null);
       if (observation !== undefined) {
         await this.dispatchAndIntervene(observation, undefined);
@@ -305,6 +370,9 @@ export class SupervisorKernel {
   private async handleToolResult(event: ToolResultEvent, ctx: ExtensionContext): Promise<void> {
     await this.safe(undefined, async () => {
       await this.ensureLoaded(ctx);
+      if (this.currentRoot !== null) {
+        this.assessmentCapture.observeToolResult(event);
+      }
       await this.dispatchEvent(event, this.currentRoot?.id ?? null);
     });
   }
@@ -312,18 +380,169 @@ export class SupervisorKernel {
   private async handleTurnEnd(event: TurnEndEvent, ctx: ExtensionContext): Promise<void> {
     await this.safe(undefined, async () => {
       await this.ensureLoaded(ctx);
+      if (this.currentRoot !== null) {
+        this.assessmentCapture.observeTurnEnd(event);
+        this.finalAssistantRunGeneration =
+          this.assessmentCapture.getFinalAssistantText() === undefined ? 0 : this.runGeneration;
+      }
       await this.dispatchEvent(event, this.currentRoot?.id ?? null);
     });
   }
 
-  private async handleAgentSettled(event: AgentSettledEvent, ctx: ExtensionContext): Promise<void> {
-    await this.safe(undefined, async () => {
-      await this.ensureLoaded(ctx);
-      if (this.currentRoot !== null) {
-        this.currentRoot.status = 'settled';
+  private enqueueAgentSettled(event: AgentSettledEvent, ctx: ExtensionContext): Promise<void> {
+    let completion: Promise<void> | undefined;
+    const queued = this.enqueue(async () => {
+      try {
+        await this.ensureLoaded(ctx);
+        completion = this.processAgentSettled(event, ctx);
+      } catch {
+        this.markDegraded();
       }
-      await this.dispatchEvent(event, this.currentRoot?.id ?? null);
     });
+    return queued.then(async () => {
+      await (completion ?? Promise.resolve());
+    });
+  }
+
+  private processAgentSettled(event: AgentSettledEvent, ctx: ExtensionContext): Promise<void> {
+    return this.safe(undefined, async () => {
+      // Activation is deliberately checked before any model or request work.
+      const assessmentEnabled = isSupervisorAssessmentEnabled(this.runtimeManager.getPlan());
+      const root = this.currentRoot;
+      const rootRequestId = root?.id ?? null;
+      if (root !== null) {
+        root.status = 'settled';
+      }
+
+      const identity = root === null ? undefined : this.readAssessmentIdentity(ctx);
+      if (identity === undefined) {
+        await this.dispatchEvent(event, rootRequestId);
+        return;
+      }
+
+      const assessmentLifecycleGeneration = this.assessmentLifecycleGeneration;
+
+      const capturedInput = this.assessmentCapture.getSnapshot();
+      const input: SupervisorAssessmentInput = this.finalAssistantRunGeneration === this.runGeneration
+        ? capturedInput
+        : {
+            ...(capturedInput.taskText === undefined ? {} : { taskText: capturedInput.taskText }),
+            evidence: capturedInput.evidence,
+          };
+      const outcome = await this.assessmentController.assess(
+        ctx,
+        input,
+        identity,
+        () => this.isAssessmentIdentityCurrent(ctx, identity, assessmentLifecycleGeneration),
+        assessmentEnabled,
+      );
+      const assessmentIsCurrent = this.isAssessmentIdentityCurrent(
+        ctx,
+        identity,
+        assessmentLifecycleGeneration,
+      );
+      if (assessmentIsCurrent && outcome.kind === 'success') {
+        this.commitAssessmentFact(outcome, identity, input);
+      }
+      await this.dispatchEvent(event, rootRequestId);
+    });
+  }
+
+  private readAssessmentIdentity(ctx: ExtensionContext): SupervisorAssessmentIdentity | undefined {
+    if (this.currentRoot === null) {
+      return undefined;
+    }
+
+    let sessionId: string;
+    try {
+      sessionId = ctx.sessionManager.getSessionId();
+    } catch {
+      return undefined;
+    }
+    if (typeof sessionId !== 'string' || sessionId.length === 0) {
+      return undefined;
+    }
+    return {
+      sessionId,
+      sessionGeneration: this.sessionGeneration,
+      rootRequestId: this.currentRoot.id,
+      rootGeneration: this.rootGeneration,
+      runGeneration: this.runGeneration,
+    };
+  }
+
+  private isAssessmentIdentityCurrent(
+    ctx: ExtensionContext,
+    identity: SupervisorAssessmentIdentity,
+    assessmentLifecycleGeneration: number,
+  ): boolean {
+    if (
+      this.assessmentLifecycleGeneration !== assessmentLifecycleGeneration ||
+      this.sessionGeneration !== identity.sessionGeneration ||
+      this.rootGeneration !== identity.rootGeneration ||
+      this.runGeneration !== identity.runGeneration ||
+      this.currentRoot?.id !== identity.rootRequestId
+    ) {
+      return false;
+    }
+
+    try {
+      return ctx.sessionManager.getSessionId() === identity.sessionId;
+    } catch {
+      return false;
+    }
+  }
+
+  private commitAssessmentFact(
+    outcome: Extract<SupervisorAssessmentOutcome, { readonly kind: 'success' }>,
+    identity: SupervisorAssessmentIdentity,
+    input: SupervisorAssessmentInput,
+  ): void {
+    if (this.nextFactSequence === Number.MAX_SAFE_INTEGER) {
+      return;
+    }
+
+    const candidate: SupervisorFactCandidate = {
+      kind: SUPERVISOR_COMPLETION_ASSESSMENT_KIND,
+      evidenceRefs: input.evidence.map((record) => record.id),
+      data: {
+        assessmentId: `assessment-${identity.runGeneration}`,
+        rootRequestId: identity.rootRequestId,
+        runSequence: identity.runGeneration,
+        claims: outcome.output.claims.map((claim, index) => ({
+          id: `claim-${index + 1}`,
+          kind: claim.kind,
+          quote: claim.quote,
+          evidence: claim.evidence.map((reference) => ({
+            id: reference.id,
+            quoteHash: reference.quoteHash,
+          })),
+        })),
+        evidence: input.evidence.map(
+          ({ id, toolName, toolCallId, isError, inputDigest, resultDigest }) => ({
+            id,
+            toolName,
+            toolCallId,
+            isError,
+            inputDigest,
+            resultDigest,
+          }),
+        ),
+      },
+    };
+
+    try {
+      const record = createSupervisorFactRecord({
+        candidate: validateSupervisorFactCandidate(candidate),
+        sourceFeatureId: 'kernel',
+        rootRequestId: identity.rootRequestId,
+        sequence: this.nextFactSequence,
+      });
+      this.facts = [...this.facts, record];
+      this.nextFactSequence += 1;
+    } catch {
+      // A model result never degrades the Kernel if a defensive fact boundary rejects it.
+    }
   }
 
   private async handleSessionStart(event: SessionStartEvent, ctx: ExtensionContext): Promise<void> {
@@ -338,12 +557,19 @@ export class SupervisorKernel {
     ctx: ExtensionContext,
   ): Promise<void> {
     await this.safe(undefined, async () => {
+      this.invalidatePendingAssessment();
+      this.assessmentController.resetForSession();
+      this.sessionGeneration = incrementGeneration(this.sessionGeneration);
+      this.rootGeneration = incrementGeneration(this.rootGeneration);
+      this.runGeneration = 0;
+      this.finalAssistantRunGeneration = 0;
       await this.ensureLoaded(ctx);
       await this.dispatchEvent(event, null);
       await this.runtimeManager.dispose();
       this.currentRoot = null;
       this.facts = [];
       this.nextFactSequence = 0;
+      this.assessmentCapture.resetSession();
       this.loaded = false;
     });
   }
@@ -516,6 +742,8 @@ export class SupervisorKernel {
 
     this.nextRootRequestSequence = reservedNext;
     this.currentRoot = { id: `root-${sequence}`, status: 'active' };
+    this.runGeneration = 1;
+    this.finalAssistantRunGeneration = 0;
     this.facts = [];
     this.nextFactSequence = 0;
     return true;
@@ -549,9 +777,16 @@ export class SupervisorKernel {
     if (resetFailureIsolation) {
       this.runtimeManager.resetSession();
     }
+    this.invalidatePendingAssessment();
+    this.assessmentController.resetForSession();
+    this.sessionGeneration = incrementGeneration(this.sessionGeneration);
+    this.rootGeneration = incrementGeneration(this.rootGeneration);
+    this.runGeneration = 0;
+    this.finalAssistantRunGeneration = 0;
     this.currentRoot = null;
     this.facts = [];
     this.nextFactSequence = 0;
+    this.assessmentCapture.resetSession();
     this.health = 'healthy';
 
     const branch = ctx.sessionManager.getBranch();
@@ -779,6 +1014,7 @@ export class SupervisorKernel {
       `Requested global mode: ${plan?.requestedGlobalMode ?? 'none'}`,
       `Effective global mode: ${plan?.effectiveGlobalMode ?? 'observe'}`,
       `Kernel health: ${this.health}`,
+      `Assessment: ${this.assessmentController.getStatus()}`,
       runtimeStateLine,
       ...(invalidFeatureIds.length === 0
         ? []
