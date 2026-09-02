@@ -194,13 +194,27 @@ The digests are the canonical SHA-256 values the Kernel already puts on its obse
 
 ### What releases it
 
-Only evidence that the agent actually did something different:
+The arm records the exact failure — both the invocation and the result — not just the invocation. It survives only while actual execution evidence keeps reproducing that failure.
 
-- an actual executed tool result for a **different** invocation disarms it — merely *attempting* a different call does not, because another feature could block that call before it ever runs
-- a success, or a different error for the same invocation, breaks the failure run
-- a new Root Request resets the whole episode
+**If an armed invocation actually executes, the arm is retained only when the observed result exactly reproduces the armed failure. A success, a different failure result, or an unidentifiable result releases the arm.** An executed result for a different invocation releases it too.
 
-A blocked call is not an executed attempt and can never be recorded as one. Pi short-circuits a blocked call before the tool-result path, so the feature never observes it.
+This matters because the Supervisor runs an open-ended set of features through central arbitration. Another feature can win the same tool-call group and let the armed invocation through, so an arm must be reconciled against what actually happened rather than assumed to still hold.
+
+| Armed on | Actual result | Outcome |
+| --- | --- | --- |
+| A / failure X | A / failure X | arm retained |
+| A / success | | arm released |
+| A / failure Y | | arm released |
+| B / anything | | arm released |
+| A / unidentifiable | | arm released |
+
+An unidentifiable result is any actual result the Kernel cannot pin to the armed failure — a missing input or result digest, or a payload that cannot be read at all. The rule throughout is the same: if exact sameness cannot be proven, the automatic block is not preserved. A missed detection costs far less than a false intervention.
+
+**Merely attempting a different tool call does not release an arm** — another feature could block that call before it ever runs, so an attempt proves nothing. Only an actual result reconciles.
+
+A blocked call is likewise not an executed attempt and can never be recorded as one. Pi short-circuits a blocked call before the tool-result path, so the feature never observes it.
+
+A new Root Request resets the whole episode. When an arm is released, its steer entitlement resets with it, so a genuinely different failure can later earn its own single steer.
 
 ### Limitation
 

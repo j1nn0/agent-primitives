@@ -8,6 +8,7 @@ import * as featureConfigSemanticsScenario from './scenarios/feature-config-sema
 import * as modeCommandRuntimeScenario from './scenarios/mode-command-runtime.mjs';
 import * as persistenceRecoveryScenario from './scenarios/persistence-recovery.mjs';
 import * as retryLoopBreakerScenario from './scenarios/retry-loop-breaker.mjs';
+import * as retryLoopBreakerCoexistenceScenario from './scenarios/retry-loop-breaker-coexistence.mjs';
 import * as rootReservationOrderingScenario from './scenarios/root-reservation-ordering.mjs';
 import { runScenarioList } from './runner.mjs';
 
@@ -22,6 +23,7 @@ const scenarios = [
   modeCommandRuntimeScenario,
   persistenceRecoveryScenario,
   retryLoopBreakerScenario,
+  retryLoopBreakerCoexistenceScenario,
   rootReservationOrderingScenario,
 ];
 

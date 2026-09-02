@@ -26,6 +26,11 @@ interface ToolResultObservation extends ToolInvocation {
   readonly resultDigest: string | null;
 }
 
+interface ArmedFailure {
+  readonly invocationFingerprint: string;
+  readonly failureFingerprint: string;
+}
+
 /** Returns no fingerprint when the invocation cannot be identified exactly. */
 export function computeRetryLoopInvocationFingerprint(
   toolName: string,
@@ -106,17 +111,17 @@ export function createRetryLoopBreaker(): SupervisorFeatureModule {
     descriptor: RETRY_LOOP_BREAKER_DESCRIPTOR,
     create: () => {
       let attempts: RetryAttempt[] = [];
-      let armedInvocationFingerprint: string | null = null;
+      let armedFailure: ArmedFailure | null = null;
       let steered = false;
 
       const resetEpisode = (): void => {
         attempts = [];
-        armedInvocationFingerprint = null;
+        armedFailure = null;
         steered = false;
       };
 
       const disarm = (): void => {
-        armedInvocationFingerprint = null;
+        armedFailure = null;
         steered = false;
       };
 
@@ -147,7 +152,8 @@ export function createRetryLoopBreaker(): SupervisorFeatureModule {
             invocation === undefined ||
             invocation.toolCallId.length === 0 ||
             invocationFingerprint === null ||
-            armedInvocationFingerprint !== invocationFingerprint
+            armedFailure === null ||
+            armedFailure.invocationFingerprint !== invocationFingerprint
           ) {
             return undefined;
           }
@@ -174,6 +180,7 @@ export function createRetryLoopBreaker(): SupervisorFeatureModule {
 
         const result = readToolResult(observation.payload);
         if (result === undefined) {
+          disarm();
           return undefined;
         }
 
@@ -181,10 +188,20 @@ export function createRetryLoopBreaker(): SupervisorFeatureModule {
           result.toolName,
           result.inputDigest,
         );
+        const failureFingerprint = computeRetryLoopFailureFingerprint(
+          result.toolName,
+          result.inputDigest,
+          result.resultDigest,
+        );
         if (
-          armedInvocationFingerprint !== null &&
-          invocationFingerprint !== null &&
-          invocationFingerprint !== armedInvocationFingerprint
+          armedFailure !== null &&
+          !(
+            result.isError &&
+            invocationFingerprint !== null &&
+            failureFingerprint !== null &&
+            invocationFingerprint === armedFailure.invocationFingerprint &&
+            failureFingerprint === armedFailure.failureFingerprint
+          )
         ) {
           disarm();
         }
@@ -193,12 +210,6 @@ export function createRetryLoopBreaker(): SupervisorFeatureModule {
           recordAttempt({ outcome: 'success' });
           return undefined;
         }
-
-        const failureFingerprint = computeRetryLoopFailureFingerprint(
-          result.toolName,
-          result.inputDigest,
-          result.resultDigest,
-        );
         const attempt: RetryAttempt =
           failureFingerprint === null
             ? { outcome: 'unknown' }
@@ -217,7 +228,7 @@ export function createRetryLoopBreaker(): SupervisorFeatureModule {
           return undefined;
         }
 
-        armedInvocationFingerprint = invocationFingerprint;
+        armedFailure = { invocationFingerprint, failureFingerprint };
         if (steered) {
           return undefined;
         }

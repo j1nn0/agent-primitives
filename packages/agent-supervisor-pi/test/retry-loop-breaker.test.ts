@@ -334,6 +334,71 @@ describe('retry-loop-breaker identity and Retry Guard integration', () => {
     });
   });
 
+
+  it('keeps an armed exact failure after the same actual result without a second steer', async () => {
+    const runtime = directRuntime();
+    await send(runtime, rootStarted());
+
+    const first = await send(runtime, toolResult());
+    const steer = await send(runtime, toolResult());
+    const exactActual = await send(runtime, toolResult());
+
+    expect(first).toBeUndefined();
+    expect(steer).toMatchObject({
+      interventions: [{ reasonCode: 'retry-loop-breaker:repeated-failure' }],
+    });
+    expect(exactActual).toBeUndefined();
+    expect([first, steer, exactActual].filter((emission) => emission !== undefined)).toHaveLength(1);
+    expect(await send(runtime, beforeToolCall(INPUT_DIGEST, TOOL_NAME, 'call-after-exact'))).toMatchObject({
+      interventions: [{ delivery: 'block', targetToolCallId: 'call-after-exact' }],
+    });
+  });
+
+  it('disarms an armed invocation after an actual success', async () => {
+    const runtime = directRuntime();
+    await send(runtime, rootStarted());
+    await send(runtime, toolResult());
+    await send(runtime, toolResult());
+
+    expect(await send(runtime, toolResult({ isError: false, resultDigest: 'success' }))).toBeUndefined();
+    expect(await send(runtime, beforeToolCall(INPUT_DIGEST, TOOL_NAME, 'call-after-success'))).toBeUndefined();
+  });
+
+  it('releases an armed failure when the same invocation returns a different error', async () => {
+    const runtime = directRuntime();
+    await send(runtime, rootStarted());
+    await send(runtime, toolResult());
+    await send(runtime, toolResult());
+
+    expect(await send(runtime, toolResult({ resultDigest: 'result-y' }))).toBeUndefined();
+    expect(await send(runtime, beforeToolCall(INPUT_DIGEST, TOOL_NAME, 'call-after-y-first'))).toBeUndefined();
+
+    const ySteer = await send(runtime, toolResult({ resultDigest: 'result-y' }));
+    expect(ySteer).toMatchObject({
+      interventions: [{ reasonCode: 'retry-loop-breaker:repeated-failure' }],
+    });
+    expect(await send(runtime, toolResult({ resultDigest: 'result-y' }))).toBeUndefined();
+    expect(await send(runtime, beforeToolCall(INPUT_DIGEST, TOOL_NAME, 'call-after-y'))).toMatchObject({
+      interventions: [{ delivery: 'block', targetToolCallId: 'call-after-y' }],
+    });
+  });
+
+  it('disarms an armed invocation after an unidentifiable actual result', async () => {
+    const nullResultRuntime = directRuntime();
+    await send(nullResultRuntime, rootStarted());
+    await send(nullResultRuntime, toolResult());
+    await send(nullResultRuntime, toolResult());
+    await send(nullResultRuntime, toolResult({ resultDigest: null }));
+    expect(await send(nullResultRuntime, beforeToolCall())).toBeUndefined();
+
+    const nullInputRuntime = directRuntime();
+    await send(nullInputRuntime, rootStarted());
+    await send(nullInputRuntime, toolResult());
+    await send(nullInputRuntime, toolResult());
+    await send(nullInputRuntime, toolResult({ inputDigest: null }));
+    expect(await send(nullInputRuntime, beforeToolCall())).toBeUndefined();
+  });
+
   it('resets all episode state at a new root request', async () => {
     const runtime = directRuntime();
     await send(runtime, rootStarted('root-1'));
