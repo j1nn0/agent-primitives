@@ -7,6 +7,7 @@ import * as featureFailureIsolationScenario from './scenarios/feature-failure-is
 import * as featureConfigSemanticsScenario from './scenarios/feature-config-semantics.mjs';
 import * as modeCommandRuntimeScenario from './scenarios/mode-command-runtime.mjs';
 import * as persistenceRecoveryScenario from './scenarios/persistence-recovery.mjs';
+import * as rootReservationOrderingScenario from './scenarios/root-reservation-ordering.mjs';
 import { runScenarioList } from './runner.mjs';
 
 const scenarios = [
@@ -19,6 +20,7 @@ const scenarios = [
   featureConfigSemanticsScenario,
   modeCommandRuntimeScenario,
   persistenceRecoveryScenario,
+  rootReservationOrderingScenario,
 ];
 
 await runScenarioList(scenarios, {

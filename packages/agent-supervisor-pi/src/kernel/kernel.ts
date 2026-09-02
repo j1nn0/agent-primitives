@@ -261,6 +261,12 @@ export class SupervisorKernel {
     this.health = 'degraded';
   }
 
+  private clearRootTracking(): void {
+    this.currentRoot = null;
+    this.facts = [];
+    this.nextFactSequence = 0;
+  }
+
   private async handleInput(event: InputEvent, ctx: ExtensionContext): Promise<InputEventResult> {
     return this.safe({ action: 'continue' }, async () => {
       await this.ensureLoaded(ctx);
@@ -495,26 +501,33 @@ export class SupervisorKernel {
   }
 
   private beginRootRequest(): boolean {
-    if (this.nextRootRequestSequence === Number.MAX_SAFE_INTEGER) {
+    const sequence = this.nextRootRequestSequence;
+    if (sequence === Number.MAX_SAFE_INTEGER) {
       this.markDegraded();
+      this.clearRootTracking();
       return false;
     }
-    const sequence = this.nextRootRequestSequence;
-    this.nextRootRequestSequence += 1;
+
+    const reservedNext = sequence + 1;
+    if (!this.persistRuntimeSequence(reservedNext)) {
+      this.clearRootTracking();
+      return false;
+    }
+
+    this.nextRootRequestSequence = reservedNext;
     this.currentRoot = { id: `root-${sequence}`, status: 'active' };
     this.facts = [];
     this.nextFactSequence = 0;
-    this.persistRuntimeSequence();
     return true;
   }
 
-  private persistRuntimeSequence(): boolean {
+  private persistRuntimeSequence(nextSequence: number): boolean {
     const state: SupervisorRuntimeStateRecordV1 = {
       schemaVersion: 1,
       kind: 'runtime',
       state: {
         schemaVersion: 1,
-        nextRootRequestSequence: this.nextRootRequestSequence,
+        nextRootRequestSequence: nextSequence,
       },
     };
     try {
@@ -601,10 +614,11 @@ export class SupervisorKernel {
         this.markDegraded();
         this.runtimeStateRecovery = 'failed';
       } else {
-        this.nextRootRequestSequence = latestValidNext + potentialAdvancements;
-        if (this.persistRuntimeSequence()) {
+        const recoveredNext = latestValidNext + potentialAdvancements;
+        this.nextRootRequestSequence = recoveredNext;
+        if (this.persistRuntimeSequence(recoveredNext)) {
           this.runtimeStateRecovery = 'recovered';
-          this.runtimeStateRecoveryNext = this.nextRootRequestSequence;
+          this.runtimeStateRecoveryNext = recoveredNext;
         } else {
           this.runtimeStateRecovery = 'failed';
         }

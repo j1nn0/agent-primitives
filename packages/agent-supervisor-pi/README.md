@@ -125,7 +125,28 @@ When the count is above zero the Kernel repairs itself automatically on load: it
 
 `/agent-supervisor status` distinguishes the cases: a `Runtime state:` line reports `normal`, `recovered`, or `recovery failed`, and an `Invalid persisted feature state:` line names any feature whose latest record is invalid.
 
-One case is outside what recovery can see. A Root Request is issued before its runtime record is appended, so if that append fails the Kernel degrades — and if the process then dies before any later successful append, the issued ID left no trace at all. A subsequent resume counts nothing and can reissue it. Recovery reasons about records that exist; closing this window would require persisting the sequence before issuing the ID, which is not part of this stage. A torn or malformed write is not affected: that record does exist, and is counted.
+### Root Request reservation
+
+Allocation is write-ahead. The Kernel reserves the next sequence through Pi before the ID exists anywhere else:
+
+```text
+persist reservation(sequence + 1)
+  -> accepted: publish root-<sequence>, advance the sequence, reset root-local facts, emit root-request-started
+  -> rejected: publish nothing
+```
+
+Until the reservation is accepted the candidate ID is not reachable from `currentRoot`, from an observation's `rootRequestId`, from a fact, from a feature's `onObservation`, from feature state, or from status output.
+
+If the reservation is rejected the Kernel degrades and the request becomes **untracked**: `currentRoot` is `null`, root-local facts are cleared, no `root-request-started` is emitted, and the remaining observations for that request carry `rootRequestId: null`. There is deliberately no synthetic `root-unknown` identity for features to reason about. The user's request still runs normally — Supervisor persistence trouble never blocks the agent.
+
+A rejected reservation does not consume the candidate. Because the ID was never published, a later request in the same process may reserve it again and publish it exactly once.
+
+Two guarantees follow, and only these two:
+
+- A new Root Request is published only after Pi accepts the runtime sequence reservation.
+- Any Supervisor state derived from a successfully published root is ordered after that root's runtime reservation in Pi session history.
+
+Both are properties of Pi's session-entry acceptance and ordering, not of physical storage. `appendEntry` is synchronous and signals rejection by throwing, and entry order is preserved in the session branch and in the session file — but it performs no `fsync`, and a brand-new file-backed session defers its first physical write until the first assistant message. So this is an acceptance-and-ordering contract, not a crash-durability claim: the Supervisor does not promise that a published root survives arbitrary storage failure, only that it is never published when Pi rejects the reservation.
 
 ### Operator command
 

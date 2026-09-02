@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
@@ -9,6 +9,7 @@ import {
   createAgentSupervisorExtension,
   registerAgentSupervisorExtension,
 } from '../src/extension.js';
+import { SupervisorKernel } from '../src/kernel/kernel.js';
 import { computeSupervisorJsonDigest } from '../src/digest.js';
 import type { SupervisorFactCandidate } from '../src/fact.js';
 import type {
@@ -73,6 +74,7 @@ class RecordingPi {
   public readonly appendedEntries: { customType: string; data: unknown }[] = [];
 
   public appendFailuresRemaining = 0;
+  public appendStateBeforeFailure = false;
 
   public readonly notifications: Notification[] = [];
 
@@ -99,6 +101,9 @@ class RecordingPi {
       appendEntry: (customType: string, data?: unknown): void => {
         if (this.appendFailuresRemaining > 0) {
           this.appendFailuresRemaining -= 1;
+          if (customType === SUPERVISOR_STATE_CUSTOM_TYPE && this.appendStateBeforeFailure) {
+            this.branch.push(customEntry(customType, data));
+          }
           throw new Error('private append failure');
         }
         this.appendedEntries.push({ customType, data });
@@ -303,6 +308,32 @@ function unclassifiableEntry(): SessionEntry {
   });
 }
 
+interface KernelRuntimeInternals {
+  readonly nextRootRequestSequence: number;
+}
+
+function readNextRootRequestSequence(kernel: SupervisorKernel): number {
+  return (kernel as unknown as KernelRuntimeInternals).nextRootRequestSequence;
+}
+
+interface RuntimeRecordForTest {
+  readonly state: { readonly nextRootRequestSequence: number };
+}
+
+function runtimeSequence(data: unknown): number {
+  return (data as RuntimeRecordForTest).state.nextRootRequestSequence;
+}
+
+function runtimeSequences(entries: readonly SessionEntry[]): number[] {
+  return entries.flatMap((entry) => {
+    if (entry.type !== 'custom' || entry.customType !== SUPERVISOR_STATE_CUSTOM_TYPE) {
+      return [];
+    }
+    const entryData = entry.data as { readonly kind?: unknown };
+    return entryData.kind === 'runtime' ? [runtimeSequence(entryData)] : [];
+  });
+}
+
 describe('Agent Supervisor Pi extension', () => {
   it('registers exactly one command and never registers a model-callable tool', () => {
     const recording = new RecordingPi();
@@ -444,6 +475,353 @@ describe('Agent Supervisor Pi extension', () => {
       kind: 'runtime',
       state: { schemaVersion: 1, nextRootRequestSequence: 9 },
     });
+  });
+
+  it('reserves a root before publishing it or dispatching root-started', async () => {
+    const trace: string[] = [];
+    const recording = new RecordingPi([runtimeEntry(7)]);
+    const kernelRef: { current?: SupervisorKernel } = {};
+    const getKernel = (): SupervisorKernel => {
+      const currentKernel = kernelRef.current;
+      if (currentKernel === undefined) {
+        throw new Error('Kernel was not initialized.');
+      }
+      return currentKernel;
+    };
+    const rootObserver = vi.fn((observation: SupervisorObservation): void => {
+      if (observation.kind === 'root-request-started') {
+        const currentKernel = getKernel();
+        trace.push(
+          `candidate root observable: ${observation.rootRequestId}; currentRoot=${currentKernel.getCurrentRoot()?.id ?? 'null'}; next=${readNextRootRequestSequence(currentKernel)}`,
+        );
+      }
+    });
+    const rootDispatch = vi.fn((observation: SupervisorObservation): void => {
+      if (observation.kind === 'root-request-started') {
+        trace.push(`root-start dispatch: ${observation.rootRequestId}`);
+      }
+    });
+    const rootObserverFeature = statelessFeature('root-observer', rootObserver);
+    const rootDispatchFeature = statelessFeature('root-start-dispatch', rootDispatch);
+    const kernel = new SupervisorKernel(recording.pi, [rootObserverFeature, rootDispatchFeature]);
+    kernelRef.current = kernel;
+    kernel.register();
+
+    const appendImplementation = recording.pi.appendEntry;
+    const appendSpy = vi.spyOn(recording.pi, 'appendEntry').mockImplementation((customType, data) => {
+      if (customType === SUPERVISOR_STATE_CUSTOM_TYPE) {
+        const currentKernel = getKernel();
+        trace.push(
+          `persist call: candidate next=${runtimeSequence(data)}; currentRoot=${currentKernel.getCurrentRoot()?.id ?? 'null'}; next=${readNextRootRequestSequence(currentKernel)}`,
+        );
+        appendImplementation(customType, data);
+        trace.push(
+          `persist result: accepted; currentRoot=${currentKernel.getCurrentRoot()?.id ?? 'null'}; next=${readNextRootRequestSequence(currentKernel)}`,
+        );
+        return;
+      }
+      appendImplementation(customType, data);
+    });
+
+    const result = await recording.emit('input', inputEvent('interactive'));
+
+    expect(result).toEqual({ action: 'continue' });
+    expect(trace).toEqual([
+      'persist call: candidate next=8; currentRoot=null; next=7',
+      'persist result: accepted; currentRoot=null; next=7',
+      'candidate root observable: root-7; currentRoot=root-7; next=8',
+      'root-start dispatch: root-7',
+    ]);
+    expect(appendSpy.mock.invocationCallOrder[0]!).toBeLessThan(rootObserver.mock.invocationCallOrder[0]!);
+    expect(rootObserver.mock.invocationCallOrder[0]!).toBeLessThan(rootDispatch.mock.invocationCallOrder[0]!);
+  });
+
+  it('publishes no root when root reservation persistence fails', async () => {
+    const onObservation = vi.fn((): void => undefined);
+    const recording = new RecordingPi([runtimeEntry(7)]);
+    recording.appendFailuresRemaining = 1;
+    const kernel = new SupervisorKernel(recording.pi, [statelessFeature('root-observer', onObservation)]);
+    kernel.register();
+
+    const result = await recording.emit('input', inputEvent('interactive'));
+    const extensionResult = await recording.emit('input', inputEvent('extension'));
+
+    expect(result).toEqual({ action: 'continue' });
+    expect(extensionResult).toEqual({ action: 'continue' });
+    expect(kernel.getCurrentRoot()).toBeNull();
+    expect(onObservation).not.toHaveBeenCalled();
+    expect(recording.appendedEntries).toHaveLength(0);
+    expect(kernel.getHealth()).toBe('degraded');
+  });
+
+  it('does not consume the root sequence when reservation fails', async () => {
+    const recording = new RecordingPi([runtimeEntry(7)]);
+    recording.appendFailuresRemaining = 1;
+    const kernel = new SupervisorKernel(recording.pi, []);
+    kernel.register();
+
+    const result = await recording.emit('input', inputEvent('interactive'));
+
+    expect(result).toEqual({ action: 'continue' });
+    expect(readNextRootRequestSequence(kernel)).toBe(7);
+    expect(kernel.getHealth()).toBe('degraded');
+  });
+
+  it('retries the same root after a transient reservation failure', async () => {
+    const roots: string[] = [];
+    const feature = statelessFeature('root-observer', (observation) => {
+      if (observation.kind === 'root-request-started' && observation.rootRequestId !== null) {
+        roots.push(observation.rootRequestId);
+      }
+    });
+    const recording = new RecordingPi([runtimeEntry(7)]);
+    recording.appendFailuresRemaining = 1;
+    const kernel = new SupervisorKernel(recording.pi, [feature]);
+    kernel.register();
+
+    const firstResult = await recording.emit('input', inputEvent('interactive'));
+    const secondResult = await recording.emit('input', inputEvent('interactive'));
+
+    expect(firstResult).toEqual({ action: 'continue' });
+    expect(secondResult).toEqual({ action: 'continue' });
+    expect(roots).toEqual(['root-7']);
+    expect(kernel.getCurrentRoot()).toEqual({ id: 'root-7', status: 'active' });
+    expect(readNextRootRequestSequence(kernel)).toBe(8);
+    expect(recording.appendedEntries).toHaveLength(1);
+    expect(recording.appendedEntries[0]?.data).toEqual({
+      schemaVersion: 1,
+      kind: 'runtime',
+      state: { schemaVersion: 1, nextRootRequestSequence: 8 },
+    });
+    expect(kernel.getHealth()).toBe('degraded');
+  });
+
+  it('isolates a failed new allocation from the previous root', async () => {
+    const trace: string[] = [];
+    const onObservation = vi.fn((observation: SupervisorObservation): void => {
+      if (observation.kind === 'root-request-started') {
+        trace.push(`root-start dispatch: ${observation.rootRequestId}`);
+      } else if (observation.kind === 'agent-settled') {
+        trace.push(`settled dispatch: ${observation.rootRequestId}`);
+      } else if (observation.kind === 'before-tool-call') {
+        trace.push(`tool observation: ${observation.rootRequestId}`);
+      }
+    });
+    const recording = new RecordingPi([runtimeEntry(1)]);
+    const kernel = new SupervisorKernel(recording.pi, [statelessFeature('root-observer', onObservation)]);
+    kernel.register();
+    const appendImplementation = recording.pi.appendEntry;
+    const appendSpy = vi.spyOn(recording.pi, 'appendEntry').mockImplementation((customType, data) => {
+      if (customType === SUPERVISOR_STATE_CUSTOM_TYPE) {
+        trace.push(`persist call: candidate next=${runtimeSequence(data)}`);
+        try {
+          appendImplementation(customType, data);
+          trace.push('persist result: accepted');
+        } catch (error) {
+          trace.push('persist result: rejected');
+          throw error;
+        }
+        return;
+      }
+      appendImplementation(customType, data);
+    });
+
+    await recording.emit('input', inputEvent('interactive'));
+    await recording.emit('agent_settled', { type: 'agent_settled' });
+    recording.appendFailuresRemaining = 1;
+    const failedResult = await recording.emit('input', inputEvent('interactive'));
+    trace.push(`after failed allocation: currentRoot=${kernel.getCurrentRoot()?.id ?? 'null'}`);
+    await recording.emit('tool_call', toolCallEvent());
+
+    expect(failedResult).toEqual({ action: 'continue' });
+    expect(kernel.getCurrentRoot()).toBeNull();
+    expect(kernel.getHealth()).toBe('degraded');
+    expect(onObservation.mock.calls.map(([observation]) => [observation.kind, observation.rootRequestId])).toEqual([
+      ['root-request-started', 'root-1'],
+      ['agent-settled', 'root-1'],
+      ['before-tool-call', null],
+    ]);
+    expect(appendSpy.mock.invocationCallOrder.length).toBe(2);
+    expect(trace).toEqual([
+      'persist call: candidate next=2',
+      'persist result: accepted',
+      'root-start dispatch: root-1',
+      'settled dispatch: root-1',
+      'persist call: candidate next=3',
+      'persist result: rejected',
+      'after failed allocation: currentRoot=null',
+      'tool observation: null',
+    ]);
+  });
+
+  it('clears root-local facts when a new root allocation fails', async () => {
+    const toolFactCounts: number[] = [];
+    const feature = statelessFeature('fact-owner', (observation, context) => {
+      if (observation.kind === 'root-request-started') {
+        return { facts: [fact('fact-owner')] };
+      }
+      if (observation.kind === 'before-tool-call') {
+        toolFactCounts.push(context.facts.all().length);
+      }
+      return undefined;
+    });
+    const recording = new RecordingPi([runtimeEntry(1)]);
+    const kernel = new SupervisorKernel(recording.pi, [feature]);
+    kernel.register();
+
+    await recording.emit('input', inputEvent('interactive'));
+    expect(kernel.getFacts()).toHaveLength(1);
+    recording.appendFailuresRemaining = 1;
+    const failedResult = await recording.emit('input', inputEvent('interactive'));
+    expect(failedResult).toEqual({ action: 'continue' });
+    expect(kernel.getCurrentRoot()).toBeNull();
+    expect(kernel.getFacts()).toHaveLength(0);
+    await recording.emit('tool_call', toolCallEvent());
+
+    expect(toolFactCounts).toEqual([0]);
+    expect(kernel.getHealth()).toBe('degraded');
+  });
+
+  it('clears root tracking when the root sequence overflows', async () => {
+    const observations: SupervisorObservation[] = [];
+    const feature = statelessFeature('root-observer', (observation) => {
+      observations.push(observation);
+    });
+    const previousRootSequence = Number.MAX_SAFE_INTEGER - 1;
+    // The max-1 persisted seed permits a successful previous root; its accepted reservation records max for the overflow attempt.
+    const recording = new RecordingPi([runtimeEntry(previousRootSequence)]);
+    const kernel = new SupervisorKernel(recording.pi, [feature]);
+    kernel.register();
+
+    const firstResult = await recording.emit('input', inputEvent('interactive'));
+    expect(firstResult).toEqual({ action: 'continue' });
+    expect(kernel.getCurrentRoot()).toEqual({
+      id: `root-${previousRootSequence}`,
+      status: 'active',
+    });
+    expect(readNextRootRequestSequence(kernel)).toBe(Number.MAX_SAFE_INTEGER);
+
+    const overflowResult = await recording.emit('input', inputEvent('interactive'));
+    expect(overflowResult).toEqual({ action: 'continue' });
+    expect(kernel.getCurrentRoot()).toBeNull();
+    expect(kernel.getHealth()).toBe('degraded');
+
+    await recording.emit('tool_call', toolCallEvent());
+
+    expect(observations.map((observation) => [observation.kind, observation.rootRequestId])).toEqual([
+      ['root-request-started', `root-${previousRootSequence}`],
+      ['before-tool-call', null],
+    ]);
+    expect(runtimeSequences(recording.branchSnapshot())).toEqual([
+      previousRootSequence,
+      Number.MAX_SAFE_INTEGER,
+    ]);
+    expect(
+      recording.appendedEntries
+        .filter((entry) => entry.customType === SUPERVISOR_STATE_CUSTOM_TYPE)
+        .map((entry) => runtimeSequence(entry.data)),
+    ).toEqual([Number.MAX_SAFE_INTEGER]);
+  });
+
+  it('skips a failed reservation remnant after reload instead of reusing its root', async () => {
+    const roots: string[] = [];
+    const feature = statelessFeature('root-observer', (observation) => {
+      if (observation.kind === 'root-request-started' && observation.rootRequestId !== null) {
+        roots.push(observation.rootRequestId);
+      }
+    });
+    const recording = new RecordingPi([runtimeEntry(7)]);
+    const kernel = new SupervisorKernel(recording.pi, [feature]);
+    kernel.register();
+
+    await recording.emit('input', inputEvent('interactive'));
+    expect(kernel.getCurrentRoot()).toEqual({ id: 'root-7', status: 'active' });
+    expect(readNextRootRequestSequence(kernel)).toBe(8);
+
+    recording.appendStateBeforeFailure = true;
+    recording.appendFailuresRemaining = 1;
+    const failedResult = await recording.emit('input', inputEvent('interactive'));
+
+    expect(failedResult).toEqual({ action: 'continue' });
+    expect(kernel.getCurrentRoot()).toBeNull();
+    expect(readNextRootRequestSequence(kernel)).toBe(8);
+    expect(kernel.getHealth()).toBe('degraded');
+    expect(roots).toEqual(['root-7']);
+    expect(runtimeSequences(recording.branchSnapshot())).toEqual([7, 8, 9]);
+
+    await recording.emit('session_start', sessionStartEvent());
+
+    // Reload lands on 9, not 8: the remnant may accompany an issued root-8, so skipping it is safe and never reuses a possibly issued ID.
+    expect(readNextRootRequestSequence(kernel)).toBe(9);
+
+    const nextResult = await recording.emit('input', inputEvent('interactive'));
+    expect(nextResult).toEqual({ action: 'continue' });
+    expect(roots).toEqual(['root-7', 'root-9']);
+    expect(kernel.getCurrentRoot()).toEqual({ id: 'root-9', status: 'active' });
+    expect(readNextRootRequestSequence(kernel)).toBe(10);
+    expect(runtimeSequences(recording.branchSnapshot())).toEqual([7, 8, 9, 10]);
+  });
+
+  it('passes the recovered sequence explicitly to runtime persistence', async () => {
+    const recording = new RecordingPi([runtimeEntry(2), invalidRuntimeEntry()]);
+    const kernel = new SupervisorKernel(recording.pi, []);
+    kernel.register();
+    const persistRuntimeSequence = vi.spyOn(
+      kernel as unknown as { persistRuntimeSequence: (nextSequence: number) => boolean },
+      'persistRuntimeSequence',
+    );
+
+    await recording.command('status');
+
+    expect(persistRuntimeSequence).toHaveBeenCalledTimes(1);
+    expect(persistRuntimeSequence).toHaveBeenCalledWith(3);
+    expect(readNextRootRequestSequence(kernel)).toBe(3);
+    expect(recording.appendedEntries[0]?.data).toEqual({
+      schemaVersion: 1,
+      kind: 'runtime',
+      state: { schemaVersion: 1, nextRootRequestSequence: 3 },
+    });
+  });
+
+  it('persists root-derived feature state after the runtime reservation', async () => {
+    const feature = statefulFeature('stateful-feature', (observation) =>
+      observation.kind === 'root-request-started' ? { nextState: { count: 1 } } : undefined,
+    );
+    const recording = new RecordingPi([runtimeEntry(7)]);
+    const kernel = new SupervisorKernel(recording.pi, [feature]);
+    kernel.register();
+    const appendSpy = vi.spyOn(recording.pi, 'appendEntry');
+
+    await recording.emit('input', inputEvent('interactive'));
+
+    const runtimeIndex = appendSpy.mock.calls.findIndex((call) => {
+      const data = call[1] as { readonly kind?: unknown };
+      return call[0] === SUPERVISOR_STATE_CUSTOM_TYPE && data.kind === 'runtime';
+    });
+    const featureIndex = appendSpy.mock.calls.findIndex((call) => {
+      const data = call[1] as { readonly kind?: unknown };
+      return call[0] === SUPERVISOR_STATE_CUSTOM_TYPE && data.kind === 'feature';
+    });
+    expect(runtimeIndex).toBe(0);
+    expect(featureIndex).toBe(1);
+    expect(appendSpy.mock.invocationCallOrder[runtimeIndex]!).toBeLessThan(
+      appendSpy.mock.invocationCallOrder[featureIndex]!,
+    );
+    expect(recording.appendedEntries.map((entry) => (entry.data as { readonly kind: string }).kind)).toEqual([
+      'runtime',
+      'feature',
+    ]);
+    expect(recording.appendedEntries[0]?.data).toEqual({
+      schemaVersion: 1,
+      kind: 'runtime',
+      state: { schemaVersion: 1, nextRootRequestSequence: 8 },
+    });
+    expect(recording.appendedEntries[1]?.data).toEqual({
+      schemaVersion: 1,
+      kind: 'feature',
+      state: { schemaVersion: 1, featureId: 'stateful-feature', featureSchemaVersion: 1, data: { count: 1 } },
+    });
+    expect(kernel.getCurrentRoot()).toEqual({ id: 'root-7', status: 'active' });
   });
 
   it('does not persist the absent default config and persists only real mode changes', async () => {

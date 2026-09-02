@@ -12,6 +12,7 @@ import { appendFileSync } from 'node:fs';
  * - failure-isolation: registers a throwing feature and a healthy sibling.
  * - feature-config-semantics: registers a semantically validated feature and a healthy sibling.
  * - persistence-recovery: registers a stateful target and an autonomous blocking sibling.
+ * - root-reservation-ordering: registers a stateful feature requiring kernel persistence.
  */
 const FACT_TRACE_ENV = 'SUPERVISOR_HARNESS_FACT_TRACE_PATH';
 const FACT_EMITTER_ID = 'probe-fact-emitter';
@@ -488,6 +489,55 @@ const persistenceRecoveryBlocker = {
   },
 };
 
+const rootReservationOrderingFeature = {
+  descriptor: {
+    id: 'probe-root-reservation-state',
+    schemaVersion: 1,
+    maturity: 'validated',
+    defaultMode: 'autonomous',
+    observes: ['root-request-started'],
+    provides: [],
+    requires: ['kernel:persistence'],
+    conflictsWith: [],
+    usesAuxiliaryModel: false,
+    interventionIntents: [],
+  },
+  state: {
+    schemaVersion: 1,
+    validate(value) {
+      if (
+        !isRecord(value) ||
+        value.marker !== 'root-reservation-ordering' ||
+        typeof value.rootRequestId !== 'string'
+      ) {
+        throw new Error('invalid root reservation ordering probe state');
+      }
+      return {
+        marker: value.marker,
+        rootRequestId: value.rootRequestId,
+      };
+    },
+  },
+  create() {
+    return {
+      onObservation(observation) {
+        if (
+          observation.kind !== 'root-request-started' ||
+          typeof observation.rootRequestId !== 'string'
+        ) {
+          return undefined;
+        }
+        return {
+          nextState: {
+            marker: 'root-reservation-ordering',
+            rootRequestId: observation.rootRequestId,
+          },
+        };
+      },
+    };
+  },
+};
+
 const profiles = {
   blocker: [probeBlocker],
   observer: [probeObserver],
@@ -495,6 +545,7 @@ const profiles = {
   'failure-isolation': [probeFailingFeature, probeHealthySibling],
   'feature-config-semantics': [probeConfigValidatingFeature, probeConfigHealthySibling],
   'persistence-recovery': [persistenceRecoveryTarget, persistenceRecoveryBlocker],
+  'root-reservation-ordering': [rootReservationOrderingFeature],
 };
 
 // Resolve the profile when Pi invokes the extension so sequential isolated sessions can select
