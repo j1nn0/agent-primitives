@@ -75,7 +75,9 @@ Runtime status is `active`, `off`, `unavailable`, or `quarantined`. A failure is
 | `onObservation` throws or emits an invalid emission | `quarantined` / `observation-failed` |
 | a stateless module emits `nextState` | `quarantined` / `state-emission-without-codec` |
 
-A quarantined feature performs no further work and proposes no further intervention for the rest of the session. Kernel health is `healthy` or `degraded`; while degraded the Supervisor suppresses autonomous intervention and behaves observe-only, and the agent keeps running.
+A quarantined feature performs no further work and proposes no further intervention for the rest of the session.
+
+Kernel health is `healthy` or `degraded`, and it means only whether the Kernel itself can operate safely — a runtime sequence that cannot be recovered or persisted, a Kernel contract violation, a persistence write failure, or an intervention transport failure. Every failure in the table above is feature-local and leaves kernel health `healthy`. While degraded the Supervisor suppresses autonomous intervention and behaves observe-only, and the agent keeps running.
 
 ### Intervention transport
 
@@ -99,7 +101,31 @@ Two reserved session custom types, both excluded from LLM context:
 - `agent-supervisor-config` holds `SupervisorConfigV1`. When no entry exists, the effective configuration is the install-and-forget default and **nothing is persisted**. A change that has no effect appends nothing.
 - `agent-supervisor-state` holds explicitly discriminated runtime and feature records. A runtime record carries the next Root Request sequence. A feature record carries one feature's state envelope. Records for features that are not currently registered are preserved.
 
-Any unparsable `agent-supervisor-state` entry degrades kernel health rather than being silently discarded. If the latest runtime record is invalid, the next Root Request sequence is the monotonic supremum of the valid runtime records, so an ID is never reused. A runtime record is written only when the sequence changes; a feature record only when a feature emits a new state.
+A runtime record is written only when the sequence changes; a feature record only when a feature emits a new state.
+
+### State history authority
+
+Session state is append-only, so a malformed record written once stays on the branch forever. The Kernel therefore never treats the whole history as concurrently authoritative. It reads the history as separate logical streams, each resolved by **latest record wins**: one runtime-sequence stream, and one stream per feature ID.
+
+For a feature, only the last record for that ID decides. If it is valid the state is restored and the feature runs normally; if it is invalid that feature alone becomes `unavailable` with reason `state-invalid`. Superseded earlier records — invalid or valid — have no effect in either direction. This is true for unregistered feature IDs too: their diagnostic is retained so a later registration does not treat stale invalid state as valid.
+
+Feature-state corruption never degrades kernel health. A healthy sibling stays autonomous and can still win and execute an intervention.
+
+### Runtime sequence recovery
+
+The next Root Request sequence comes from the last valid runtime record, or `1` when there is none. Records after that point which are runtime-shaped but invalid, or whose stream cannot be determined at all, are each counted as one possible sequence advance, because every runtime append advances the sequence by exactly one:
+
+```text
+recoveredNext = lastValidNext + possibleAdvancesAfterIt
+```
+
+Records provably scoped to a feature are not counted. Over-skipping an unused numeric root ID is acceptable; reusing an ID that may already have been issued is not. So a valid record saying `2`, followed by one corrupt runtime record, recovers to `3` — `root-2` is skipped because the corrupt record may be the append that accompanied it.
+
+When the count is above zero the Kernel repairs itself automatically on load: it appends one valid runtime record carrying the recovered sequence and stays healthy. No operator command is involved, and old entries are never rewritten or deleted. If that append fails the Kernel degrades instead and does not claim recovery. Because the repair record then becomes the last valid runtime record, a later resume finds nothing after it and writes nothing more — the repair is durable, not repeated. A load that needs no repair appends nothing at all.
+
+`/agent-supervisor status` distinguishes the cases: a `Runtime state:` line reports `normal`, `recovered`, or `recovery failed`, and an `Invalid persisted feature state:` line names any feature whose latest record is invalid.
+
+One case is outside what recovery can see. A Root Request is issued before its runtime record is appended, so if that append fails the Kernel degrades — and if the process then dies before any later successful append, the issued ID left no trace at all. A subsequent resume counts nothing and can reissue it. Recovery reasons about records that exist; closing this window would require persisting the sequence before issuing the ID, which is not part of this stage. A torn or malformed write is not affected: that record does exist, and is counted.
 
 ### Operator command
 

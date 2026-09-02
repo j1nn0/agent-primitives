@@ -72,6 +72,8 @@ class RecordingPi {
 
   public readonly appendedEntries: { customType: string; data: unknown }[] = [];
 
+  public appendFailuresRemaining = 0;
+
   public readonly notifications: Notification[] = [];
 
   public readonly sentMessages: SentMessage[] = [];
@@ -95,6 +97,10 @@ class RecordingPi {
         this.registerToolCalls += 1;
       },
       appendEntry: (customType: string, data?: unknown): void => {
+        if (this.appendFailuresRemaining > 0) {
+          this.appendFailuresRemaining -= 1;
+          throw new Error('private append failure');
+        }
         this.appendedEntries.push({ customType, data });
         this.branch.push(customEntry(customType, data));
       },
@@ -259,6 +265,42 @@ function toolResultEvent(toolCallId = 'tool-1'): unknown {
 
 function sessionStartEvent(): unknown {
   return { type: 'session_start', reason: 'startup' };
+}
+
+function runtimeEntry(nextRootRequestSequence: number): SessionEntry {
+  return customEntry(SUPERVISOR_STATE_CUSTOM_TYPE, {
+    schemaVersion: 1,
+    kind: 'runtime',
+    state: { schemaVersion: 1, nextRootRequestSequence },
+  });
+}
+
+function invalidRuntimeEntry(): SessionEntry {
+  return runtimeEntry(0);
+}
+
+function featureEntry(featureId: string, data: JsonValue): SessionEntry {
+  return customEntry(SUPERVISOR_STATE_CUSTOM_TYPE, {
+    schemaVersion: 1,
+    kind: 'feature',
+    state: { schemaVersion: 1, featureId, featureSchemaVersion: 1, data },
+  });
+}
+
+function invalidFeatureEntry(featureId: string): SessionEntry {
+  return customEntry(SUPERVISOR_STATE_CUSTOM_TYPE, {
+    schemaVersion: 1,
+    kind: 'feature',
+    state: { schemaVersion: 1, featureId, featureSchemaVersion: 1, data: undefined },
+  });
+}
+
+function unclassifiableEntry(): SessionEntry {
+  return customEntry(SUPERVISOR_STATE_CUSTOM_TYPE, {
+    schemaVersion: 1,
+    kind: 'garbled',
+    state: {},
+  });
 }
 
 describe('Agent Supervisor Pi extension', () => {
@@ -468,7 +510,7 @@ describe('Agent Supervisor Pi extension', () => {
     });
   });
 
-  it('degrades and isolates a feature with a corrupt recoverable state id', async () => {
+  it('isolates a feature with a corrupt recoverable state id without degrading the kernel', async () => {
     const corrupt = customEntry(SUPERVISOR_STATE_CUSTOM_TYPE, {
       schemaVersion: 1,
       kind: 'feature',
@@ -499,14 +541,14 @@ describe('Agent Supervisor Pi extension', () => {
     expect(corruptCalls).toBe(0);
     expect(siblingCalls).toBe(2);
     const status = recording.notifications.at(-1)?.message ?? '';
-    expect(status).toContain('Kernel health: degraded');
+    expect(status).toContain('Kernel health: healthy');
     expect(status).toContain('corrupt-state');
     expect(status).toContain('state-invalid');
     expect(status).toContain('healthy-sibling');
     expect(status).toContain('status=active');
   });
 
-  it('degrades without disabling registered features when a corrupt state id is unrecoverable', async () => {
+  it('keeps registered features available when a corrupt state id is unrecoverable', async () => {
     const corrupt = customEntry(SUPERVISOR_STATE_CUSTOM_TYPE, {
       schemaVersion: 1,
       kind: 'garbled',
@@ -528,13 +570,13 @@ describe('Agent Supervisor Pi extension', () => {
     expect(result).toEqual({ action: 'continue' });
     expect(calls).toEqual({ first: 1, second: 1 });
     const status = recording.notifications.at(-1)?.message ?? '';
-    expect(status).toContain('Kernel health: degraded');
+    expect(status).toContain('Kernel health: healthy');
     expect(status).toContain('feature-a');
     expect(status).toContain('feature-b');
     expect(status.match(/status=active/gu)).toHaveLength(2);
   });
 
-  it('honors valid state and runtime records alongside corrupt state and preserves unknown state', async () => {
+  it('honors valid state and recovers past an unclassifiable state while preserving unknown state', async () => {
     const runtimeRecord = {
       schemaVersion: 1,
       kind: 'runtime',
@@ -575,13 +617,13 @@ describe('Agent Supervisor Pi extension', () => {
     await recording.emit('input', inputEvent('interactive'));
     await recording.command('status');
 
-    expect(roots).toEqual(['root-5']);
+    expect(roots).toEqual(['root-6']);
     expect(restored).toEqual([{ count: 7 }]);
     expect(recording.branchSnapshot()).toContainEqual(unknownFeatureRecord);
-    expect(recording.notifications.at(-1)?.message).toContain('Kernel health: degraded');
+    expect(recording.notifications.at(-1)?.message).toContain('Kernel health: healthy');
   });
 
-  it('retains the valid-runtime supremum when the latest runtime record is corrupt', async () => {
+  it('uses the latest valid runtime record and ignores superseded invalid runtime state', async () => {
     const observations: SupervisorObservation[] = [];
     const feature = statelessFeature('runtime-observer', (observation) => {
       observations.push(observation);
@@ -603,8 +645,8 @@ describe('Agent Supervisor Pi extension', () => {
     };
     const recording = new RecordingPi([
       customEntry(SUPERVISOR_STATE_CUSTOM_TYPE, firstValid),
-      customEntry(SUPERVISOR_STATE_CUSTOM_TYPE, secondValid),
       customEntry(SUPERVISOR_STATE_CUSTOM_TYPE, invalidLatest),
+      customEntry(SUPERVISOR_STATE_CUSTOM_TYPE, secondValid),
     ]);
     createAgentSupervisorExtension({ features: [feature] })(recording.pi);
 
@@ -617,7 +659,248 @@ describe('Agent Supervisor Pi extension', () => {
       kind: 'runtime',
       state: { schemaVersion: 1, nextRootRequestSequence: 10 },
     });
+    expect(recording.appendedEntries).toHaveLength(1);
+    expect(recording.notifications.at(-1)?.message).toContain('Kernel health: healthy');
+    expect(recording.notifications.at(-1)?.message).toContain('Runtime state: normal');
+  });
+
+  it('uses the latest valid feature state after an older invalid record', async () => {
+    const restored: (StatefulValue | null)[] = [];
+    const feature = statefulFeature('feature-a', (_observation, context) => {
+      restored.push(context.state);
+    });
+    const recording = new RecordingPi([
+      invalidFeatureEntry('feature-a'),
+      featureEntry('feature-a', { count: 7 }),
+    ]);
+    createAgentSupervisorExtension({ features: [feature] })(recording.pi);
+
+    await recording.emit('input', inputEvent('interactive'));
+    await recording.command('status');
+
+    expect(restored).toEqual([{ count: 7 }]);
+    const status = recording.notifications.at(-1)?.message ?? '';
+    expect(status).toContain('Kernel health: healthy');
+    expect(status).toContain('feature-a');
+    expect(status).toContain('status=active');
+    expect(status).not.toContain('state-invalid');
+  });
+
+  it('lets a newer invalid feature state supersede an older valid state', async () => {
+    let calls = 0;
+    const feature = statefulFeature('feature-a', () => {
+      calls += 1;
+    });
+    const recording = new RecordingPi([
+      featureEntry('feature-a', { count: 7 }),
+      invalidFeatureEntry('feature-a'),
+    ]);
+    createAgentSupervisorExtension({ features: [feature] })(recording.pi);
+
+    await recording.emit('input', inputEvent('interactive'));
+    await recording.command('status');
+
+    expect(calls).toBe(0);
+    const status = recording.notifications.at(-1)?.message ?? '';
+    expect(status).toContain('Kernel health: healthy');
+    expect(status).toContain('runtime=unavailable');
+    expect(status).toContain('status=unavailable reason=state-invalid');
+  });
+
+  it('keeps an eligible sibling autonomous when the latest state for another feature is invalid', async () => {
+    const invalidFeature = statelessFeature('feature-a', () => undefined);
+    const winner = statelessFeature('feature-b', (observation) =>
+      observation.kind === 'before-tool-call'
+        ? { interventions: [proposal('feature-b', 'block', 'tool-call', 'feature-b won', 'tool-1')] }
+        : undefined,
+    );
+    const recording = new RecordingPi([invalidFeatureEntry('feature-a')]);
+    createAgentSupervisorExtension({ features: [invalidFeature, winner] })(recording.pi);
+
+    await recording.emit('input', inputEvent('interactive'));
+    const result = await recording.emit('tool_call', toolCallEvent('tool-1'));
+    await recording.command('status');
+
+    expect(result).toEqual({ block: true, reason: 'feature-b won' });
+    const status = recording.notifications.at(-1)?.message ?? '';
+    expect(status).toContain('Kernel health: healthy');
+    expect(status).toContain('feature-a');
+    expect(status).toContain('feature-b');
+    expect(status).toContain('feature-b: maturity=default');
+    expect(status.match(/status=active/gu)).toHaveLength(1);
+    expect(status).toContain('state-invalid');
+  });
+
+  it('retains invalid state diagnostics for an unregistered feature without harming a registered sibling', async () => {
+    let siblingCalls = 0;
+    const sibling = statelessFeature('feature-b', () => {
+      siblingCalls += 1;
+    });
+    const recording = new RecordingPi([
+      invalidFeatureEntry('future-feature'),
+      runtimeEntry(5),
+    ]);
+    createAgentSupervisorExtension({ features: [sibling] })(recording.pi);
+
+    await recording.emit('input', inputEvent('interactive'));
+    await recording.command('status');
+
+    expect(siblingCalls).toBe(1);
+    const status = recording.notifications.at(-1)?.message ?? '';
+    expect(status).toContain('Kernel health: healthy');
+    expect(status).toContain('Invalid persisted feature state: future-feature (state-invalid)');
+    expect(status).toContain('feature-b');
+    expect(status).toContain('status=active');
+  });
+
+  it('recovers one invalid runtime tail and skips the root it may represent', async () => {
+    const roots: (string | null)[] = [];
+    const feature = statelessFeature('runtime-observer', (observation) => {
+      roots.push(observation.rootRequestId);
+    });
+    const recording = new RecordingPi([runtimeEntry(2), invalidRuntimeEntry()]);
+    createAgentSupervisorExtension({ features: [feature] })(recording.pi);
+
+    await recording.command('status');
+    expect(recording.appendedEntries[0]?.data).toEqual({
+      schemaVersion: 1,
+      kind: 'runtime',
+      state: { schemaVersion: 1, nextRootRequestSequence: 3 },
+    });
+    expect(recording.notifications.at(-1)?.message).toContain(
+      'Runtime state: recovered (next root request sequence: 3)',
+    );
+
+    await recording.emit('input', inputEvent('interactive'));
+    await recording.command('status');
+
+    expect(roots).toEqual(['root-3']);
+    expect(recording.appendedEntries.map((entry) => entry.data)).toEqual([
+      {
+        schemaVersion: 1,
+        kind: 'runtime',
+        state: { schemaVersion: 1, nextRootRequestSequence: 3 },
+      },
+      {
+        schemaVersion: 1,
+        kind: 'runtime',
+        state: { schemaVersion: 1, nextRootRequestSequence: 4 },
+      },
+    ]);
+    expect(recording.notifications.at(-1)?.message).toContain('Kernel health: healthy');
+  });
+
+  it('recovers two invalid runtime tails and skips both potentially issued roots', async () => {
+    const roots: (string | null)[] = [];
+    const feature = statelessFeature('runtime-observer', (observation) => {
+      roots.push(observation.rootRequestId);
+    });
+    const recording = new RecordingPi([
+      runtimeEntry(2),
+      invalidRuntimeEntry(),
+      invalidRuntimeEntry(),
+    ]);
+    createAgentSupervisorExtension({ features: [feature] })(recording.pi);
+
+    await recording.command('status');
+    expect(recording.appendedEntries[0]?.data).toEqual({
+      schemaVersion: 1,
+      kind: 'runtime',
+      state: { schemaVersion: 1, nextRootRequestSequence: 4 },
+    });
+
+    await recording.emit('input', inputEvent('interactive'));
+
+    expect(roots).toEqual(['root-4']);
+    expect(recording.appendedEntries[1]?.data).toEqual({
+      schemaVersion: 1,
+      kind: 'runtime',
+      state: { schemaVersion: 1, nextRootRequestSequence: 5 },
+    });
+  });
+
+  it('recovers deterministically from malformed history with no valid runtime record', async () => {
+    const roots: (string | null)[] = [];
+    const feature = statelessFeature('runtime-observer', (observation) => {
+      roots.push(observation.rootRequestId);
+    });
+    const recording = new RecordingPi([invalidRuntimeEntry(), unclassifiableEntry()]);
+    createAgentSupervisorExtension({ features: [feature] })(recording.pi);
+
+    await recording.command('status');
+    expect(recording.appendedEntries[0]?.data).toEqual({
+      schemaVersion: 1,
+      kind: 'runtime',
+      state: { schemaVersion: 1, nextRootRequestSequence: 3 },
+    });
+
+    await recording.emit('input', inputEvent('interactive'));
+
+    expect(roots).toEqual(['root-3']);
+    expect(recording.appendedEntries[1]?.data).toEqual({
+      schemaVersion: 1,
+      kind: 'runtime',
+      state: { schemaVersion: 1, nextRootRequestSequence: 4 },
+    });
+  });
+
+  it('does not append another recovery record when the recovered runtime state is durable', async () => {
+    const recording = new RecordingPi([runtimeEntry(2), invalidRuntimeEntry()]);
+    createAgentSupervisorExtension({ features: [] })(recording.pi);
+
+    await recording.command('status');
+    expect(recording.appendedEntries).toHaveLength(1);
+    await recording.emit('session_start', sessionStartEvent());
+    await recording.command('status');
+
+    expect(recording.appendedEntries).toHaveLength(1);
+    expect(recording.notifications.at(-1)?.message).toContain('Kernel health: healthy');
+    expect(recording.notifications.at(-1)?.message).toContain('Runtime state: normal');
+  });
+
+  it('degrades on recovery append failure, continues the agent, and suppresses autonomous execution', async () => {
+    const winner = statelessFeature('winner', (observation) =>
+      observation.kind === 'before-tool-call'
+        ? { interventions: [proposal('winner', 'block', 'tool-call', 'must not run', 'tool-1')] }
+        : undefined,
+    );
+    const recording = new RecordingPi([invalidRuntimeEntry()]);
+    recording.appendFailuresRemaining = 1;
+    createAgentSupervisorExtension({ features: [winner] })(recording.pi);
+
+    await recording.command('status');
+    const inputResult = await recording.emit('input', inputEvent('interactive'));
+    const toolResult = await recording.emit('tool_call', toolCallEvent('tool-1'));
+    await recording.command('status');
+
+    expect(inputResult).toEqual({ action: 'continue' });
+    expect(toolResult).toBeUndefined();
+    expect(recording.sentMessages).toHaveLength(0);
     expect(recording.notifications.at(-1)?.message).toContain('Kernel health: degraded');
+    expect(recording.notifications.at(-1)?.message).toContain('Runtime state: recovery failed');
+  });
+
+  it('leaves a healthy runtime sequence unchanged until normal root creation', async () => {
+    const roots: (string | null)[] = [];
+    const feature = statelessFeature('runtime-observer', (observation) => {
+      roots.push(observation.rootRequestId);
+    });
+    const recording = new RecordingPi([runtimeEntry(7)]);
+    createAgentSupervisorExtension({ features: [feature] })(recording.pi);
+
+    await recording.emit('input', inputEvent('interactive'));
+    await recording.command('status');
+
+    expect(roots).toEqual(['root-7']);
+    expect(recording.appendedEntries).toHaveLength(1);
+    expect(recording.appendedEntries[0]?.data).toEqual({
+      schemaVersion: 1,
+      kind: 'runtime',
+      state: { schemaVersion: 1, nextRootRequestSequence: 8 },
+    });
+    expect(recording.notifications.at(-1)?.message).toContain('Kernel health: healthy');
+    expect(recording.notifications.at(-1)?.message).toContain('Runtime state: normal');
+    expect(recording.notifications.at(-1)?.message).not.toContain('Runtime state: recovered');
   });
 
   it('creates applicable features in ascending id order, disposes on rebuild, and isolates failures', async () => {
@@ -810,6 +1093,7 @@ describe('Agent Supervisor Pi extension', () => {
       customEntry(SUPERVISOR_STATE_CUSTOM_TYPE, invalidRuntime),
       corruptTail,
     ]);
+    degradedRecording.appendFailuresRemaining = 1;
     createAgentSupervisorExtension({ features: [winner] })(degradedRecording.pi);
     await degradedRecording.emit('input', inputEvent('interactive'));
     const degradedResult = await degradedRecording.emit('tool_call', toolCallEvent('tool-1'));

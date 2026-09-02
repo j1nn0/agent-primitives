@@ -11,6 +11,7 @@ import { appendFileSync } from 'node:fs';
  * - fact-visibility: registers probe-fact-emitter and probe-fact-reader.
  * - failure-isolation: registers a throwing feature and a healthy sibling.
  * - feature-config-semantics: registers a semantically validated feature and a healthy sibling.
+ * - persistence-recovery: registers a stateful target and an autonomous blocking sibling.
  */
 const FACT_TRACE_ENV = 'SUPERVISOR_HARNESS_FACT_TRACE_PATH';
 const FACT_EMITTER_ID = 'probe-fact-emitter';
@@ -404,12 +405,96 @@ const probeConfigHealthySibling = {
   },
 };
 
+const PERSISTENCE_RECOVERY_TARGET_ID = 'corrupt-target';
+const PERSISTENCE_RECOVERY_BLOCKER_ID = 'healthy-blocker';
+const PERSISTENCE_RECOVERY_BLOCK_MESSAGE =
+  'healthy-blocker proposal won at the tool-call boundary';
+
+
+const persistenceRecoveryTarget = {
+  descriptor: {
+    id: PERSISTENCE_RECOVERY_TARGET_ID,
+    schemaVersion: 1,
+    maturity: 'validated',
+    defaultMode: 'autonomous',
+    observes: ['before-tool-call'],
+    provides: [],
+    requires: [],
+    conflictsWith: [],
+    usesAuxiliaryModel: false,
+    interventionIntents: [],
+  },
+  state: {
+    schemaVersion: 1,
+    validate(value) {
+      if (!isRecord(value) || value.marker !== 'restored') {
+        throw new Error('invalid persistence recovery probe state');
+      }
+      return { marker: value.marker };
+    },
+  },
+  create(context) {
+    if (
+      context.initialState !== null &&
+      (!isRecord(context.initialState) || context.initialState.marker !== 'restored')
+    ) {
+      throw new Error('unexpected persistence recovery probe state');
+    }
+    return {
+      onObservation: () => undefined,
+    };
+  },
+};
+
+const persistenceRecoveryBlocker = {
+  descriptor: {
+    id: PERSISTENCE_RECOVERY_BLOCKER_ID,
+    schemaVersion: 1,
+    maturity: 'validated',
+    defaultMode: 'autonomous',
+    observes: ['before-tool-call'],
+    provides: [],
+    requires: [],
+    conflictsWith: [],
+    usesAuxiliaryModel: false,
+    interventionIntents: ['stop'],
+  },
+  create() {
+    return {
+      onObservation(observation) {
+        if (observation.kind !== 'before-tool-call') {
+          return undefined;
+        }
+        const toolCallId = observation.payload?.toolCallId;
+        if (typeof toolCallId !== 'string') {
+          return undefined;
+        }
+        return {
+          interventions: [
+            {
+              sourceFeatureId: PERSISTENCE_RECOVERY_BLOCKER_ID,
+              boundary: 'tool-call',
+              intent: 'stop',
+              delivery: 'block',
+              priority: 100,
+              reasonCode: 'healthy-blocker:tool-call-blocked',
+              message: PERSISTENCE_RECOVERY_BLOCK_MESSAGE,
+              targetToolCallId: toolCallId,
+            },
+          ],
+        };
+      },
+    };
+  },
+};
+
 const profiles = {
   blocker: [probeBlocker],
   observer: [probeObserver],
   'fact-visibility': [probeFactEmitter, probeFactReader],
   'failure-isolation': [probeFailingFeature, probeHealthySibling],
   'feature-config-semantics': [probeConfigValidatingFeature, probeConfigHealthySibling],
+  'persistence-recovery': [persistenceRecoveryTarget, persistenceRecoveryBlocker],
 };
 
 // Resolve the profile when Pi invokes the extension so sequential isolated sessions can select

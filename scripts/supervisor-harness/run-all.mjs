@@ -6,6 +6,7 @@ import * as factVisibilityScenario from './scenarios/fact-visibility.mjs';
 import * as featureFailureIsolationScenario from './scenarios/feature-failure-isolation.mjs';
 import * as featureConfigSemanticsScenario from './scenarios/feature-config-semantics.mjs';
 import * as modeCommandRuntimeScenario from './scenarios/mode-command-runtime.mjs';
+import * as persistenceRecoveryScenario from './scenarios/persistence-recovery.mjs';
 import { runScenarioList } from './runner.mjs';
 
 const scenarios = [
@@ -17,6 +18,7 @@ const scenarios = [
   featureFailureIsolationScenario,
   featureConfigSemanticsScenario,
   modeCommandRuntimeScenario,
+  persistenceRecoveryScenario,
 ];
 
 await runScenarioList(scenarios, {

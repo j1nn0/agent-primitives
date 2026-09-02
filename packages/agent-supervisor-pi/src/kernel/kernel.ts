@@ -95,6 +95,27 @@ function recoverFeatureId(value: unknown): string | undefined {
   return undefined;
 }
 
+type PersistedStateClassification =
+  | { readonly kind: 'runtime-valid'; readonly record: SupervisorRuntimeStateRecordV1 }
+  | { readonly kind: 'runtime-invalid' }
+  | { readonly kind: 'feature-valid'; readonly state: SupervisorFeatureStateEnvelope }
+  | { readonly kind: 'feature-invalid'; readonly featureId: string }
+  | { readonly kind: 'unclassifiable' };
+
+function classifyPersistedState(value: unknown): PersistedStateClassification {
+  const parsed = parseSupervisorStateRecord(value);
+  if (parsed.status === 'valid') {
+    return parsed.record.kind === 'runtime'
+      ? { kind: 'runtime-valid', record: parsed.record }
+      : { kind: 'feature-valid', state: parsed.record.state };
+  }
+  if (isRuntimeShaped(value)) {
+    return { kind: 'runtime-invalid' };
+  }
+  const featureId = recoverFeatureId(value);
+  return featureId === undefined ? { kind: 'unclassifiable' } : { kind: 'feature-invalid', featureId };
+}
+
 function compareStrings(left: string, right: string): number {
   if (left < right) {
     return -1;
@@ -162,6 +183,10 @@ export class SupervisorKernel {
 
   private restoredFeatureStates = new Map<string, SupervisorFeatureStateEnvelope>();
   private invalidRestoredStateFeatureIds = new Set<string>();
+
+  private runtimeStateRecovery: 'none' | 'recovered' | 'failed' = 'none';
+
+  private runtimeStateRecoveryNext: number | undefined;
 
   private operationQueue: Promise<void> = Promise.resolve();
 
@@ -483,7 +508,7 @@ export class SupervisorKernel {
     return true;
   }
 
-  private persistRuntimeSequence(): void {
+  private persistRuntimeSequence(): boolean {
     const state: SupervisorRuntimeStateRecordV1 = {
       schemaVersion: 1,
       kind: 'runtime',
@@ -494,8 +519,10 @@ export class SupervisorKernel {
     };
     try {
       this.pi.appendEntry(SUPERVISOR_STATE_CUSTOM_TYPE, state);
+      return true;
     } catch {
       this.markDegraded();
+      return false;
     }
   }
 
@@ -536,54 +563,54 @@ export class SupervisorKernel {
   private loadPersistedState(branch: readonly SessionEntry[]): void {
     this.restoredFeatureStates = new Map();
     this.invalidRestoredStateFeatureIds = new Set();
-    const validRuntimeStates: SupervisorRuntimeStateRecordV1[] = [];
-    let latestRuntimeSeen = false;
-    let latestRuntime: SupervisorRuntimeStateRecordV1 | undefined;
-    let latestRuntimeWasValid = false;
+    this.runtimeStateRecovery = 'none';
+    this.runtimeStateRecoveryNext = undefined;
+
+    let latestValidNext = DEFAULT_SUPERVISOR_RUNTIME_STATE.nextRootRequestSequence;
+    let potentialAdvancements = 0;
 
     for (const entry of branch) {
       if (entry.type !== 'custom' || entry.customType !== SUPERVISOR_STATE_CUSTOM_TYPE) {
         continue;
       }
-      const raw = entry.data;
-      const parsed = parseSupervisorStateRecord(raw);
-      if (isRuntimeShaped(raw)) {
-        latestRuntimeSeen = true;
-        latestRuntime =
-          parsed.status === 'valid' && parsed.record.kind === 'runtime' ? parsed.record : undefined;
-        latestRuntimeWasValid = parsed.status === 'valid' && parsed.record.kind === 'runtime';
-      }
-      if (parsed.status !== 'valid') {
-        this.markDegraded();
-        if (!isRuntimeShaped(raw)) {
-          const featureId = recoverFeatureId(raw);
-          if (featureId !== undefined) {
-            this.invalidRestoredStateFeatureIds.add(featureId);
-          }
-        }
-        continue;
-      }
-      if (parsed.record.kind === 'runtime') {
-        validRuntimeStates.push(parsed.record);
-      } else {
-        // Unknown feature ids remain in this map and are never rewritten by the kernel.
-        this.restoredFeatureStates.set(parsed.record.state.featureId, parsed.record.state);
+      const classification = classifyPersistedState(entry.data);
+      switch (classification.kind) {
+        case 'runtime-valid':
+          latestValidNext = classification.record.state.nextRootRequestSequence;
+          potentialAdvancements = 0;
+          break;
+        case 'runtime-invalid':
+        case 'unclassifiable':
+          potentialAdvancements += 1;
+          break;
+        case 'feature-valid':
+          this.invalidRestoredStateFeatureIds.delete(classification.state.featureId);
+          this.restoredFeatureStates.set(classification.state.featureId, classification.state);
+          break;
+        case 'feature-invalid':
+          this.restoredFeatureStates.delete(classification.featureId);
+          this.invalidRestoredStateFeatureIds.add(classification.featureId);
+          break;
       }
     }
 
-    if (latestRuntimeSeen && latestRuntime !== undefined && latestRuntimeWasValid) {
-      this.nextRootRequestSequence = latestRuntime.state.nextRootRequestSequence;
-    } else if (latestRuntimeSeen) {
-      // If the latest runtime record is invalid, use the monotonic supremum of every valid runtime
-      // record on the branch. This prevents an invalid tail from ever causing a root id reuse.
-      this.health = 'degraded';
-      this.nextRootRequestSequence = validRuntimeStates.reduce(
-        (maximum, record) => Math.max(maximum, record.state.nextRootRequestSequence),
-        DEFAULT_SUPERVISOR_RUNTIME_STATE.nextRootRequestSequence,
-      );
-    } else {
-      this.nextRootRequestSequence = DEFAULT_SUPERVISOR_RUNTIME_STATE.nextRootRequestSequence;
+    this.nextRootRequestSequence = latestValidNext;
+    if (potentialAdvancements > 0) {
+      if (potentialAdvancements > Number.MAX_SAFE_INTEGER - latestValidNext) {
+        this.nextRootRequestSequence = Number.MAX_SAFE_INTEGER;
+        this.markDegraded();
+        this.runtimeStateRecovery = 'failed';
+      } else {
+        this.nextRootRequestSequence = latestValidNext + potentialAdvancements;
+        if (this.persistRuntimeSequence()) {
+          this.runtimeStateRecovery = 'recovered';
+          this.runtimeStateRecoveryNext = this.nextRootRequestSequence;
+        } else {
+          this.runtimeStateRecovery = 'failed';
+        }
+      }
     }
+
     this.runtimeManager.setRestoredStates(this.restoredFeatureStates);
     this.runtimeManager.setInvalidRestoredStateFeatureIds(this.invalidRestoredStateFeatureIds);
   }
@@ -725,12 +752,23 @@ export class SupervisorKernel {
     const statuses = [...this.runtimeManager.getStatuses()].sort((left, right) =>
       compareStrings(left.id, right.id),
     );
+    const runtimeStateLine =
+      this.runtimeStateRecovery === 'recovered'
+        ? `Runtime state: recovered (next root request sequence: ${this.runtimeStateRecoveryNext ?? this.nextRootRequestSequence})`
+        : this.runtimeStateRecovery === 'failed'
+          ? 'Runtime state: recovery failed'
+          : 'Runtime state: normal';
+    const invalidFeatureIds = [...this.invalidRestoredStateFeatureIds].sort(compareStrings);
     const lines = [
       'Agent Supervisor',
       `Global config: ${plan?.configStatus ?? (this.configEntryPresent ? 'degraded' : 'valid')}`,
       `Requested global mode: ${plan?.requestedGlobalMode ?? 'none'}`,
       `Effective global mode: ${plan?.effectiveGlobalMode ?? 'observe'}`,
       `Kernel health: ${this.health}`,
+      runtimeStateLine,
+      ...(invalidFeatureIds.length === 0
+        ? []
+        : [`Invalid persisted feature state: ${invalidFeatureIds.join(', ')} (state-invalid)`]),
       `Current root: ${this.currentRoot?.id ?? 'none'} (${this.currentRoot?.status ?? 'none'})`,
       `Registered features: ${this.runtimeManager.getRegisteredCount()}`,
     ];
