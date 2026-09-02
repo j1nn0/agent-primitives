@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import type { SupervisorKernelFeatureModule } from './kernel/runtime.js';
 import { SupervisorKernel } from './kernel/kernel.js';
+import { createSupervisorBuiltInFeatures } from './features/builtins.js';
 
 /**
  * A bounded existential wrapper for feature modules. The kernel validates and erases each module's
@@ -23,9 +24,9 @@ export function createAgentSupervisorExtension(
   };
 }
 
-/** Registers the production profile, which intentionally has no built-in features. */
+/** Registers the production profile with the current built-in features. */
 export function registerAgentSupervisorExtension(pi: ExtensionAPI): void {
-  createAgentSupervisorExtension({ features: [] })(pi);
+  createAgentSupervisorExtension({ features: createSupervisorBuiltInFeatures() })(pi);
 }
 
 export default registerAgentSupervisorExtension;

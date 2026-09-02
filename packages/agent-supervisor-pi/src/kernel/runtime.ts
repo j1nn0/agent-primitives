@@ -550,6 +550,10 @@ export class SupervisorFeatureRuntimeManager {
         if (proposal.sourceFeatureId !== record.id) {
           throw new Error('invalid intervention source');
         }
+        if (!record.descriptor.interventionIntents.includes(proposal.intent)) {
+          this.quarantineFeature(record, 'intervention-intent-not-declared');
+          return undefined;
+        }
         interventions.push(proposal);
       }
       emission.interventions = Object.freeze(interventions);

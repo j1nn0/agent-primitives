@@ -19,6 +19,7 @@ import type {
 import type {
   SupervisorInterventionBoundary,
   SupervisorInterventionDelivery,
+  SupervisorInterventionIntent,
   SupervisorInterventionProposal,
 } from '../src/intervention.js';
 import type {
@@ -151,6 +152,7 @@ class RecordingPi {
 interface FeatureOptions {
   readonly defaultMode?: SupervisorFeatureMode;
   readonly observes?: readonly SupervisorObservationDescriptorKind[];
+  readonly interventionIntents?: readonly SupervisorInterventionIntent[];
   readonly validateConfig?: (value: unknown) => JsonValue;
   readonly validateState?: (value: unknown) => StatefulValue;
 }
@@ -179,7 +181,7 @@ function descriptor(id: string, options: FeatureOptions = {}): SupervisorFeature
     requires: [],
     conflictsWith: [],
     usesAuxiliaryModel: false,
-    interventionIntents: ['continue'],
+    interventionIntents: options.interventionIntents ?? ['continue'],
   };
 }
 
@@ -227,11 +229,12 @@ function proposal(
   message = `${sourceFeatureId} message`,
   targetToolCallId?: string,
   priority = 1,
+  intent: SupervisorInterventionIntent = 'continue',
 ): SupervisorInterventionProposal {
   const base = {
     sourceFeatureId,
     boundary,
-    intent: 'continue' as const,
+    intent,
     delivery,
     priority,
     reasonCode: `${sourceFeatureId}:reason`,
@@ -1316,6 +1319,134 @@ describe('Agent Supervisor Pi extension', () => {
     await recording.command('status');
     expect(recording.notifications.at(-1)?.message).toContain('feature-b');
     expect(recording.notifications.at(-1)?.message).toContain('initialization-failed');
+  });
+
+  it('accepts a declared change-strategy intervention', async () => {
+    const feature = statelessFeature(
+      'change-strategy-feature',
+      (observation) =>
+        observation.kind === 'before-tool-call'
+          ? {
+              interventions: [
+                proposal(
+                  'change-strategy-feature',
+                  'block',
+                  'tool-call',
+                  'change strategy',
+                  'tool-1',
+                  1,
+                  'change-strategy',
+                ),
+              ],
+            }
+          : undefined,
+      { interventionIntents: ['change-strategy'] },
+    );
+    const recording = new RecordingPi();
+    createAgentSupervisorExtension({ features: [feature] })(recording.pi);
+
+    await recording.emit('input', inputEvent('interactive'));
+    const result = await recording.emit('tool_call', toolCallEvent('tool-1'));
+
+    expect(result).toEqual({ block: true, reason: 'change strategy' });
+  });
+
+  it('accepts a declared stop intervention', async () => {
+    const feature = statelessFeature(
+      'stop-feature',
+      (observation) =>
+        observation.kind === 'before-tool-call'
+          ? {
+              interventions: [
+                proposal(
+                  'stop-feature',
+                  'block',
+                  'tool-call',
+                  'stop feature',
+                  'tool-1',
+                  1,
+                  'stop',
+                ),
+              ],
+            }
+          : undefined,
+      { interventionIntents: ['stop'] },
+    );
+    const recording = new RecordingPi();
+    createAgentSupervisorExtension({ features: [feature] })(recording.pi);
+
+    await recording.emit('input', inputEvent('interactive'));
+    const result = await recording.emit('tool_call', toolCallEvent('tool-1'));
+
+    expect(result).toEqual({ block: true, reason: 'stop feature' });
+  });
+
+  it('quarantines an undeclared intervention intent without affecting a healthy sibling', async () => {
+    let unauthorizedCalls = 0;
+    let siblingCalls = 0;
+    const unauthorized = statelessFeature(
+      'unauthorized-feature',
+      (observation) => {
+        if (observation.kind !== 'before-tool-call') {
+          return undefined;
+        }
+        unauthorizedCalls += 1;
+        return {
+          interventions: [
+            proposal(
+              'unauthorized-feature',
+              'block',
+              'tool-call',
+              'unauthorized should not execute',
+              'tool-1',
+              1,
+              'stop',
+            ),
+          ],
+        };
+      },
+      { interventionIntents: ['verify'] },
+    );
+    const sibling = statelessFeature(
+      'healthy-sibling',
+      (observation) => {
+        if (observation.kind !== 'before-tool-call') {
+          return undefined;
+        }
+        siblingCalls += 1;
+        return {
+          interventions: [
+            proposal(
+              'healthy-sibling',
+              'block',
+              'tool-call',
+              'sibling won',
+              'tool-1',
+              1,
+              'change-strategy',
+            ),
+          ],
+        };
+      },
+      { interventionIntents: ['change-strategy'] },
+    );
+    const recording = new RecordingPi();
+    const kernel = new SupervisorKernel(recording.pi, [unauthorized, sibling]);
+    kernel.register();
+
+    await recording.emit('input', inputEvent('interactive'));
+    const firstResult = await recording.emit('tool_call', toolCallEvent('tool-1'));
+    const secondResult = await recording.emit('tool_call', toolCallEvent('tool-1'));
+    await recording.command('status');
+
+    expect(firstResult).toEqual({ block: true, reason: 'sibling won' });
+    expect(secondResult).toEqual({ block: true, reason: 'sibling won' });
+    expect(unauthorizedCalls).toBe(1);
+    expect(siblingCalls).toBe(2);
+    expect(kernel.getHealth()).toBe('healthy');
+    const status = recording.notifications.at(-1)?.message ?? '';
+    expect(status).toContain('status=quarantined reason=intervention-intent-not-declared');
+    expect(status).toContain('healthy-sibling');
   });
 
   it('quarantines observation failures and stateless nextState violations without stopping siblings', async () => {

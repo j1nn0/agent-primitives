@@ -24,6 +24,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },
+  "dependencies": {
+    "@j1nn0/agent-retry-guard": "workspace:^"
+  },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
   },

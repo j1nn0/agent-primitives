@@ -6,17 +6,17 @@ This package is experimental, private, and not published to npm.
 
 This **is now a Pi extension**. The Kernel runtime is active after installation: it normalizes Pi lifecycle events, tracks Root Requests, owns Supervisor persistence, resolves the feature plan, and owns intervention transport.
 
-There are still **no autonomous product features** in S1. The current built-in feature count is **zero**, so installing S1 alone **does not yet improve task effectiveness**. What S1 delivers is the control plane that S2 features will run on.
+The current production profile contains **one built-in feature**, [`retry-loop-breaker`](#retry-loop-breaker), which is active at `autonomous` after installation with no setup. The feature registry itself stays open-ended; one built-in is where the product is today, not a fixed design.
 
 The Supervisor registers **no model-callable tools**. The model cannot operate the Supervisor; only a human operator can, through one command namespace.
 
 The default global mode is `autonomous`, so the intended product profile requires no setup. Features are independently configurable.
 
-S2 introduces the first autonomous behavior.
+The Supervisor makes **no model calls of its own**. Nothing here consults an LLM.
 
 ## Kernel runtime
 
-The extension entrypoint is `./dist/extension.js`. Its default export registers the production profile, which has no built-in features. A named `createAgentSupervisorExtension({ features })` factory exists for tests and future built-ins; it is not a supported public API.
+The extension entrypoint is `./dist/extension.js`. Its default export registers the production profile, which is the current set of built-in features. A named `createAgentSupervisorExtension({ features })` factory exists for tests; it receives exactly the features it is given and never the built-ins, which keeps test probes isolated from the production profile. It is not a supported public API.
 
 Only the Kernel touches Pi. Features receive no `pi` handle, no extension context, and no `sendUserMessage` or `appendEntry`. The Kernel owns runtime lifecycle, persistence, and intervention transport.
 
@@ -165,6 +165,67 @@ While the top-level persisted configuration is corrupt, a `feature` command is r
 
 A healthy agent run produces zero Supervisor notifications. Output appears only for `status` and as a short confirmation after an explicit successful command.
 
+## retry-loop-breaker
+
+The first built-in feature. It exists to stop the agent burning a task on the same failing move.
+
+Within one Root Request it watches executed tool results. When the exact same invocation fails twice in a row with the exact same error, it steers the agent once to change approach; if the agent then tries that same invocation again unchanged, it blocks it before the tool runs.
+
+| Event | Behavior |
+| --- | --- |
+| 1st identical failure | nothing |
+| 2nd identical failure | one steer, and the invocation is armed |
+| 3rd and later matching call | blocked before the tool implementation runs |
+
+The steer is edge-triggered: it is sent once per armed invocation, never repeated on later failures. A block never disarms, so the loop stays closed until the agent genuinely does something else.
+
+Judgment is delegated to [`@j1nn0/agent-retry-guard`](../agent-retry-guard) with the policy `{ maxStrategyAttempts: 2 }`. That core is the retry authority; this feature supplies the attempt records and acts on the verdict.
+
+### What counts as "the same"
+
+Identity is exact and machine-derived — no LLM, no heuristics, no normalization:
+
+```text
+invocationFingerprint = sha256({ toolName, inputDigest })
+failureFingerprint    = sha256({ invocationFingerprint, resultDigest })
+```
+
+The digests are the canonical SHA-256 values the Kernel already puts on its observations, so the feature never sees or stores raw tool input or output. Two failures match only when the tool name, the input digest and the result digest all match and the result is an error. If any digest is unavailable the feature refuses to construct an identity and does nothing.
+
+### What releases it
+
+Only evidence that the agent actually did something different:
+
+- an actual executed tool result for a **different** invocation disarms it — merely *attempting* a different call does not, because another feature could block that call before it ever runs
+- a success, or a different error for the same invocation, breaks the failure run
+- a new Root Request resets the whole episode
+
+A blocked call is not an executed attempt and can never be recorded as one. Pi short-circuits a blocked call before the tool-result path, so the feature never observes it.
+
+### Limitation
+
+**S2 detects exact repeated failure loops, not semantically equivalent ones.** If a tool's error output varies between attempts — a timestamp, a changing path, a random id — the result digests differ and the loop is not detected. That is deliberate: a missed detection is far cheaper than a false intervention against a legitimate retry. Do not read this as "all retry loops are prevented".
+
+### Control
+
+Nothing to configure. To change it, use the generic per-feature controls:
+
+```text
+/agent-supervisor feature retry-loop-breaker autonomous|observe|off|default
+```
+
+In `observe` the feature still judges, but its proposals are shadow-only and the tool runs. In `off` its runtime is not created at all. A global `observe` ceiling likewise prevents transport. Changing a mode rebuilds the runtime, which resets the in-flight retry episode — expected, since that is an explicit operator action.
+
+### Persistence
+
+Nothing about a retry episode is persisted: no fingerprints, no attempt records, no armed invocation, no tool call ids. The episode is Root-Request-local and ephemeral, and the feature has no state codec. The attempt history is bounded to the trailing two records the policy needs.
+
+### Evidence status
+
+The harness proves this deterministically against a real Pi runtime: six identical failing attempts in one Root Request produce two actual executions and four blocks. Measured as repeated failed invocations, that is five without the feature versus one with it — an 80% reduction under that fixed control.
+
+That is a **deterministic runtime-correctness control, not formal S0-B benchmark evidence**. No release effectiveness benchmark has been run, and the feature's maturity is `validated`, not `default`, for exactly that reason. See [`BENCHMARK.md`](BENCHMARK.md) for what a real benchmark would require.
+
 ## Feature model
 
 The feature set is open-ended. Features are independently configurable: each feature has its own `autonomous`, `observe`, or `off` mode, subject to a global mode that acts as a ceiling.
@@ -287,16 +348,17 @@ The planned initial built-in feature IDs are:
 - `auto-budget`
 - `auto-handoff`
 
-The feature set is open-ended. These are planned initial built-ins, not an exhaustive enum. None of them is implemented yet.
+The feature set is open-ended. These are planned initial built-ins, not an exhaustive enum. `retry-loop-breaker` is implemented and shipping; the rest are not implemented yet.
 
 ## Not in this stage
 
-S1 delivers the Kernel control plane and deliberately omits:
+The Kernel control plane and `retry-loop-breaker` are in place. Still deliberately omitted:
 
-- every autonomous product feature, including retry-loop behavior and completion gating;
+- completion gating;
 - auxiliary LLM assessment and any model call of the Supervisor's own;
 - automatic state/progress behavior;
 - context recovery;
 - automatic handoff;
+- automatic re-execution — the feature blocks an unchanged retry and steers, but never runs an alternative itself, spawns an agent, hands off, or asks the operator to choose;
 - the benchmark runner and any real benchmark execution;
 - npm release.
