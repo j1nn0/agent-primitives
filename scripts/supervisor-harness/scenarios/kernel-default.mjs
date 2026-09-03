@@ -93,10 +93,12 @@ export async function run(cleanup = createCleanupRegistry()) {
       'status output shows the autonomous default global mode',
     );
     check(
-      statusOutput.includes('Registered features: 2') &&
+      statusOutput.includes('Registered features: 4') &&
         statusOutput.includes(`- completion-gate: ${ACTIVE_FEATURE_STATUS}`) &&
-        statusOutput.includes(`- retry-loop-breaker: ${ACTIVE_FEATURE_STATUS}`),
-      'status output reports both production built-in features active',
+        statusOutput.includes(`- retry-loop-breaker: ${ACTIVE_FEATURE_STATUS}`) &&
+        statusOutput.includes(`- auto-state: ${ACTIVE_FEATURE_STATUS}`) &&
+        statusOutput.includes(`- auto-progress: ${ACTIVE_FEATURE_STATUS}`),
+      'status output reports all four production built-in features active',
     );
     check(
       supervisorConfigEntries(harness.sessionManager).length === 0,

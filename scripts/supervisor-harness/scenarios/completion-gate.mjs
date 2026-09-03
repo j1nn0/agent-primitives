@@ -605,22 +605,23 @@ async function runPartF(check, cleanup) {
     const { harness } = await createProductionHarness(cleanup);
     assertProductionExtension(check, harness, 'F2');
     await runCommand(harness, '/agent-supervisor feature completion-gate off', 'F2 mode command');
-    const finalText = 'F2 completion is not assessed while completion-gate is off.';
+    const finalText = 'F2 completion is assessed once for the remaining consumers while completion-gate is off.';
     const plan = await runPlan(harness, 'Write and claim completion with completion-gate off.', [
       agentTool('write', { path: 'completion-gate-F2.txt', content: 'F2' }, 'F2-write'),
       agentText(finalText),
+      assessmentResponse(finalText),
     ]);
     const status = await captureStatus(harness, 'part F2 final status');
     assertPlanShape(
       check,
       plan,
       {
-        modelCalls: 2,
+        modelCalls: 3,
         agentModelCalls: 2,
-        auxiliaryCalls: 0,
+        auxiliaryCalls: 1,
         runs: 1,
         followUps: 0,
-        callKinds: [AGENT_CALL_KIND, AGENT_CALL_KIND],
+        callKinds: [AGENT_CALL_KIND, AGENT_CALL_KIND, AUXILIARY_ASSESSMENT_CALL_KIND],
       },
       'F2',
     );
@@ -635,12 +636,22 @@ async function runPartF(check, cleanup) {
           RETRY_LOOP_BREAKER_ID,
           /requested=autonomous, effective=autonomous, runtime=autonomous, status=active\b/u,
         ) &&
-        status.text.includes('Assessment: idle') &&
+        featureMatches(
+          status.text,
+          'auto-state',
+          /requested=autonomous, effective=autonomous, runtime=autonomous, status=active\b/u,
+        ) &&
+        featureMatches(
+          status.text,
+          'auto-progress',
+          /requested=autonomous, effective=autonomous, runtime=autonomous, status=active\b/u,
+        ) &&
+        status.text.includes('Assessment: success') &&
         plan.toolResults.length === 1 &&
         plan.toolResults[0]?.isError === false,
-      'F2: completion-gate off made zero auxiliary calls while retry-loop-breaker remained active',
+      'F2: completion-gate off skipped its own verdict while the one shared assessment still ran for auto-state and auto-progress',
     );
-    reportTrace('F2', plan, 'not-assessed');
+    reportTrace('F2', plan, 'completion-gate-off/shared-assessment');
   }
 
   {

@@ -22,4 +22,9 @@ export const SUPERVISOR_ASSESSMENT_SYSTEM_PROMPT = [
   'Return JSON only. Do not include confidence, scores, rationale, or model-supplied claim ids.',
   'Claim kind is exactly "completion" or "verification". Return at most 4 claims and at most 4 evidence references per claim; claim quotes are at most 500 Unicode code points.',
   'Return exactly this shape: { "schemaVersion": 1, "claims": [{ "kind": "completion", "quote": "...", "evidence": [{ "id": "e1", "quote": "..." }] }] }',
+  'State extraction is optional and covers only durable current task state: an "objective" with a "quote", up to 8 "workItems" with "quote" and "status", and up to 4 "decisions" with "source" and "quote".',
+  'Objective and work-item quotes MUST be exact contiguous substrings of the Root Request, copied character for character. Decision quotes MUST be exact contiguous substrings of the Root Request when source is "task", or of the final assistant response when source is "assistant". Never paraphrase.',
+  'Do not infer done or completed status; a work-item status is exactly "open", "in_progress", or "blocked". Do not invent ids. If uncertain, omit the state domain or the uncertain entry.',
+  'Progress extraction is optional: "progress" holds at most 6 candidates, each with a "kind" of exactly "implementation", "verification", "diagnosis", or "research", and a non-empty "evidence" array of at most 4 supplied evidence ids.',
+  'A progress candidate MUST reference supplied evidence ids and represent meaningful advancement or diagnosis supported by actual evidence; model text alone is never progress. Never invent evidence ids. If no evidence-backed progress exists, return "progress": [].',
 ].join('\n');

@@ -27,6 +27,8 @@ export interface SupervisorAssessmentEvidence {
   readonly resultDigest: string | null;
   readonly mutationEpoch: number;
   readonly verificationKind: SupervisorVerificationKind | null;
+  /** True only for a successful trusted builtin `edit`/`write` result. Kernel-owned; never sent to the model. */
+  readonly mutation: boolean;
   readonly text: string;
 }
 

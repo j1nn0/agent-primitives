@@ -26,7 +26,9 @@
   },
   "dependencies": {
     "@j1nn0/agent-retry-guard": "workspace:^",
-    "@j1nn0/agent-evidence": "workspace:^"
+    "@j1nn0/agent-evidence": "workspace:^",
+    "@j1nn0/agent-state": "workspace:^",
+    "@j1nn0/agent-progress": "workspace:^"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"

@@ -110,6 +110,10 @@ export class SupervisorAssessmentEvidenceCollector {
       inputDigest: computeSupervisorJsonDigest(event.input),
       resultDigest: computeSupervisorJsonDigest(event.content),
       mutationEpoch: this.mutationEpoch,
+      mutation:
+        trustedBuiltin &&
+        event.isError === false &&
+        (event.toolName === 'edit' || event.toolName === 'write'),
       verificationKind,
       text: retainTail(extractSupervisorAssessmentText(event.content), SUPERVISOR_ASSESSMENT_EVIDENCE_RECORD_MAX_UTF16_CODE_UNITS),
     });

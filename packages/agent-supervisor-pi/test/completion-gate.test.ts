@@ -621,12 +621,19 @@ describe('completion-gate fact selection and runtime modes', () => {
     expect(globalObserveRecording.sentMessages).toEqual([]);
   });
 
-  it('registers exactly retry-loop-breaker and completion-gate together without tools or conflicts', () => {
+  it('registers exactly the four production built-ins together without tools or conflicts', () => {
     const features = createSupervisorBuiltInFeatures();
     expect(features.map((feature) => feature.descriptor.id)).toEqual([
       'retry-loop-breaker',
       'completion-gate',
+      'auto-state',
+      'auto-progress',
     ]);
-    expect(features.every((feature) => feature.descriptor.interventionIntents.includes('verify') || feature.descriptor.id === 'retry-loop-breaker')).toBe(true);
+    expect(features.every((feature) => feature.descriptor.defaultMode === 'autonomous')).toBe(true);
+    expect(features.every((feature) => feature.descriptor.conflictsWith.length === 0)).toBe(true);
+    expect(
+      features.find((feature) => feature.descriptor.id === 'completion-gate')?.descriptor
+        .interventionIntents,
+    ).toContain('verify');
   });
 });

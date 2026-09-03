@@ -560,6 +560,7 @@ function assessmentEvidence(id: string, text: string): {
   readonly inputDigest: string | null;
   readonly resultDigest: string | null;
   readonly mutationEpoch: number;
+  readonly mutation: boolean;
   readonly verificationKind: null;
   readonly text: string;
 } {
@@ -571,6 +572,7 @@ function assessmentEvidence(id: string, text: string): {
     inputDigest: null,
     resultDigest: null,
     mutationEpoch: 0,
+    mutation: false,
     verificationKind: null,
     text,
   };
@@ -694,6 +696,8 @@ describe('Supervisor assessment structural validation', () => {
       ok: true,
       output: {
         claims: [{ kind: 'completion', quote: 'The fix is implemented', evidence: [] }],
+        state: { available: true, state: { workItems: [], decisions: [] } },
+        progress: { available: true, candidates: [] },
       },
     });
   });
@@ -765,6 +769,8 @@ describe('Supervisor assessment structural validation', () => {
           quote: 'tests pass',
           evidence: [{ id: 'e1', quoteHash: computeSupervisorJsonDigest('tests pass') }],
         }],
+        state: { available: true, state: { workItems: [], decisions: [] } },
+        progress: { available: true, candidates: [] },
       },
     });
   });
@@ -863,7 +869,7 @@ describe('Supervisor assessment structural validation', () => {
         finalText,
         evidence,
       ),
-    ).toEqual({ ok: true, output: { claims: [] } });
+    ).toEqual({ ok: true, output: { claims: [], state: { available: true, state: { workItems: [], decisions: [] } }, progress: { available: true, candidates: [] } } });
   });
 
   it('discards evidence quote text and keeps a stable canonical hash', () => {
@@ -1548,6 +1554,17 @@ describe('Supervisor assessment Kernel requests', () => {
         rootRequestId: 'root-1',
         runSequence: 1,
         mutationEpoch: 0,
+        state: {
+          available: true,
+          state: {
+            workItems: [],
+            decisions: [],
+          },
+        },
+        progress: {
+          available: true,
+          candidates: [],
+        },
         claims: [{
           id: 'claim-1',
           kind: 'verification',
@@ -1562,6 +1579,7 @@ describe('Supervisor assessment Kernel requests', () => {
           inputDigest: computeSupervisorJsonDigest({ secret: 'private input' }),
           resultDigest: computeSupervisorJsonDigest([{ type: 'text', text: 'tests pass' }]),
           mutationEpoch: 0,
+          mutation: false,
           verificationKind: null,
         }],
       },

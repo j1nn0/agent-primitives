@@ -164,9 +164,15 @@ importers:
       '@j1nn0/agent-evidence':
         specifier: workspace:^
         version: link:../agent-evidence
+      '@j1nn0/agent-progress':
+        specifier: workspace:^
+        version: link:../agent-progress
       '@j1nn0/agent-retry-guard':
         specifier: workspace:^
         version: link:../agent-retry-guard
+      '@j1nn0/agent-state':
+        specifier: workspace:^
+        version: link:../agent-state
 
   packages/agent-tool-policy: {}
 

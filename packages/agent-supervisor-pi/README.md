@@ -6,13 +6,13 @@ This package is experimental, private, and not published to npm.
 
 This **is now a Pi extension**. The Kernel runtime is active after installation: it normalizes Pi lifecycle events, tracks Root Requests, owns Supervisor persistence, resolves the feature plan, and owns intervention transport.
 
-The current production profile contains **two built-in features** — [`retry-loop-breaker`](#retry-loop-breaker) and [`completion-gate`](#completion-gate) — both active at `autonomous` after installation with no setup. The feature registry itself stays open-ended; two built-ins is where the product is today, not a fixed design.
+The current production profile contains **four built-in features** — [`retry-loop-breaker`](#retry-loop-breaker), [`completion-gate`](#completion-gate), [`auto-state`](#auto-state) and [`auto-progress`](#auto-progress) — all active at `autonomous` after installation with no setup. The feature registry itself stays open-ended; four built-ins is where the product is today, not a fixed design.
 
 The Supervisor registers **no model-callable tools**. The model cannot operate the Supervisor; only a human operator can, through one command namespace.
 
 The default global mode is `autonomous`, so the intended product profile requires no setup. Features are independently configurable.
 
-Because `completion-gate` consumes the Kernel's [assessment](#kernel-assessment) capability, an active Supervisor now makes **at most one auxiliary model call per settled agent run**. Assessment is still lazy — it runs because a feature requires it, not by default — so turning `completion-gate` off with no other consumer returns the Supervisor to zero model calls of its own.
+Three of the four features consume the Kernel's [assessment](#kernel-assessment) capability, and they **share one call**: an active Supervisor makes **at most one auxiliary model call per settled agent run**, not one per feature. Assessment is still lazy — it runs because some feature requires it — so turning all three consumers off returns the Supervisor to zero model calls of its own.
 
 ## Kernel runtime
 
@@ -237,7 +237,11 @@ An auxiliary failure deliberately does **not** degrade Kernel health, because th
 
 ### Who consumes it
 
-[`completion-gate`](#completion-gate) does. The assessment stays an extractor — it never judges whether a claim is true. The judging is deterministic and happens downstream.
+Three features do: [`completion-gate`](#completion-gate), [`auto-state`](#auto-state) and [`auto-progress`](#auto-progress). They share the single call — the assessment carries a `claims` domain, an optional `state` domain and an optional `progress` domain, and each feature reads the part it needs.
+
+The optional domains are **isolated**. A malformed `state` or `progress` domain leaves the `claims` domain fully valid, so adding extraction for the newer features cannot make the Completion Gate less reliable. Each domain reports itself as available-with-candidates or unavailable, so a feature can tell "nothing to do" apart from "could not be parsed".
+
+The assessment stays an extractor throughout — it never judges whether a claim is true, whether a task is done, or whether a milestone matters. Every judgement is deterministic and happens downstream.
 
 ## completion-gate
 
@@ -333,6 +337,79 @@ Nothing it computes is persisted: epochs, path digests, verification classificat
 
 Proven deterministically against a real Pi runtime — supported stays silent, missing/stale/failed/unrecognized evidence each produce exactly one follow-up, and a second unsupported run in the same Root Request produces none. That is **runtime-correctness evidence, not a formal effectiveness benchmark**. No paired real-model benchmark has been run, and the [`BENCHMARK.md`](BENCHMARK.md) thresholds remain unclaimed.
 
+## auto-state
+
+Keeps a durable working record of what the task is, what is being worked on, and what has been decided — without anyone running a command.
+
+It reads the `state` domain of the shared assessment and applies it through the [`@j1nn0/agent-state`](../agent-state) core. The core validates every snapshot; this feature only decides what to propose and when to reject.
+
+### Grounded in the task, not paraphrased
+
+The objective and every work item must be an **exact contiguous substring of the Root Request** — the user's own words. A decision must be an exact substring of either the Root Request or the final assistant response. Nothing is paraphrased and nothing is generated.
+
+That matters for identity as much as honesty: because the same Root Request text produces the same quote across a Supervisor follow-up, ids stay stable instead of a new work item appearing every run. Ids are derived from the quote, never supplied by the model:
+
+```text
+auto:work:<sha12>      auto:decision:<sha12>
+```
+
+If a generated id already exists but its stored content differs, that is a collision and the **whole update is rejected** — never overwritten, never quietly given an alternate id.
+
+### It does not decide what is done
+
+Allowed statuses are `open`, `in_progress` and `blocked`. **`done` is never inferred**, because completion truth belongs to the evidence-backed [`completion-gate`](#completion-gate), not to reading text. An existing `done` is sticky and never regresses.
+
+Auto State is a durable extracted working record, not evidence that work is complete.
+
+### Update rules
+
+Updates are cumulative and atomic. A matching id updates status, a new id is added, and an item missing from this run is **never deleted** — this feature does not remove durable state. Decisions are monotonic.
+
+If any candidate is invalid, collides, or would exceed a bound, the entire update is rejected and the previous state stands. There is no partial application. Bounds are Supervisor-owned because the core has none: 64 work items, 64 decisions, 1000 code points for the objective, 500 for each item and decision.
+
+An unchanged outcome writes nothing, so there is no persistence churn.
+
+## auto-progress
+
+Records milestones — but only ones that actually happened.
+
+It reads the `progress` domain and judges through the [`@j1nn0/agent-progress`](../agent-progress) core, which answers exactly one question: did a new milestone identifier appear? The outcome comes straight from the core.
+
+### Every milestone is evidence-backed
+
+Model text alone can never become progress. Each candidate must reference supplied evidence ids, and the Kernel then applies deterministic admission — the model proposes a kind, it does not get to grant it:
+
+| Kind | Admitted only if it references |
+| --- | --- |
+| `implementation` | a Kernel-classified successful trusted mutation |
+| `verification` | a successful completion-supporting verification — `repository-inspection` and failed checks do not qualify |
+| `diagnosis` | a result with `isError: true` |
+| `research` | a successful result |
+
+### Identity is what makes repetition honest
+
+A milestone id is derived from the kind plus the sorted content digests of its evidence:
+
+```text
+auto:<kind>:<sha256>
+```
+
+It deliberately contains **no Root Request id, no run sequence, no evidence id, no timestamp and no randomness**. If it did, redoing the same work would look like new progress every time. Doing the identical thing again produces the identical id, so the core reports `no_progress`. Reordering changes nothing either.
+
+If the digests needed for a stable identity are missing, the candidate is skipped rather than given a fabricated id.
+
+The baseline is cumulative and persisted, capped at 256 milestones. At capacity further candidates are conservatively ignored — a capacity stop is reported separately and is never called progress.
+
+### What it does not prove
+
+The core judges that a new identifier appeared, not that the milestone was valuable. Requiring real evidence raises the floor, but **evidence-backed is not the same as universally true** — the model still classifies the kind. A formal effectiveness benchmark is still required and has not been run.
+
+### Both features
+
+Neither proposes any intervention — `interventionIntents` is empty for both. They track and judge; they never steer, block, or follow up.
+
+In `observe` they do the real work against an ephemeral shadow state seeded from what is persisted, emit their verdict fact, and write nothing. In `off` their runtime is never created. Turning one off does not stop the assessment, because the other consumers still need it.
+
 ## retry-loop-breaker
 
 The other built-in feature. It exists to stop the agent burning a task on the same failing move.
@@ -419,9 +496,9 @@ The feature set is open-ended. Features are independently configurable: each fea
 
 Maturity describes how a feature should be introduced:
 
-- `experimental`: new behavior, normally introduced in `observe` mode. An experimental feature may not default to `autonomous`.
-- `validated`: benchmark evidence exists.
-- `default`: worth enabling autonomously in the install-and-forget profile.
+- `experimental`: contract and runtime behavior not yet sufficiently validated; normally introduced in `observe` mode. An experimental feature may not default to `autonomous`.
+- `validated`: deterministic contract and real-harness behavior are validated. This deliberately does **not** imply that a formal S0-B effectiveness benchmark has been passed — no such benchmark has been run for any feature yet.
+- `default`: formal product evidence is strong enough to consider enabling by default at release.
 
 An `observe` feature still receives observations and may produce facts and intervention proposals. Its proposals are shadow evaluation only and are never executed. Kernel arbitration owns intervention execution; features never call Pi APIs such as `sendMessage`, `sendUserMessage`, blocking, or aborting directly.
 
@@ -507,7 +584,17 @@ Each isolated group elects its own winner. Other eligible proposals are `suppres
 
 ## Privacy invariant
 
-Supervisor operational persistence must never be assumed to hold full observation history, full transcripts, full tool results, raw stdout, or raw file contents. Persisted state is the small, JSON-safe, feature-owned envelope only. The contracts in this package do not add filesystem access, network access, telemetry, or model calls.
+Supervisor operational persistence must never be assumed to hold full observation history, full transcripts, full tool results, raw stdout, or raw file contents. Persisted state is the small, JSON-safe, feature-owned envelope only. The contracts in this package do not add filesystem access, network access, or telemetry.
+
+### What Auto State changes
+
+Before [`auto-state`](#auto-state), no Supervisor-persisted data contained any excerpt of the task or the assistant's reply. That is no longer strictly true, and the distinction matters enough to state precisely:
+
+> The Supervisor does not persist full prompts or responses. `auto-state` deliberately persists only bounded exact excerpts selected as durable objective, work-item and decision state.
+
+Those excerpts are exact substrings of the Root Request (and, for decisions, optionally the final assistant response), each capped at 1000 or 500 code points and validated through the Agent State core.
+
+Still never persisted: the full Root Request, the full assistant response, raw tool input, raw tool output, evidence quote text, shell commands, file paths, and the auxiliary provider's raw response. [`auto-progress`](#auto-progress) persists only opaque milestone identifiers.
 
 ## Deterministic benchmark contract
 
@@ -530,14 +617,15 @@ The planned initial built-in feature IDs are:
 - `auto-budget`
 - `auto-handoff`
 
-The feature set is open-ended. These are planned initial built-ins, not an exhaustive enum. `retry-loop-breaker` and `completion-gate` are implemented and shipping; the rest are not implemented yet.
+The feature set is open-ended. These are planned initial built-ins, not an exhaustive enum. `retry-loop-breaker`, `completion-gate`, `auto-state` and `auto-progress` are implemented and shipping; the rest are not implemented yet.
 
 ## Not in this stage
 
-The Kernel control plane, `retry-loop-breaker`, the bounded assessment capability, and `completion-gate` are in place. Still deliberately omitted:
+The Kernel control plane, the bounded assessment capability, and all four built-in features are in place. Still deliberately omitted:
 
 - semantic completion detection, and detection of arbitrary shell mutation such as `sed -i`;
-- automatic state/progress behavior;
+- automatic `done` inference, and any judgement that a recorded milestone was worth reaching;
+- any intervention from `auto-state` or `auto-progress` — they track and judge only, and never steer on stalled progress;
 - context recovery;
 - automatic handoff;
 - automatic re-execution — the feature blocks an unchanged retry and steers, but never runs an alternative itself, spawns an agent, hands off, or asks the operator to choose;

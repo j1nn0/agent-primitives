@@ -301,9 +301,11 @@ function activeAutonomous(status) {
     status.globalConfig === 'valid' &&
     status.requestedGlobalMode === 'autonomous' &&
     status.effectiveGlobalMode === 'autonomous' &&
-    status.registeredFeatures === 2 &&
+    status.registeredFeatures === 4 &&
     featureIsActive(status.output, FEATURE_ID) &&
     featureIsActive(status.output, 'completion-gate') &&
+    featureIsActive(status.output, 'auto-state') &&
+    featureIsActive(status.output, 'auto-progress') &&
     status.feature.line.includes('default=autonomous') &&
     status.feature.requestedMode === 'autonomous' &&
     status.feature.effectiveMode === 'autonomous' &&

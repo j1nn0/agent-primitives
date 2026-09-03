@@ -232,6 +232,7 @@ export async function requestSupervisorAssessment(
       completion.response,
       input.finalAssistantText,
       input.evidence,
+      input.taskText,
     );
     if (!parsed.ok) {
       // Pi can report an aborted stop reason for a provider-side response. Only our

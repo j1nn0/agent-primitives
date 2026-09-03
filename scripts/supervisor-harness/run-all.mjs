@@ -12,6 +12,7 @@ import * as retryLoopBreakerCoexistenceScenario from './scenarios/retry-loop-bre
 import * as rootReservationOrderingScenario from './scenarios/root-reservation-ordering.mjs';
 import * as assessmentFoundationScenario from './scenarios/assessment-foundation.mjs';
 import * as completionGateScenario from './scenarios/completion-gate.mjs';
+import * as autoStateProgressScenario from './scenarios/auto-state-progress.mjs';
 import { runScenarioList } from './runner.mjs';
 
 const scenarios = [
@@ -28,6 +29,7 @@ const scenarios = [
   retryLoopBreakerCoexistenceScenario,
   assessmentFoundationScenario,
   completionGateScenario,
+  autoStateProgressScenario,
   rootReservationOrderingScenario,
 ];
 

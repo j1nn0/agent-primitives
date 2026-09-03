@@ -583,6 +583,8 @@ export class SupervisorKernel {
     }
 
     const assessmentId = `assessment-${identity.runGeneration}`;
+    const stateResult = outcome.output.state;
+    const progressResult = outcome.output.progress;
     const candidate: SupervisorFactCandidate = {
       kind: SUPERVISOR_COMPLETION_ASSESSMENT_KIND,
       evidenceRefs: input.evidence.map((record) => record.id),
@@ -591,6 +593,33 @@ export class SupervisorKernel {
         rootRequestId: identity.rootRequestId,
         runSequence: identity.runGeneration,
         mutationEpoch,
+        state: !stateResult.available
+          ? { available: false }
+          : {
+              available: true,
+              state: {
+                ...(stateResult.state.objective === undefined
+                  ? {}
+                  : { objective: { quote: stateResult.state.objective.quote } }),
+                workItems: stateResult.state.workItems.map((item) => ({
+                  quote: item.quote,
+                  status: item.status,
+                })),
+                decisions: stateResult.state.decisions.map((decision) => ({
+                  source: decision.source,
+                  quote: decision.quote,
+                })),
+              },
+            },
+        progress: !progressResult.available
+          ? { available: false }
+          : {
+              available: true,
+              candidates: progressResult.candidates.map((candidate) => ({
+                kind: candidate.kind,
+                evidence: [...candidate.evidence],
+              })),
+            },
         claims: outcome.output.claims.map((claim, index) => ({
           id: `claim-${index + 1}`,
           kind: claim.kind,
@@ -601,7 +630,7 @@ export class SupervisorKernel {
           })),
         })),
         evidence: input.evidence.map(
-          ({ id, toolName, toolCallId, isError, inputDigest, resultDigest, mutationEpoch, verificationKind }) => ({
+          ({ id, toolName, toolCallId, isError, inputDigest, resultDigest, mutationEpoch, mutation, verificationKind }) => ({
             id,
             toolName,
             toolCallId,
@@ -609,6 +638,7 @@ export class SupervisorKernel {
             inputDigest,
             resultDigest,
             mutationEpoch,
+            mutation,
             verificationKind,
           }),
         ),
