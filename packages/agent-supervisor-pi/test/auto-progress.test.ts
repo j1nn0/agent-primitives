@@ -193,11 +193,21 @@ function verdictData(
 }
 
 /**
- * Independent statement of the milestone-identity formula: the canonical digest of the
- * kind plus the sorted content-digest pairs. Root, run, and evidence ids never enter.
+ * Independent statement of the milestone-identity formula: the canonical digest of the kind
+ * plus unique, lexicographically sorted qualifying evidence tuples. Root, run, and evidence ids
+ * never enter.
  */
-function expectedMilestoneId(kind: string, digests: ReadonlyArray<readonly [string, string]>): string {
-  const sorted = [...digests].sort((left, right) => {
+type MilestoneTuple = readonly [string, string, string];
+
+function expectedMilestoneId(kind: string, tuples: ReadonlyArray<MilestoneTuple>): string {
+  const unique = new Map<string, MilestoneTuple>();
+  for (const tuple of tuples) {
+    const key = JSON.stringify(tuple);
+    if (key !== undefined) {
+      unique.set(key, tuple);
+    }
+  }
+  const sorted = [...unique.values()].sort((left, right) => {
     if (left[0] < right[0]) {
       return -1;
     }
@@ -208,6 +218,12 @@ function expectedMilestoneId(kind: string, digests: ReadonlyArray<readonly [stri
       return -1;
     }
     if (left[1] > right[1]) {
+      return 1;
+    }
+    if (left[2] < right[2]) {
+      return -1;
+    }
+    if (left[2] > right[2]) {
       return 1;
     }
     return 0;
@@ -278,7 +294,7 @@ describe('auto-progress first milestone and repeats', () => {
   it('records the first implementation milestone from an empty baseline as progress', () => {
     const evidence = [mutationEvidence('e1')];
     const expected = expectedMilestoneId('implementation', [
-      [evidence[0]?.inputDigest ?? '', evidence[0]?.resultDigest ?? ''],
+      [evidence[0]?.toolName ?? '', evidence[0]?.inputDigest ?? '', evidence[0]?.resultDigest ?? ''],
     ]);
     const emission = directAutoProgressEmission([autoProgressFact({ evidence })]);
     expect(emission).toBeDefined();
@@ -326,7 +342,7 @@ describe('auto-progress first milestone and repeats', () => {
     const first = directAutoProgressEmission([autoProgressFact()], { state: null });
     const firstId = milestoneOf(first);
     const research = factEvidence('e2');
-    const secondId = expectedMilestoneId('research', [[research.inputDigest ?? '', research.resultDigest ?? '']]);
+    const secondId = expectedMilestoneId('research', [[research.toolName, research.inputDigest ?? '', research.resultDigest ?? '']]);
     expect(secondId).not.toBe(firstId);
     const second = directAutoProgressEmission(
       [
@@ -352,10 +368,10 @@ describe('auto-progress first milestone and repeats', () => {
   it('admits two distinct kinds over the same evidence as two milestones', () => {
     const evidence = [mutationEvidence('e1')];
     const implementationId = expectedMilestoneId('implementation', [
-      [evidence[0]?.inputDigest ?? '', evidence[0]?.resultDigest ?? ''],
+      [evidence[0]?.toolName ?? '', evidence[0]?.inputDigest ?? '', evidence[0]?.resultDigest ?? ''],
     ]);
     const researchId = expectedMilestoneId('research', [
-      [evidence[0]?.inputDigest ?? '', evidence[0]?.resultDigest ?? ''],
+      [evidence[0]?.toolName ?? '', evidence[0]?.inputDigest ?? '', evidence[0]?.resultDigest ?? ''],
     ]);
     expect(researchId).not.toBe(implementationId);
     const emission = directAutoProgressEmission([
@@ -535,7 +551,7 @@ describe('auto-progress milestone identity', () => {
     const firstId = milestoneOf(first);
     const secondId = milestoneOf(second);
     expect(firstId).toBe(secondId);
-    expect(firstId).toBe(expectedMilestoneId('implementation', [[inputDigest, resultDigest]]));
+    expect(firstId).toBe(expectedMilestoneId('implementation', [['custom-tool', inputDigest, resultDigest]]));
     // The verdicts still carry their own root-local assessment identity.
     expect(verdictData(first)).toMatchObject({ assessmentId: 'assessment-1', runSequence: 1 });
     expect(verdictData(second)).toMatchObject({ assessmentId: 'assessment-9', runSequence: 9 });
@@ -563,6 +579,266 @@ describe('auto-progress milestone identity', () => {
       expect(emission).not.toHaveProperty('nextState');
     },
   );
+
+
+  it('P1 deduplicates duplicate semantic implementation evidence across judgments', () => {
+    const inputDigest = 'p1-input';
+    const resultDigest = 'p1-result';
+    const e1 = factEvidence('e1', {
+      toolName: 'edit',
+      mutation: true,
+      inputDigest,
+      resultDigest,
+    });
+    const e2 = factEvidence('e2', {
+      toolName: 'edit',
+      mutation: true,
+      inputDigest,
+      resultDigest,
+    });
+    const first = directAutoProgressEmission([
+      autoProgressFact({
+        evidence: [e1],
+        progress: { available: true, candidates: [{ kind: 'implementation', evidence: ['e1'] }] },
+      }),
+    ]);
+    const firstId = milestoneOf(first);
+    const second = directAutoProgressEmission(
+      [
+        autoProgressFact({
+          evidence: [e1, e2],
+          progress: {
+            available: true,
+            candidates: [{ kind: 'implementation', evidence: ['e1', 'e2'] }],
+          },
+        }),
+      ],
+      { state: first?.nextState ?? null },
+    );
+
+    expect(firstId).toBe(expectedMilestoneId('implementation', [['edit', inputDigest, resultDigest]]));
+    expect(verdictData(second)).toMatchObject({
+      outcome: 'no_progress',
+      newMilestones: [],
+      recordedMilestoneCount: 1,
+    });
+    expect(second).not.toHaveProperty('nextState');
+  });
+
+  it('P2 ignores an irrelevant successful non-mutation for implementation identity and provenance', () => {
+    const mutation = factEvidence('e1', {
+      toolName: 'edit',
+      mutation: true,
+      inputDigest: 'p2-mutation-input',
+      resultDigest: 'p2-mutation-result',
+    });
+    const irrelevant = factEvidence('e2', {
+      toolName: 'read',
+      isError: false,
+      mutation: false,
+      inputDigest: 'p2-read-input',
+      resultDigest: 'p2-read-result',
+    });
+    const baseline = directAutoProgressEmission([
+      autoProgressFact({
+        evidence: [mutation],
+        progress: { available: true, candidates: [{ kind: 'implementation', evidence: ['e1'] }] },
+      }),
+    ]);
+    const withIrrelevant = directAutoProgressEmission([
+      autoProgressFact({
+        evidence: [mutation, irrelevant],
+        progress: { available: true, candidates: [{ kind: 'implementation', evidence: ['e1', 'e2'] }] },
+      }),
+    ]);
+
+    expect(milestoneOf(withIrrelevant)).toBe(milestoneOf(baseline));
+    expect(withIrrelevant?.facts?.[0]?.evidenceRefs).toEqual(['e1']);
+  });
+
+  it('P3 ignores an irrelevant git status record for verification identity and provenance', () => {
+    const verification = factEvidence('e1', {
+      toolName: 'bash',
+      verificationKind: 'test',
+      inputDigest: 'p3-test-input',
+      resultDigest: 'p3-test-result',
+    });
+    const gitStatus = factEvidence('e2', {
+      toolName: 'bash',
+      verificationKind: 'repository-inspection',
+      inputDigest: 'p3-status-input',
+      resultDigest: 'p3-status-result',
+    });
+    const baseline = directAutoProgressEmission([
+      autoProgressFact({
+        evidence: [verification],
+        progress: { available: true, candidates: [{ kind: 'verification', evidence: ['e1'] }] },
+      }),
+    ]);
+    const withStatus = directAutoProgressEmission([
+      autoProgressFact({
+        evidence: [verification, gitStatus],
+        progress: { available: true, candidates: [{ kind: 'verification', evidence: ['e1', 'e2'] }] },
+      }),
+    ]);
+
+    expect(milestoneOf(withStatus)).toBe(milestoneOf(baseline));
+    expect(withStatus?.facts?.[0]?.evidenceRefs).toEqual(['e1']);
+  });
+
+  it('P4 ignores an irrelevant successful record for diagnosis identity and provenance', () => {
+    const failure = factEvidence('e1', {
+      toolName: 'bash',
+      isError: true,
+      inputDigest: 'p4-failure-input',
+      resultDigest: 'p4-failure-result',
+    });
+    const success = factEvidence('e2', {
+      toolName: 'read',
+      isError: false,
+      inputDigest: 'p4-success-input',
+      resultDigest: 'p4-success-result',
+    });
+    const baseline = directAutoProgressEmission([
+      autoProgressFact({
+        evidence: [failure],
+        progress: { available: true, candidates: [{ kind: 'diagnosis', evidence: ['e1'] }] },
+      }),
+    ]);
+    const withSuccess = directAutoProgressEmission([
+      autoProgressFact({
+        evidence: [failure, success],
+        progress: { available: true, candidates: [{ kind: 'diagnosis', evidence: ['e1', 'e2'] }] },
+      }),
+    ]);
+
+    expect(milestoneOf(withSuccess)).toBe(milestoneOf(baseline));
+    expect(withSuccess?.facts?.[0]?.evidenceRefs).toEqual(['e1']);
+  });
+
+  it('P5 ignores an irrelevant failed record for research identity and provenance', () => {
+    const success = factEvidence('e1', {
+      toolName: 'read',
+      isError: false,
+      inputDigest: 'p5-success-input',
+      resultDigest: 'p5-success-result',
+    });
+    const failure = factEvidence('e2', {
+      toolName: 'bash',
+      isError: true,
+      inputDigest: 'p5-failure-input',
+      resultDigest: 'p5-failure-result',
+    });
+    const baseline = directAutoProgressEmission([
+      autoProgressFact({
+        evidence: [success],
+        progress: { available: true, candidates: [{ kind: 'research', evidence: ['e1'] }] },
+      }),
+    ]);
+    const withFailure = directAutoProgressEmission([
+      autoProgressFact({
+        evidence: [success, failure],
+        progress: { available: true, candidates: [{ kind: 'research', evidence: ['e1', 'e2'] }] },
+      }),
+    ]);
+
+    expect(milestoneOf(withFailure)).toBe(milestoneOf(baseline));
+    expect(withFailure?.facts?.[0]?.evidenceRefs).toEqual(['e1']);
+  });
+
+  it('P6 makes implementation evidence order irrelevant to the milestone', () => {
+    const e1Input = 'p6-input-1';
+    const e1Result = 'p6-result-1';
+    const e2Input = 'p6-input-2';
+    const e2Result = 'p6-result-2';
+    const e1 = factEvidence('e1', { toolName: 'edit', mutation: true, inputDigest: e1Input, resultDigest: e1Result });
+    const e2 = factEvidence('e2', { toolName: 'edit', mutation: true, inputDigest: e2Input, resultDigest: e2Result });
+    const first = directAutoProgressEmission([
+      autoProgressFact({
+        evidence: [e1, e2],
+        progress: { available: true, candidates: [{ kind: 'implementation', evidence: ['e1', 'e2'] }] },
+      }),
+    ]);
+    const second = directAutoProgressEmission([
+      autoProgressFact({
+        evidence: [e1, e2],
+        progress: { available: true, candidates: [{ kind: 'implementation', evidence: ['e2', 'e1'] }] },
+      }),
+    ]);
+
+    expect(milestoneOf(first)).toBe(milestoneOf(second));
+    expect(milestoneOf(first)).toBe(
+      expectedMilestoneId('implementation', [
+        ['edit', e1Input, e1Result],
+        ['edit', e2Input, e2Result],
+      ]),
+    );
+  });
+
+  it('P7 includes tool, input, and result digests in milestone identity', () => {
+    const idFor = (evidence: ReturnType<typeof factEvidence>): string =>
+      milestoneOf(
+        directAutoProgressEmission([
+          autoProgressFact({
+            evidence: [evidence],
+            progress: { available: true, candidates: [{ kind: 'implementation', evidence: [evidence.id] }] },
+          }),
+        ]),
+      );
+    const base = factEvidence('e1', {
+      toolName: 'tool-a',
+      mutation: true,
+      inputDigest: 'p7-input',
+      resultDigest: 'p7-result',
+    });
+    const differentTool = factEvidence('e2', {
+      toolName: 'tool-b',
+      mutation: true,
+      inputDigest: 'p7-input',
+      resultDigest: 'p7-result',
+    });
+    const differentInput = factEvidence('e3', {
+      toolName: 'tool-a',
+      mutation: true,
+      inputDigest: 'p7-input-other',
+      resultDigest: 'p7-result',
+    });
+    const differentResult = factEvidence('e4', {
+      toolName: 'tool-a',
+      mutation: true,
+      inputDigest: 'p7-input',
+      resultDigest: 'p7-result-other',
+    });
+
+    expect(idFor(differentTool)).not.toBe(idFor(base));
+    expect(idFor(differentInput)).not.toBe(idFor(base));
+    expect(idFor(differentResult)).not.toBe(idFor(base));
+  });
+
+  it('ignores a null digest on irrelevant evidence while requiring usable qualifying evidence', () => {
+    const mutation = factEvidence('e1', {
+      toolName: 'edit',
+      mutation: true,
+      inputDigest: 'p11-input',
+      resultDigest: 'p11-result',
+    });
+    const irrelevant = factEvidence('e2', {
+      toolName: 'read',
+      isError: false,
+      mutation: false,
+      inputDigest: 'p11-irrelevant-input',
+      resultDigest: null,
+    });
+    const emission = directAutoProgressEmission([
+      autoProgressFact({
+        evidence: [mutation, irrelevant],
+        progress: { available: true, candidates: [{ kind: 'implementation', evidence: ['e1', 'e2'] }] },
+      }),
+    ]);
+
+    expect(milestoneOf(emission)).toBe(expectedMilestoneId('implementation', [['edit', 'p11-input', 'p11-result']]));
+    expect(emission?.facts?.[0]?.evidenceRefs).toEqual(['e1']);
+  });
 });
 
 describe('auto-progress capacity', () => {
@@ -617,6 +893,149 @@ describe('auto-progress capacity', () => {
       capacityReached: true,
     });
     expect(second).not.toHaveProperty('nextState');
+
+  });
+
+
+  it('P8 applies capacity after deterministic candidate selection and keeps exact provenance', () => {
+    const implementation = factEvidence('e1', {
+      toolName: 'edit',
+      mutation: true,
+      inputDigest: 'p8-implementation-input',
+      resultDigest: 'p8-implementation-result',
+    });
+    const research = factEvidence('e2', {
+      toolName: 'read',
+      isError: false,
+      inputDigest: 'p8-research-input',
+      resultDigest: 'p8-research-result',
+    });
+    const implementationId = expectedMilestoneId('implementation', [
+      ['edit', 'p8-implementation-input', 'p8-implementation-result'],
+    ]);
+    const researchId = expectedMilestoneId('research', [
+      ['read', 'p8-research-input', 'p8-research-result'],
+    ]);
+    const implementationCandidate = { kind: 'implementation', evidence: ['e1'] };
+    const researchCandidate = { kind: 'research', evidence: ['e2'] };
+    const candidates = [researchCandidate, implementationCandidate];
+    const baseline = seededBaseline(255);
+    const emission = directAutoProgressEmission(
+      [
+        autoProgressFact({
+          evidence: [implementation, research],
+          progress: { available: true, candidates },
+        }),
+      ],
+      { state: baseline },
+    );
+    expect(implementationId < researchId).toBe(true);
+    const expectedId = implementationId;
+
+    expect(verdictData(emission)).toEqual({
+      schemaVersion: 1,
+      assessmentId: 'assessment-1',
+      runSequence: 1,
+      outcome: 'progress',
+      newMilestones: [expectedId],
+      recordedMilestoneCount: 256,
+      capacityReached: true,
+    });
+    expect(emission?.facts?.[0]?.evidenceRefs).toEqual(['e1']);
+    expect(emission?.nextState).toEqual({
+      schemaVersion: 1,
+      recordedMilestones: [...baseline.recordedMilestones, expectedId],
+    });
+  });
+
+  it('P9 reports a capacity stop without progress, persistence, or provenance', () => {
+    const evidence = factEvidence('e1', {
+      toolName: 'read',
+      isError: false,
+      inputDigest: 'p9-input',
+      resultDigest: 'p9-result',
+    });
+    const emission = directAutoProgressEmission(
+      [
+        autoProgressFact({
+          evidence: [evidence],
+          progress: { available: true, candidates: [{ kind: 'research', evidence: ['e1'] }] },
+        }),
+      ],
+      { state: seededBaseline(256) },
+    );
+
+    expect(verdictData(emission)).toEqual({
+      schemaVersion: 1,
+      assessmentId: 'assessment-1',
+      runSequence: 1,
+      outcome: 'no_progress',
+      newMilestones: [],
+      recordedMilestoneCount: 256,
+      capacityReached: true,
+    });
+    expect(emission?.facts?.[0]?.evidenceRefs).toEqual([]);
+    expect(emission).not.toHaveProperty('nextState');
+  });
+
+  it('P10 makes capacity selection independent of model candidate order', () => {
+    const implementation = factEvidence('e1', {
+      toolName: 'edit',
+      mutation: true,
+      inputDigest: 'p10-implementation-input',
+      resultDigest: 'p10-implementation-result',
+    });
+    const research = factEvidence('e2', {
+      toolName: 'read',
+      isError: false,
+      inputDigest: 'p10-research-input',
+      resultDigest: 'p10-research-result',
+    });
+    const implementationId = expectedMilestoneId('implementation', [
+      ['edit', 'p10-implementation-input', 'p10-implementation-result'],
+    ]);
+    const researchId = expectedMilestoneId('research', [
+      ['read', 'p10-research-input', 'p10-research-result'],
+    ]);
+    const implementationCandidate = { kind: 'implementation', evidence: ['e1'] };
+    const researchCandidate = { kind: 'research', evidence: ['e2'] };
+    const forward = directAutoProgressEmission(
+      [
+        autoProgressFact({
+          evidence: [implementation, research],
+          progress: {
+            available: true,
+            candidates: [implementationCandidate, researchCandidate],
+          },
+        }),
+      ],
+      { state: seededBaseline(255) },
+    );
+    const reverse = directAutoProgressEmission(
+      [
+        autoProgressFact({
+          evidence: [implementation, research],
+          progress: {
+            available: true,
+            candidates: [researchCandidate, implementationCandidate],
+          },
+        }),
+      ],
+      { state: seededBaseline(255) },
+    );
+    expect(implementationId < researchId).toBe(true);
+    const expectedId = implementationId;
+
+    expect(verdictData(forward)).toEqual(verdictData(reverse));
+    expect(forward?.nextState).toEqual(reverse?.nextState);
+    expect(forward?.facts?.[0]?.evidenceRefs).toEqual(['e1']);
+    expect(reverse?.facts?.[0]?.evidenceRefs).toEqual(['e1']);
+    expect(verdictData(forward)).toMatchObject({
+      outcome: 'progress',
+      newMilestones: [expectedId],
+      recordedMilestoneCount: 256,
+      capacityReached: true,
+    });
   });
 });
 
@@ -819,15 +1238,27 @@ function persistedAutoProgressEntries(recording: RecordingPi): unknown[] {
     .map((data) => data.state.data);
 }
 
-function assessmentEvidenceDigests(kernel: SupervisorKernel): { inputDigest: string; resultDigest: string } {
+function assessmentEvidenceDigests(kernel: SupervisorKernel): {
+  toolName: string;
+  inputDigest: string;
+  resultDigest: string;
+} {
   const assessment = kernel.getFacts().find((fact) => fact.kind === 'kernel:completion-assessment');
   const evidence = (assessment?.data as { evidence?: readonly unknown[] } | undefined)?.evidence?.[0] as
-    | { inputDigest?: unknown; resultDigest?: unknown }
+    | { toolName?: unknown; inputDigest?: unknown; resultDigest?: unknown }
     | undefined;
-  if (typeof evidence?.inputDigest !== 'string' || typeof evidence?.resultDigest !== 'string') {
-    throw new Error('Expected string content digests on the committed assessment evidence.');
+  if (
+    typeof evidence?.toolName !== 'string' ||
+    typeof evidence.inputDigest !== 'string' ||
+    typeof evidence.resultDigest !== 'string'
+  ) {
+    throw new Error('Expected tool and content digests on the committed assessment evidence.');
   }
-  return { inputDigest: evidence.inputDigest, resultDigest: evidence.resultDigest };
+  return {
+    toolName: evidence.toolName,
+    inputDigest: evidence.inputDigest,
+    resultDigest: evidence.resultDigest,
+  };
 }
 
 describe('auto-progress runtime modes', () => {
@@ -898,8 +1329,8 @@ describe('auto-progress runtime modes', () => {
     kernel.register();
     await settleWithProgress(recording, [{ kind: 'research', evidence: ['e1'] }]);
 
-    const { inputDigest, resultDigest } = assessmentEvidenceDigests(kernel);
-    const expected = expectedMilestoneId('research', [[inputDigest, resultDigest]]);
+    const { toolName, inputDigest, resultDigest } = assessmentEvidenceDigests(kernel);
+    const expected = expectedMilestoneId('research', [[toolName, inputDigest, resultDigest]]);
     expect(kernelVerdict(kernel)?.data).toEqual({
       schemaVersion: 1,
       assessmentId: 'assessment-1',

@@ -396,7 +396,7 @@ describe('Supervisor assessment domain isolation', () => {
 describe('Supervisor assessment prompt domains', () => {
   it('instructs exact-substring state extraction with a closed status set', () => {
     expect(SUPERVISOR_ASSESSMENT_SYSTEM_PROMPT).toContain(
-      'exact contiguous substrings of the Root Request',
+      'exact contiguous substrings of taskText',
     );
     expect(SUPERVISOR_ASSESSMENT_SYSTEM_PROMPT).toContain(
       'a work-item status is exactly "open", "in_progress", or "blocked"',

@@ -593,9 +593,6 @@ describe('Supervisor assessment prompt', () => {
   it('states the bounded extraction and exact-source contract', () => {
     expect(SUPERVISOR_ASSESSMENT_SYSTEM_PROMPT).toContain('bounded claim/evidence extractor');
     expect(SUPERVISOR_ASSESSMENT_SYSTEM_PROMPT).toContain(
-      'Use ONLY the supplied final assistant response and the supplied tool evidence.',
-    );
-    expect(SUPERVISOR_ASSESSMENT_SYSTEM_PROMPT).toContain(
       'Extract affirmative COMPLETION or VERIFICATION claims only.',
     );
     expect(SUPERVISOR_ASSESSMENT_SYSTEM_PROMPT).toContain(
@@ -627,6 +624,40 @@ describe('Supervisor assessment prompt', () => {
     expect(SUPERVISOR_ASSESSMENT_SYSTEM_PROMPT).toContain(
       'Plans, intentions, possibilities, questions, future work, and conditional statements are NOT claims.',
     );
+  });
+
+  it('uses one coherent source and output contract', () => {
+    const prompt = SUPERVISOR_ASSESSMENT_SYSTEM_PROMPT;
+
+    expect(prompt).toContain('Allowed inputs are exactly: taskText, finalAssistantText, and evidence.');
+    expect(prompt).toContain('claims -> finalAssistantText, plus evidence links.');
+    expect(prompt).toContain('state.objective -> taskText only.');
+    expect(prompt).toContain('state.workItems -> taskText only.');
+    expect(prompt).toContain('state.decisions source=task -> taskText only.');
+    expect(prompt).toContain('state.decisions source=assistant -> finalAssistantText only.');
+    expect(prompt).toContain('progress -> supplied evidence ids only.');
+
+    expect(prompt).toContain('Objective and work-item quotes MUST be exact contiguous substrings of taskText');
+    expect(prompt).toContain(
+      'Decision quotes MUST be exact contiguous substrings of taskText when source is "task", or of finalAssistantText when source is "assistant"',
+    );
+    expect(prompt).toContain('a work-item status is exactly "open", "in_progress", or "blocked"');
+    expect(prompt).toContain('Never paraphrase state entries.');
+    expect(prompt).toContain('If uncertain, omit');
+
+    expect(prompt).toContain('"implementation", "verification", "diagnosis", or "research"');
+    expect(prompt).toContain('an "evidence" array of 1 to 4 supplied evidence ids');
+    expect(prompt).toContain('model text alone is never progress');
+    expect(prompt).toContain('The model proposes a kind; deterministic feature policy remains the admission authority.');
+    expect(prompt).toContain('If no evidence-backed progress exists, return "progress": [].');
+
+    const fullShape = '{ "schemaVersion": 1, "claims": [], "state": {}, "progress": [] }';
+    expect(prompt).toContain(fullShape);
+    expect(prompt.match(/\{\s*"schemaVersion": 1,\s*"claims": \[\],\s*"state": \{\},\s*"progress": \[\]\s*\}/g) ?? []).toHaveLength(1);
+    expect(prompt).toContain('Empty is valid: use claims: [], state: {}, and progress: [] when there is nothing useful.');
+
+    expect(prompt).not.toContain('Use ONLY the supplied final assistant response and the supplied tool evidence.');
+    expect(prompt).not.toMatch(/Return exactly this shape:\s*\{\s*"schemaVersion":\s*1,\s*"claims":\s*\[/);
   });
 });
 

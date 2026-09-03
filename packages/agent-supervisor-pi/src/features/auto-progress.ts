@@ -98,6 +98,11 @@ interface AutoProgressCandidate {
   readonly evidence: readonly string[];
 }
 
+interface AutoProgressAdmittedCandidate {
+  readonly milestoneId: string;
+  readonly evidenceRefs: readonly string[];
+}
+
 type AutoProgressDomain =
   | { readonly available: false }
   | {
@@ -107,6 +112,7 @@ type AutoProgressDomain =
 
 interface AutoProgressEvidence {
   readonly id: string;
+  readonly toolName: string | null;
   readonly isError: boolean;
   readonly inputDigest: string | null;
   readonly resultDigest: string | null;
@@ -220,6 +226,7 @@ function readFactEvidence(value: unknown): AutoProgressEvidence | undefined {
     return undefined;
   }
   const id = readNonEmptyString(value.id);
+  const toolName = hasOwn(value, 'toolName') ? readNonEmptyString(value.toolName) : undefined;
   const inputDigest = hasOwn(value, 'inputDigest') ? readNullableDigest(value.inputDigest) : undefined;
   const resultDigest = hasOwn(value, 'resultDigest') ? readNullableDigest(value.resultDigest) : undefined;
   if (id === undefined || typeof value.isError !== 'boolean' || typeof value.mutation !== 'boolean') {
@@ -234,6 +241,7 @@ function readFactEvidence(value: unknown): AutoProgressEvidence | undefined {
   }
   return {
     id,
+    toolName: toolName ?? null,
     isError: value.isError,
     inputDigest,
     resultDigest,
@@ -359,48 +367,74 @@ function readMatchingAssessment(
  * The model proposes the kind; this rule decides. A candidate that fails its rule is simply
  * not admitted: no milestone, no error.
  */
+function isQualifyingProgressEvidence(
+  kind: AutoProgressKind,
+  record: AutoProgressEvidence,
+): boolean {
+  switch (kind) {
+    case 'implementation':
+      return record.mutation === true;
+    case 'verification':
+      return (
+        record.isError === false &&
+        record.verificationKind !== null &&
+        COMPLETION_SUPPORTING_KINDS.has(record.verificationKind)
+      );
+    case 'diagnosis':
+      return record.isError === true;
+    case 'research':
+      return record.isError === false;
+  }
+}
+
 function isAdmittedProgressCandidate(
   kind: AutoProgressKind,
   records: readonly AutoProgressEvidence[],
 ): boolean {
-  switch (kind) {
-    case 'implementation':
-      return records.some((record) => record.mutation === true);
-    case 'verification':
-      return records.some(
-        (record) =>
-          record.isError === false &&
-          record.verificationKind !== null &&
-          COMPLETION_SUPPORTING_KINDS.has(record.verificationKind),
-      );
-    case 'diagnosis':
-      return records.some((record) => record.isError === true);
-    case 'research':
-      return records.some((record) => record.isError === false);
-  }
+  return records.some((record) => isQualifyingProgressEvidence(kind, record));
+}
+
+function usableProgressEvidence(
+  kind: AutoProgressKind,
+  records: readonly AutoProgressEvidence[],
+): readonly AutoProgressEvidence[] {
+  return records.filter(
+    (record) =>
+      isQualifyingProgressEvidence(kind, record) &&
+      record.toolName !== null &&
+      record.inputDigest !== null &&
+      record.resultDigest !== null,
+  );
 }
 
 /**
- * Stable milestone identity derived only from the progress kind plus the sorted content
- * digests of every referenced evidence record. The input deliberately excludes the Root
- * Request id, the run sequence, evidence ids, tool call ids, and timestamps, so the same
- * exact meaningful evidence in another run or another root yields the same milestone id.
- * A null digest anywhere means no stable identity exists: the candidate is skipped rather
- * than given a fabricated id.
+ * Stable milestone identity derived only from the progress kind plus the sorted, deduplicated
+ * tuples of qualifying evidence. Non-qualifying records, including records with null digests, do
+ * not affect identity. The input deliberately excludes the Root Request id, the run sequence,
+ * evidence ids, tool call ids, and timestamps.
  */
 function autoProgressMilestoneId(
   kind: AutoProgressKind,
   records: readonly AutoProgressEvidence[],
 ): string | undefined {
   try {
-    const pairs: Array<readonly [string, string]> = [];
-    for (const record of records) {
-      if (record.inputDigest === null || record.resultDigest === null) {
-        return undefined;
+    const uniqueTuples = new Map<string, readonly [string, string, string]>();
+    for (const record of usableProgressEvidence(kind, records)) {
+      if (record.toolName === null || record.inputDigest === null || record.resultDigest === null) {
+        continue;
       }
-      pairs.push([record.inputDigest, record.resultDigest]);
+      const tuple: readonly [string, string, string] = [
+        record.toolName,
+        record.inputDigest,
+        record.resultDigest,
+      ];
+      const key = JSON.stringify(tuple);
+      if (key !== undefined) {
+        uniqueTuples.set(key, tuple);
+      }
     }
-    pairs.sort((left, right) => {
+    const tuples = [...uniqueTuples.values()];
+    tuples.sort((left, right) => {
       if (left[0] < right[0]) {
         return -1;
       }
@@ -413,9 +447,18 @@ function autoProgressMilestoneId(
       if (left[1] > right[1]) {
         return 1;
       }
+      if (left[2] < right[2]) {
+        return -1;
+      }
+      if (left[2] > right[2]) {
+        return 1;
+      }
       return 0;
     });
-    const digest = computeSupervisorJsonDigest([kind, pairs]);
+    if (tuples.length === 0) {
+      return undefined;
+    }
+    const digest = computeSupervisorJsonDigest([kind, tuples]);
     return digest === null ? undefined : `auto:${kind}:${digest}`;
   } catch {
     return undefined;
@@ -468,10 +511,8 @@ export function createAutoProgress(): SupervisorFeatureModule<JsonValue, AutoPro
           );
           const previous = [...baseline.recordedMilestones];
           const evidenceById = new Map(matched.evidence.map((record) => [record.id, record] as const));
-          const admitted: string[] = [];
-          const seen = new Set<string>(previous);
-          const supportingEvidence: string[] = [];
-          const seenSupporting = new Set<string>();
+          const admitted = new Map<string, AutoProgressAdmittedCandidate>();
+          const baselineMilestones = new Set(previous);
           for (const candidate of matched.progress.candidates) {
             const records: AutoProgressEvidence[] = [];
             let referencedUnknown = false;
@@ -487,22 +528,44 @@ export function createAutoProgress(): SupervisorFeatureModule<JsonValue, AutoPro
               continue;
             }
             const milestoneId = autoProgressMilestoneId(candidate.kind, records);
-            if (milestoneId === undefined || seen.has(milestoneId)) {
+            if (milestoneId === undefined || baselineMilestones.has(milestoneId)) {
               continue;
             }
-            seen.add(milestoneId);
-            admitted.push(milestoneId);
-            for (const record of records) {
-              if (!seenSupporting.has(record.id)) {
-                seenSupporting.add(record.id);
-                supportingEvidence.push(record.id);
+            const evidenceRefs = usableProgressEvidence(candidate.kind, records)
+              .map((record) => record.id)
+              .sort();
+            const existing = admitted.get(milestoneId);
+            if (existing === undefined) {
+              admitted.set(milestoneId, { milestoneId, evidenceRefs });
+              continue;
+            }
+            const mergedEvidenceRefs = [...new Set([...existing.evidenceRefs, ...evidenceRefs])].sort();
+            admitted.set(milestoneId, { milestoneId, evidenceRefs: mergedEvidenceRefs });
+          }
+          const admittedCandidates = [...admitted.values()];
+          admittedCandidates.sort((left, right) => {
+            if (left.milestoneId < right.milestoneId) {
+              return -1;
+            }
+            if (left.milestoneId > right.milestoneId) {
+              return 1;
+            }
+            return 0;
+          });
+          const room = Math.max(0, AUTO_PROGRESS_MAX_RECORDED_MILESTONES - previous.length);
+          const recordable = admittedCandidates.slice(0, room);
+          const capacityReached = admittedCandidates.length > recordable.length;
+          const supportingEvidence: string[] = [];
+          const seenSupporting = new Set<string>();
+          for (const candidate of recordable) {
+            for (const evidenceId of candidate.evidenceRefs) {
+              if (!seenSupporting.has(evidenceId)) {
+                seenSupporting.add(evidenceId);
+                supportingEvidence.push(evidenceId);
               }
             }
           }
-          const room = Math.max(0, AUTO_PROGRESS_MAX_RECORDED_MILESTONES - previous.length);
-          const recordable = admitted.slice(0, room);
-          const capacityReached = admitted.length > recordable.length;
-          const current = [...previous, ...recordable];
+          const current = [...previous, ...recordable.map((candidate) => candidate.milestoneId)];
           let verdict: ProgressVerdict;
           try {
             verdict = judgeProgress({ previous: { milestones: previous }, current: { milestones: current } });
