@@ -13,6 +13,7 @@ import {
   classifySupervisorShellCommand,
   computeSupervisorPathDigest,
   isSupervisorTrustedBuiltin,
+  SUPERVISOR_COMPLETION_SUPPORTING_KINDS,
   SUPERVISOR_VERIFICATION_KINDS,
   type SupervisorVerificationKind,
 } from '../src/assessment/verification.js';
@@ -66,13 +67,23 @@ describe('deterministic verification classifier', () => {
       'lint',
       'typecheck',
       'build',
+      'validation',
       'repository-inspection',
+      'read-back',
+    ]);
+    expect(SUPERVISOR_COMPLETION_SUPPORTING_KINDS).toEqual([
+      'test',
+      'lint',
+      'typecheck',
+      'build',
+      'validation',
       'read-back',
     ]);
   });
 
   it.each([
     ['pnpm test', 'test'],
+    ['pnpm run test', 'test'],
     ['npm test', 'test'],
     ['npm run test', 'test'],
     ['yarn test', 'test'],
@@ -80,19 +91,40 @@ describe('deterministic verification classifier', () => {
     ['vitest', 'test'],
     ['jest', 'test'],
     ['pytest', 'test'],
+    ['python -m pytest', 'test'],
+    ['phpunit', 'test'],
+    ['vendor/bin/phpunit', 'test'],
+    ['php artisan test', 'test'],
     ['go test', 'test'],
     ['cargo test', 'test'],
     ['dotnet test', 'test'],
+    ['pnpm lint', 'lint'],
+    ['npm run lint', 'lint'],
     ['eslint', 'lint'],
+    ['eslint .', 'lint'],
+    ['oxlint', 'lint'],
     ['ruff check', 'lint'],
+    ['pnpm typecheck', 'typecheck'],
+    ['npm run typecheck', 'typecheck'],
     ['tsc', 'typecheck'],
+    ['tsc --noEmit', 'typecheck'],
+    ['vue-tsc', 'typecheck'],
+    ['vue-tsc --noEmit', 'typecheck'],
     ['mypy', 'typecheck'],
     ['pyright', 'typecheck'],
+    ['phpstan', 'typecheck'],
+    ['psalm', 'typecheck'],
+    ['pnpm build', 'build'],
+    ['npm run build', 'build'],
     ['cargo build', 'build'],
     ['go build', 'build'],
+    ['mvn package', 'build'],
+    ['gradle build', 'build'],
+    ['./gradlew build', 'build'],
+    ['composer validate', 'validation'],
+    ['git diff --check', 'validation'],
     ['git diff', 'repository-inspection'],
     ['git status', 'repository-inspection'],
-    ['git diff --check', 'repository-inspection'],
   ] as const satisfies readonly (readonly [string, SupervisorVerificationKind])[])(
     'classifies the supported simple command %s as %s',
     (command, expectedKind) => {
@@ -120,11 +152,11 @@ describe('deterministic verification classifier', () => {
   });
 
   it.each([
-    'pnpm test && echo done',
-    'pnpm test || echo failed',
-    'pnpm test; echo done',
+    'pnpm test && echo ok',
+    'pnpm test || true',
+    'pnpm test; true',
     'pnpm test | cat',
-    'pnpm test > test.log',
+    'pnpm test > log',
     'pnpm test 2>&1',
     '$(pnpm test)',
     'pnpm test # comment',
@@ -132,6 +164,7 @@ describe('deterministic verification classifier', () => {
     'pnpm test\n',
   ])('rejects ambiguous shell syntax: %s', (command) => {
     expect(classifySupervisorShellCommand(command)).toBeNull();
+    expect(collectOne('bash', command).getRecords()[0]?.verificationKind).toBeNull();
   });
 
   it('does not trust a custom bash or write that shadows a builtin name', () => {

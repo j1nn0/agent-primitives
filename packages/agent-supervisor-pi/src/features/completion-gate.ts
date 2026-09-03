@@ -5,6 +5,7 @@ import type {
   UnsupportedReason,
 } from '@j1nn0/agent-evidence';
 import {
+  SUPERVISOR_COMPLETION_SUPPORTING_KINDS,
   SUPERVISOR_VERIFICATION_KINDS,
   type SupervisorVerificationKind,
 } from '../assessment/verification.js';
@@ -23,6 +24,10 @@ const VERDICT_FACT_KIND = `${FEATURE_ID}:verdict`;
 const KERNEL_SOURCE_ID = 'kernel';
 const COMPLETION_CLAIM_KIND = 'completion';
 const VERIFICATION_CLAIM_KIND = 'verification';
+
+const COMPLETION_SUPPORTING_KINDS = new Set<SupervisorVerificationKind>(
+  SUPERVISOR_COMPLETION_SUPPORTING_KINDS,
+);
 
 const FOLLOW_UP_MESSAGE =
   'Agent Supervisor: the previous completion claim is not supported by current verification evidence. Run an appropriate post-change verification using available tools, inspect the result, and only claim completion when the observed evidence supports it.';
@@ -81,6 +86,12 @@ interface CompletionGateClaimVerdict {
   readonly outcome: ClaimResult['outcome'];
   readonly reason: UnsupportedReason | null;
   readonly evidenceId: string | null;
+  readonly evidenceRefs: readonly string[];
+}
+
+interface CompletionGateClaimJudgment {
+  readonly result: ClaimResult;
+  readonly selectedEvidenceIds: readonly string[];
 }
 
 function defensiveJsonParse(value: unknown): unknown {
@@ -367,20 +378,27 @@ function makeEvidenceRecord(
   return { id: evidence.id, outcome, subject };
 }
 
+function isCompletionSupportingVerificationKind(
+  kind: SupervisorVerificationKind | null,
+): boolean {
+  return kind !== null && COMPLETION_SUPPORTING_KINDS.has(kind);
+}
+
 function judgeCompletionClaim(
   claim: AssessmentClaim,
   linkedEvidence: readonly LinkedEvidence[],
   finalMutationEpoch: number,
-): ClaimResult | undefined {
+): CompletionGateClaimJudgment | undefined {
   const currentSubject = `mutation-epoch:${finalMutationEpoch}`;
   const currentRecognized = linkedEvidence
     .filter(
       (evidence) =>
-        evidence.verificationKind !== null && evidence.mutationEpoch === finalMutationEpoch,
+        isCompletionSupportingVerificationKind(evidence.verificationKind) &&
+        evidence.mutationEpoch === finalMutationEpoch,
     )
     .sort(compareEvidence);
   const allRecognized = linkedEvidence
-    .filter((evidence) => evidence.verificationKind !== null)
+    .filter((evidence) => isCompletionSupportingVerificationKind(evidence.verificationKind))
     .sort(compareEvidence);
 
   let records: readonly EvidenceRecord[];
@@ -413,13 +431,14 @@ function judgeCompletionClaim(
     ];
     requirements = [{ evidenceId: stale.id, subject: currentSubject }];
   } else {
-    const currentUnknown = linkedEvidence
+    const unknownCandidates = linkedEvidence
       .filter(
         (evidence) =>
-          evidence.verificationKind === null && evidence.mutationEpoch === finalMutationEpoch,
+          evidence.verificationKind === 'repository-inspection' ||
+          (evidence.verificationKind === null && evidence.mutationEpoch === finalMutationEpoch),
       )
       .sort(compareEvidence);
-    const unknown = latestEvidence(currentUnknown);
+    const unknown = latestEvidence(unknownCandidates);
     if (unknown !== undefined) {
       records = [makeEvidenceRecord(unknown, 'unknown', currentSubject)];
       requirements = [{ evidenceId: unknown.id, subject: currentSubject }];
@@ -431,27 +450,47 @@ function judgeCompletionClaim(
   }
 
   try {
-    return judgeEvidence({
+    const result = judgeEvidence({
       claims: [{ id: claim.id, requires: requirements }],
       evidence: records,
     }).claims[0];
+    return result === undefined
+      ? undefined
+      : { result, selectedEvidenceIds: records.map((record) => record.id) };
   } catch {
     return undefined;
   }
 }
 
-function toVerdictClaim(result: ClaimResult): CompletionGateClaimVerdict {
+function toVerdictClaim(
+  result: ClaimResult,
+  selectedEvidenceIds: readonly string[],
+): CompletionGateClaimVerdict {
+  const evidenceRefs = [...selectedEvidenceIds];
   if (result.outcome === 'supported') {
-    return { claimId: result.claimId, outcome: result.outcome, reason: null, evidenceId: null };
+    return {
+      claimId: result.claimId,
+      outcome: result.outcome,
+      reason: null,
+      evidenceId: null,
+      evidenceRefs,
+    };
   }
   if (result.outcome === 'contradicted') {
-    return { claimId: result.claimId, outcome: result.outcome, reason: null, evidenceId: result.evidenceId };
+    return {
+      claimId: result.claimId,
+      outcome: result.outcome,
+      reason: null,
+      evidenceId: result.evidenceId,
+      evidenceRefs,
+    };
   }
   return {
     claimId: result.claimId,
     outcome: result.outcome,
     reason: result.reason,
     evidenceId: result.evidenceId,
+    evidenceRefs,
   };
 }
 
@@ -467,7 +506,9 @@ function evaluateAssessment(
     const linkedEvidence = linkedEvidenceForClaim(claim, evidenceById);
     return (
       assessment.mutationEpoch > 0 ||
-      linkedEvidence.some((evidence) => evidence.verificationKind !== null)
+      linkedEvidence.some((evidence) =>
+        isCompletionSupportingVerificationKind(evidence.verificationKind),
+      )
     );
   });
   if (applicableClaims.length === 0) {
@@ -476,15 +517,15 @@ function evaluateAssessment(
 
   const claims: CompletionGateClaimVerdict[] = [];
   for (const claim of applicableClaims) {
-    const result = judgeCompletionClaim(
+    const judgment = judgeCompletionClaim(
       claim,
       linkedEvidenceForClaim(claim, evidenceById),
       assessment.mutationEpoch,
     );
-    if (result === undefined) {
+    if (judgment === undefined) {
       return undefined;
     }
-    claims.push(toVerdictClaim(result));
+    claims.push(toVerdictClaim(judgment.result, judgment.selectedEvidenceIds));
   }
   return {
     claims,
@@ -526,7 +567,9 @@ function onObservation(
       facts: [
         {
           kind: VERDICT_FACT_KIND,
-          evidenceRefs: evaluation.claims.map((claim) => claim.claimId),
+          evidenceRefs: [
+            ...new Set(evaluation.claims.flatMap((claim) => claim.evidenceRefs)),
+          ],
           data,
         },
       ],

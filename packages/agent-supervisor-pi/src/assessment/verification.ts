@@ -10,11 +10,22 @@ export const SUPERVISOR_VERIFICATION_KINDS = [
   'lint',
   'typecheck',
   'build',
+  'validation',
   'repository-inspection',
   'read-back',
 ] as const;
 
 export type SupervisorVerificationKind = (typeof SUPERVISOR_VERIFICATION_KINDS)[number];
+
+export const SUPERVISOR_COMPLETION_SUPPORTING_KINDS = [
+  'test',
+  'lint',
+  'typecheck',
+  'build',
+  'validation',
+  'read-back',
+] as const satisfies readonly SupervisorVerificationKind[];
+
 
 /** A deliberately small view of the effective registry returned by Pi. */
 export type SupervisorToolRegistryReader = () => readonly unknown[];
@@ -30,12 +41,16 @@ const TRUSTED_BUILTIN_TOOL_NAMES = new Set(['bash', 'powershell', 'edit', 'write
  * The supported shell forms are exactly these simple commands (with optional surrounding or
  * repeated ASCII spaces/tabs):
  *
- * - tests: `pnpm test`, `npm test`, `npm run test`, `yarn test`, `bun test`, `vitest`, `jest`,
- *   `pytest`, `go test`, `cargo test`, `dotnet test`
- * - lint: `eslint`, `ruff check`
- * - typecheck: `tsc`, `mypy`, `pyright`
- * - build: `cargo build`, `go build`
- * - repository-inspection: `git diff`, `git status`, `git diff --check`
+ * - tests: `pnpm test`, `pnpm run test`, `npm test`, `npm run test`, `yarn test`, `bun test`,
+ *   `vitest`, `jest`, `pytest`, `python -m pytest`, `phpunit`, `vendor/bin/phpunit`,
+ *   `php artisan test`, `go test`, `cargo test`, `dotnet test`
+ * - lint: `pnpm lint`, `npm run lint`, `eslint`, `eslint .`, `oxlint`, `ruff check`
+ * - typecheck: `pnpm typecheck`, `npm run typecheck`, `tsc`, `tsc --noEmit`, `vue-tsc`,
+ *   `vue-tsc --noEmit`, `mypy`, `pyright`, `phpstan`, `psalm`
+ * - build: `pnpm build`, `npm run build`, `cargo build`, `go build`, `mvn package`,
+ *   `gradle build`, `./gradlew build`
+ * - validation: `composer validate`, `git diff --check`
+ * - repository-inspection: `git diff`, `git status`
  *
  * No flags, paths, wrappers, or additional arguments are supported. A command is rejected unless
  * the entire value matches one ASCII-token simple command. That anchored rule rejects newlines,
@@ -45,6 +60,7 @@ const TRUSTED_BUILTIN_TOOL_NAMES = new Set(['bash', 'powershell', 'edit', 'write
  */
 const SUPPORTED_SIMPLE_COMMANDS = new Map<string, SupervisorVerificationKind>([
   ['pnpm test', 'test'],
+  ['pnpm run test', 'test'],
   ['npm test', 'test'],
   ['npm run test', 'test'],
   ['yarn test', 'test'],
@@ -52,19 +68,40 @@ const SUPPORTED_SIMPLE_COMMANDS = new Map<string, SupervisorVerificationKind>([
   ['vitest', 'test'],
   ['jest', 'test'],
   ['pytest', 'test'],
+  ['python -m pytest', 'test'],
+  ['phpunit', 'test'],
+  ['vendor/bin/phpunit', 'test'],
+  ['php artisan test', 'test'],
   ['go test', 'test'],
   ['cargo test', 'test'],
   ['dotnet test', 'test'],
+  ['pnpm lint', 'lint'],
+  ['npm run lint', 'lint'],
   ['eslint', 'lint'],
+  ['eslint .', 'lint'],
+  ['oxlint', 'lint'],
   ['ruff check', 'lint'],
+  ['pnpm typecheck', 'typecheck'],
+  ['npm run typecheck', 'typecheck'],
   ['tsc', 'typecheck'],
+  ['tsc --noEmit', 'typecheck'],
+  ['vue-tsc', 'typecheck'],
+  ['vue-tsc --noEmit', 'typecheck'],
   ['mypy', 'typecheck'],
   ['pyright', 'typecheck'],
+  ['phpstan', 'typecheck'],
+  ['psalm', 'typecheck'],
+  ['pnpm build', 'build'],
+  ['npm run build', 'build'],
   ['cargo build', 'build'],
   ['go build', 'build'],
+  ['mvn package', 'build'],
+  ['gradle build', 'build'],
+  ['./gradlew build', 'build'],
+  ['composer validate', 'validation'],
+  ['git diff --check', 'validation'],
   ['git diff', 'repository-inspection'],
   ['git status', 'repository-inspection'],
-  ['git diff --check', 'repository-inspection'],
 ]);
 
 const SIMPLE_COMMAND_PATTERN = /^[ \t]*[A-Za-z0-9._/@:=+-]+(?:[ \t]+[A-Za-z0-9._/@:=+-]+)*[ \t]*$/;

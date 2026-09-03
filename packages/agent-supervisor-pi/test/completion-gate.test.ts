@@ -284,6 +284,10 @@ const WRITE = { toolName: 'write', input: { path: '/tmp/changed.txt' } } as cons
 const TEST = { toolName: 'bash', input: { command: 'pnpm test' } } as const;
 const LINT = { toolName: 'bash', input: { command: 'eslint' } } as const;
 const TYPECHECK = { toolName: 'bash', input: { command: 'tsc' } } as const;
+const BUILD = { toolName: 'bash', input: { command: 'pnpm build' } } as const;
+const VALIDATION = { toolName: 'bash', input: { command: 'git diff --check' } } as const;
+const GIT_STATUS = { toolName: 'bash', input: { command: 'git status' } } as const;
+const GIT_DIFF = { toolName: 'bash', input: { command: 'git diff' } } as const;
 const LS = { toolName: 'bash', input: { command: 'ls' } } as const;
 const UNKNOWN_TOOL = { toolName: 'custom-tool', input: { value: 1 } } as const;
 
@@ -356,6 +360,122 @@ describe('completion-gate evidence judgments', () => {
         },
       ],
     });
+    expect(recording.sentMessages).toHaveLength(1);
+  });
+
+  it('uses exactly the observed evidence IDs selected for the Evidence judgment', () => {
+    const supported = directCompletionGateEmission([
+      completionGateFact({
+        mutationEpoch: 1,
+        claims: [{ evidence: ['e2', 'e3'] }],
+        evidence: [
+          { id: 'e2', mutationEpoch: 1, verificationKind: 'test' },
+          { id: 'e3', mutationEpoch: 1, verificationKind: 'lint' },
+        ],
+      }),
+    ]);
+    expect(supported?.facts?.[0]?.evidenceRefs).toEqual(['e2', 'e3']);
+
+    const contradicted = directCompletionGateEmission([
+      completionGateFact({
+        mutationEpoch: 1,
+        claims: [{ evidence: ['e4'] }],
+        evidence: [{ id: 'e4', isError: true, mutationEpoch: 1, verificationKind: 'test' }],
+      }),
+    ]);
+    expect(contradicted?.facts?.[0]?.evidenceRefs).toEqual(['e4']);
+
+    const stale = directCompletionGateEmission([
+      completionGateFact({
+        mutationEpoch: 1,
+        claims: [{ evidence: ['e1'] }],
+        evidence: [{ id: 'e1', mutationEpoch: 0, verificationKind: 'test' }],
+      }),
+    ]);
+    expect(stale?.facts?.[0]?.evidenceRefs).toEqual(['e1']);
+
+    const unknown = directCompletionGateEmission([
+      completionGateFact({
+        mutationEpoch: 1,
+        claims: [{ evidence: ['e2'] }],
+        evidence: [{ id: 'e2', mutationEpoch: 1, verificationKind: 'repository-inspection' }],
+      }),
+    ]);
+    expect(unknown?.facts?.[0]?.evidenceRefs).toEqual(['e2']);
+
+    const syntheticMissing = directCompletionGateEmission([
+      completionGateFact({ mutationEpoch: 1, claims: [{ evidence: [] }], evidence: [] }),
+    ]);
+    expect(syntheticMissing?.facts?.[0]?.evidenceRefs).toEqual([]);
+  });
+
+  it.each([
+    ['lint', LINT],
+    ['typecheck', TYPECHECK],
+    ['build', BUILD],
+    ['validation', VALIDATION],
+  ] as const)('allows %s to support completion after a mutation', async (_kind, verification) => {
+    const recording = new RecordingPi();
+    const kernel = createKernel(recording);
+    await settle(kernel, recording, [WRITE, verification], [{ evidence: ['e2'] }]);
+
+    expect(verdictFact(kernel)?.data).toMatchObject({
+      claims: [{ claimId: 'claim-1', outcome: 'supported', reason: null, evidenceId: null }],
+    });
+    expect(verdictFact(kernel)?.evidenceRefs).toEqual(['e2']);
+    expect(recording.sentMessages).toEqual([]);
+  });
+
+  it.each([
+    ['git status', GIT_STATUS],
+    ['git diff', GIT_DIFF],
+  ] as const)('does not allow %s to support completion after a mutation', async (_kind, inspection) => {
+    const recording = new RecordingPi();
+    const kernel = createKernel(recording);
+    await settle(kernel, recording, [WRITE, inspection], [{ evidence: ['e2'] }]);
+
+    expect(verdictFact(kernel)?.data).toMatchObject({
+      claims: [
+        {
+          claimId: 'claim-1',
+          outcome: 'unsupported',
+          reason: 'unconfirmed_evidence',
+          evidenceId: 'e2',
+        },
+      ],
+    });
+    expect(verdictFact(kernel)?.evidenceRefs).toEqual(['e2']);
+    expect(recording.sentMessages).toHaveLength(1);
+  });
+
+  it.each([
+    ['git status', GIT_STATUS],
+    ['git diff', GIT_DIFF],
+  ] as const)('does not apply to %s without a mutation', async (_kind, inspection) => {
+    const recording = new RecordingPi();
+    const kernel = createKernel(recording);
+    await settle(kernel, recording, [inspection], [{ evidence: ['e1'] }]);
+
+    expect(verdictFact(kernel)).toBeUndefined();
+    expect(recording.sentMessages).toEqual([]);
+  });
+
+  it('uses stale repository inspection as unknown evidence after a mutation', async () => {
+    const recording = new RecordingPi();
+    const kernel = createKernel(recording);
+    await settle(kernel, recording, [GIT_STATUS, WRITE], [{ evidence: ['e1'] }]);
+
+    expect(verdictFact(kernel)?.data).toMatchObject({
+      claims: [
+        {
+          claimId: 'claim-1',
+          outcome: 'unsupported',
+          reason: 'unconfirmed_evidence',
+          evidenceId: 'e1',
+        },
+      ],
+    });
+    expect(verdictFact(kernel)?.evidenceRefs).toEqual(['e1']);
     expect(recording.sentMessages).toHaveLength(1);
   });
 

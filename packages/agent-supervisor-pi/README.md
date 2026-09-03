@@ -260,7 +260,7 @@ The verdict comes from that core, not from this feature and not from a model. Th
 | recognized verification at the current mutation epoch, succeeded | `supported` |
 | recognized verification at the current epoch, failed | `contradicted` |
 | only a verification from *before* the latest change | `unsupported` / `subject_mismatch` |
-| only unrecognized evidence, e.g. a successful `ls` | `unsupported` / `unconfirmed_evidence` |
+| only non-supporting evidence, e.g. a successful `ls` or `git status` | `unsupported` / `unconfirmed_evidence` |
 | nothing usable | `unsupported` / `missing_evidence` |
 
 Anything other than `supported` triggers one automatic follow-up.
@@ -284,16 +284,34 @@ When both a stale and a current verification are linked, only the current one be
 Deterministic classification, never output-text inference. A tool result is trusted only if the *effective* tool is a genuine Pi builtin — a custom tool named `bash` or `write` inherits nothing from the name.
 
 - **mutation**: successful builtin `edit` / `write`
-- **shell verification**: builtin `bash` / `powershell` whose command matches an anchored whitelist of simple commands — test runners, linters, type checkers, builds, `git diff` / `git status`
+- **shell classification**: builtin `bash` / `powershell` whose command matches an anchored whitelist of exact simple commands
 - **read-back**: a builtin `read` that completes read-back of every path mutated in this Root Request
 
 Success or failure comes from the tool result's `isError`, never from scanning output for words like "passed". The shell command is read transiently to classify and is never stored, never sent to a model, and never reaches the feature.
 
-Shell matching is deliberately strict: anything with a pipeline, `;`, `&&`, redirection, substitution, or quoting falls back to unrecognized. `echo "npm test"` is not a test run. Refusing to classify is the correct answer when in doubt.
+Shell matching is deliberately strict: the whole command must match a whitelist entry exactly. Anything with a pipeline, `;`, `&&`, redirection, substitution, quoting, or a leading assignment falls back to unrecognized. `echo "npm test"` is not a test run, and neither is `pnpm test && echo ok`. Refusing to classify is the correct answer when in doubt.
+
+### Not every recognized command proves completion
+
+Being classified and being *proof* are different things. There are seven kinds:
+
+```text
+test  lint  typecheck  build  validation  repository-inspection  read-back
+```
+
+but only six can support a completion claim:
+
+```text
+test  lint  typecheck  build  validation  read-back
+```
+
+`repository-inspection` — `git diff` and `git status` — is **classified but never completion-supporting**. Looking at the repository is useful observation; it is not evidence that the work is correct. A claim whose only linked evidence is `git status` resolves to `unsupported` / `unconfirmed_evidence`, and `git status` alone never makes a non-mutation answer gate-applicable.
+
+`git diff --check` is different: it is a deterministic check that passes or fails, so it is `validation` and it *can* support completion. So can `composer validate`.
 
 ### When the gate applies
 
-Only completion claims trigger it, and only when the run has a real mutation, or the claim links recognized verification evidence. A pure explanation, a research summary, or a conversational answer that merely sounds finished is **not** gated.
+Only completion claims trigger it, and only when the run has a real mutation, or the claim links evidence of a **completion-supporting** kind. Linking only a `repository-inspection` is not enough. A pure explanation, a research summary, or a conversational answer that merely sounds finished is **not** gated.
 
 That boundary is deliberate. The cost of nagging someone who asked a question is higher than the cost of missing a completion claim, so the initial gate stays narrow.
 
