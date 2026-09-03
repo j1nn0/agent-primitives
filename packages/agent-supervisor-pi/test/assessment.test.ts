@@ -559,6 +559,8 @@ function assessmentEvidence(id: string, text: string): {
   readonly isError: boolean;
   readonly inputDigest: string | null;
   readonly resultDigest: string | null;
+  readonly mutationEpoch: number;
+  readonly verificationKind: null;
   readonly text: string;
 } {
   return {
@@ -568,6 +570,8 @@ function assessmentEvidence(id: string, text: string): {
     isError: false,
     inputDigest: null,
     resultDigest: null,
+    mutationEpoch: 0,
+    verificationKind: null,
     text,
   };
 }
@@ -1543,6 +1547,7 @@ describe('Supervisor assessment Kernel requests', () => {
         assessmentId: 'assessment-1',
         rootRequestId: 'root-1',
         runSequence: 1,
+        mutationEpoch: 0,
         claims: [{
           id: 'claim-1',
           kind: 'verification',
@@ -1556,6 +1561,8 @@ describe('Supervisor assessment Kernel requests', () => {
           isError: false,
           inputDigest: computeSupervisorJsonDigest({ secret: 'private input' }),
           resultDigest: computeSupervisorJsonDigest([{ type: 'text', text: 'tests pass' }]),
+          mutationEpoch: 0,
+          verificationKind: null,
         }],
       },
     });

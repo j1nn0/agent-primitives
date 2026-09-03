@@ -12,6 +12,12 @@ import {
 } from '../runner.mjs';
 
 const SUPERVISOR_CONFIG_CUSTOM_TYPE = 'agent-supervisor-config';
+// The production profile intentionally includes completion-gate as an assessment consumer.
+const ACTIVE_FEATURE_STATUS =
+  'maturity=validated, default=autonomous, requested=autonomous, effective=autonomous, runtime=autonomous, status=active';
+const NO_CLAIM_ASSESSMENT_RESPONSE = fauxAssistantMessage(
+  fauxText(JSON.stringify({ schemaVersion: 1, claims: [] })),
+);
 
 function supervisorConfigEntries(sessionManager) {
   return sessionManager
@@ -87,6 +93,12 @@ export async function run(cleanup = createCleanupRegistry()) {
       'status output shows the autonomous default global mode',
     );
     check(
+      statusOutput.includes('Registered features: 2') &&
+        statusOutput.includes(`- completion-gate: ${ACTIVE_FEATURE_STATUS}`) &&
+        statusOutput.includes(`- retry-loop-breaker: ${ACTIVE_FEATURE_STATUS}`),
+      'status output reports both production built-in features active',
+    );
+    check(
       supervisorConfigEntries(harness.sessionManager).length === 0,
       'loading and status created no agent-supervisor-config session entry',
     );
@@ -99,7 +111,10 @@ export async function run(cleanup = createCleanupRegistry()) {
       normalEvents = await runScriptedTurn(
         harness,
         'Reply with the scripted completion.',
-        [fauxAssistantMessage(fauxText('scripted completion'))],
+        [
+          fauxAssistantMessage(fauxText('scripted completion')),
+          NO_CLAIM_ASSESSMENT_RESPONSE,
+        ],
       );
       normalRunCompleted = true;
     } catch {
@@ -114,8 +129,8 @@ export async function run(cleanup = createCleanupRegistry()) {
       'Supervisor stayed silent during the normal run',
     );
     check(
-      harness.faux.state.callCount === callsBeforeNormalRun + 1,
-      'normal run caused exactly its one scripted faux model call',
+      harness.faux.state.callCount === callsBeforeNormalRun + 2,
+      'normal run consumed one AGENT call and one AUXILIARY ASSESSMENT call',
     );
     check(
       normalEvents.filter((event) => event?.type === 'agent_start').length === 1 &&

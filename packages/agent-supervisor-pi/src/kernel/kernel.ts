@@ -79,12 +79,14 @@ interface PendingSupervisorAssessment {
   readonly input: SupervisorAssessmentInput;
   readonly assessmentEnabled: boolean;
   readonly assessmentLifecycleGeneration: number;
+  readonly mutationEpoch: number;
 }
 
 const USAGE_MESSAGE =
   'Usage: /agent-supervisor [status|mode autonomous|observe|off|feature <id> autonomous|observe|off|default]';
 
 const SUPERVISOR_COMPLETION_ASSESSMENT_KIND = 'kernel:completion-assessment' as const;
+const SUPERVISOR_MAX_AUTOMATIC_FOLLOW_UPS_PER_ROOT_REQUEST = 1;
 
 function incrementGeneration(value: number): number {
   return value === Number.MAX_SAFE_INTEGER ? value : value + 1;
@@ -187,7 +189,7 @@ export interface SupervisorKernelOptions {
  */
 export class SupervisorKernel {
   private readonly normalizer = new SupervisorObservationNormalizer();
-  private readonly assessmentCapture = new SupervisorAssessmentCapture();
+  private readonly assessmentCapture: SupervisorAssessmentCapture;
   private readonly assessmentController: SupervisorAssessmentController;
 
   private readonly runtimeManager: SupervisorFeatureRuntimeManager;
@@ -195,6 +197,7 @@ export class SupervisorKernel {
   private readonly pi: ExtensionAPI;
 
   private currentRoot: CurrentRoot | null = null;
+  private automaticFollowUpsTransported = 0;
 
   private facts: SupervisorFactRecord[] = [];
 
@@ -234,6 +237,7 @@ export class SupervisorKernel {
     options: SupervisorKernelOptions = {},
   ) {
     this.pi = pi;
+    this.assessmentCapture = new SupervisorAssessmentCapture(() => this.pi.getAllTools());
     this.assessmentController = new SupervisorAssessmentController(
       options.assessmentTimeoutMs === undefined ? {} : { timeoutMs: options.assessmentTimeoutMs },
     );
@@ -328,6 +332,7 @@ export class SupervisorKernel {
     this.facts = [];
     this.nextFactSequence = 0;
     this.assessmentCapture.clearRootRequest();
+    this.automaticFollowUpsTransported = 0;
   }
 
   private async handleInput(event: InputEvent, ctx: ExtensionContext): Promise<InputEventResult> {
@@ -446,6 +451,7 @@ export class SupervisorKernel {
           identity,
           input,
           assessmentEnabled,
+          mutationEpoch: this.assessmentCapture.getMutationEpoch(),
           assessmentLifecycleGeneration,
         };
       }
@@ -507,7 +513,7 @@ export class SupervisorKernel {
         ) {
           return;
         }
-        const assessmentId = this.commitAssessmentFact(outcome, pending.identity, pending.input);
+        const assessmentId = this.commitAssessmentFact(outcome, pending.identity, pending.input, pending.mutationEpoch);
         if (assessmentId === undefined) {
           return;
         }
@@ -570,6 +576,7 @@ export class SupervisorKernel {
     outcome: Extract<SupervisorAssessmentOutcome, { readonly kind: 'success' }>,
     identity: SupervisorAssessmentIdentity,
     input: SupervisorAssessmentInput,
+    mutationEpoch: number,
   ): string | undefined {
     if (this.nextFactSequence === Number.MAX_SAFE_INTEGER) {
       return undefined;
@@ -583,6 +590,7 @@ export class SupervisorKernel {
         assessmentId,
         rootRequestId: identity.rootRequestId,
         runSequence: identity.runGeneration,
+        mutationEpoch,
         claims: outcome.output.claims.map((claim, index) => ({
           id: `claim-${index + 1}`,
           kind: claim.kind,
@@ -593,13 +601,15 @@ export class SupervisorKernel {
           })),
         })),
         evidence: input.evidence.map(
-          ({ id, toolName, toolCallId, isError, inputDigest, resultDigest }) => ({
+          ({ id, toolName, toolCallId, isError, inputDigest, resultDigest, mutationEpoch, verificationKind }) => ({
             id,
             toolName,
             toolCallId,
             isError,
             inputDigest,
             resultDigest,
+            mutationEpoch,
+            verificationKind,
           }),
         ),
       },
@@ -645,6 +655,7 @@ export class SupervisorKernel {
       this.currentRoot = null;
       this.facts = [];
       this.nextFactSequence = 0;
+      this.automaticFollowUpsTransported = 0;
       this.assessmentCapture.resetSession();
       this.loaded = false;
     });
@@ -729,7 +740,7 @@ export class SupervisorKernel {
       this.markDegraded();
       return undefined;
     }
-    return this.executeInterventions(arbitration, targetToolCallId);
+    return this.executeInterventions(arbitration, targetToolCallId, observation.rootRequestId);
   }
 
   private observeOnlyFeatureModes(
@@ -745,8 +756,10 @@ export class SupervisorKernel {
   private executeInterventions(
     arbitration: readonly SupervisorArbitrationResult[],
     targetToolCallId: string | undefined,
+    rootRequestId: string | null,
   ): ToolCallEventResult | undefined {
     let blockResult: ToolCallEventResult | undefined;
+    const rootGeneration = this.rootGeneration;
     for (const group of arbitration) {
       const winner = group.winner;
       if (winner === undefined) {
@@ -763,6 +776,25 @@ export class SupervisorKernel {
         }
         continue;
       }
+      if (winner.delivery === 'follow-up') {
+        if (
+          rootRequestId === null ||
+          this.currentRoot?.id !== rootRequestId ||
+          this.rootGeneration !== rootGeneration ||
+          this.automaticFollowUpsTransported >= SUPERVISOR_MAX_AUTOMATIC_FOLLOW_UPS_PER_ROOT_REQUEST ||
+          winner.message === undefined
+        ) {
+          continue;
+        }
+        // Consume only after synchronous transport returns. A transport throw leaves the budget
+        // unused, while sendIntervention preserves the existing degraded-health behavior.
+        if (this.sendIntervention(winner.delivery, winner.message)) {
+          if (this.rootGeneration === rootGeneration && this.currentRoot?.id === rootRequestId) {
+            this.automaticFollowUpsTransported += 1;
+          }
+        }
+        continue;
+      }
       if (winner.delivery === 'none' || winner.message === undefined) {
         continue;
       }
@@ -771,15 +803,17 @@ export class SupervisorKernel {
     return blockResult;
   }
 
-  private sendIntervention(delivery: SupervisorInterventionDelivery, message: string): void {
+  private sendIntervention(delivery: SupervisorInterventionDelivery, message: string): boolean {
     try {
       if (delivery === 'steer') {
         this.pi.sendUserMessage(message, { deliverAs: 'steer' });
       } else if (delivery === 'follow-up') {
         this.pi.sendUserMessage(message, { deliverAs: 'followUp' });
       }
+      return true;
     } catch {
       this.markDegraded();
+      return false;
     }
   }
 
@@ -818,6 +852,7 @@ export class SupervisorKernel {
 
     this.nextRootRequestSequence = reservedNext;
     this.currentRoot = { id: `root-${sequence}`, status: 'active' };
+    this.automaticFollowUpsTransported = 0;
     this.runGeneration = 1;
     this.finalAssistantRunGeneration = 0;
     this.facts = [];
@@ -862,6 +897,7 @@ export class SupervisorKernel {
     this.currentRoot = null;
     this.facts = [];
     this.nextFactSequence = 0;
+    this.automaticFollowUpsTransported = 0;
     this.assessmentCapture.resetSession();
     this.health = 'healthy';
 

@@ -6,13 +6,13 @@ This package is experimental, private, and not published to npm.
 
 This **is now a Pi extension**. The Kernel runtime is active after installation: it normalizes Pi lifecycle events, tracks Root Requests, owns Supervisor persistence, resolves the feature plan, and owns intervention transport.
 
-The current production profile contains **one built-in feature**, [`retry-loop-breaker`](#retry-loop-breaker), which is active at `autonomous` after installation with no setup. The feature registry itself stays open-ended; one built-in is where the product is today, not a fixed design.
+The current production profile contains **two built-in features** — [`retry-loop-breaker`](#retry-loop-breaker) and [`completion-gate`](#completion-gate) — both active at `autonomous` after installation with no setup. The feature registry itself stays open-ended; two built-ins is where the product is today, not a fixed design.
 
 The Supervisor registers **no model-callable tools**. The model cannot operate the Supervisor; only a human operator can, through one command namespace.
 
 The default global mode is `autonomous`, so the intended product profile requires no setup. Features are independently configurable.
 
-An ordinary installation makes **no model calls of its own**. The Kernel has a bounded [assessment](#kernel-assessment) capability, but it is lazy and no production feature consumes it yet.
+Because `completion-gate` consumes the Kernel's [assessment](#kernel-assessment) capability, an active Supervisor now makes **at most one auxiliary model call per settled agent run**. Assessment is still lazy — it runs because a feature requires it, not by default — so turning `completion-gate` off with no other consumer returns the Supervisor to zero model calls of its own.
 
 ## Kernel runtime
 
@@ -235,13 +235,89 @@ No active model, a provider error, a timeout, an abort, a non-stop finish, unpar
 
 An auxiliary failure deliberately does **not** degrade Kernel health, because that would suppress unrelated deterministic features such as `retry-loop-breaker`. Assessment health is tracked separately and surfaces as one compact `/agent-supervisor status` line. Ordinary failures produce no notification.
 
-### Not yet
+### Who consumes it
 
-There is no Completion Gate. Nothing consumes an assessment in production, nothing decides that a completion claim is unsupported, and **no automatic follow-up is ever sent**. This stage builds the bounded extraction service and proves its wiring against a real Pi runtime with a faux provider; that is runtime-correctness evidence, not a formal effectiveness benchmark.
+[`completion-gate`](#completion-gate) does. The assessment stays an extractor — it never judges whether a claim is true. The judging is deterministic and happens downstream.
+
+## completion-gate
+
+The second built-in feature. It exists because "done" is cheap to say and expensive to be wrong about.
+
+When the agent claims it finished, `completion-gate` asks whether anything actually observed in this run supports that. If nothing does, it asks the agent to go verify — once — instead of asking you.
+
+### How a claim is judged
+
+Three layers, and only the first involves a model:
+
+1. the **assessment** extracts completion claims and links them to evidence, using exact substrings (see [Kernel assessment](#kernel-assessment));
+2. the **Kernel** deterministically classifies each tool result — was it a mutation, was it a recognized verification, and how stale is it;
+3. [`@j1nn0/agent-evidence`](../agent-evidence) decides whether the claim is supported.
+
+The verdict comes from that core, not from this feature and not from a model. The feature's job is choosing *which* requirements to put in front of it.
+
+| Linked evidence | Verdict |
+| --- | --- |
+| recognized verification at the current mutation epoch, succeeded | `supported` |
+| recognized verification at the current epoch, failed | `contradicted` |
+| only a verification from *before* the latest change | `unsupported` / `subject_mismatch` |
+| only unrecognized evidence, e.g. a successful `ls` | `unsupported` / `unconfirmed_evidence` |
+| nothing usable | `unsupported` / `missing_evidence` |
+
+Anything other than `supported` triggers one automatic follow-up.
+
+### Mutation freshness
+
+A verification only counts if it happened *after* the last change. Each successful builtin `edit`/`write` advances a Root-local mutation epoch, and evidence is stamped with the epoch current when it was observed. A claim requires evidence at the final epoch, so this:
+
+```text
+test passes   (epoch 0)
+write file    (epoch 1)
+"Done."
+```
+
+is `subject_mismatch` — the test proved something about code that no longer exists. Reverse the order and it is `supported`.
+
+When both a stale and a current verification are linked, only the current one becomes a requirement, so a stale record cannot drag down a genuinely verified claim.
+
+### What counts as verification
+
+Deterministic classification, never output-text inference. A tool result is trusted only if the *effective* tool is a genuine Pi builtin — a custom tool named `bash` or `write` inherits nothing from the name.
+
+- **mutation**: successful builtin `edit` / `write`
+- **shell verification**: builtin `bash` / `powershell` whose command matches an anchored whitelist of simple commands — test runners, linters, type checkers, builds, `git diff` / `git status`
+- **read-back**: a builtin `read` that completes read-back of every path mutated in this Root Request
+
+Success or failure comes from the tool result's `isError`, never from scanning output for words like "passed". The shell command is read transiently to classify and is never stored, never sent to a model, and never reaches the feature.
+
+Shell matching is deliberately strict: anything with a pipeline, `;`, `&&`, redirection, substitution, or quoting falls back to unrecognized. `echo "npm test"` is not a test run. Refusing to classify is the correct answer when in doubt.
+
+### When the gate applies
+
+Only completion claims trigger it, and only when the run has a real mutation, or the claim links recognized verification evidence. A pure explanation, a research summary, or a conversational answer that merely sounds finished is **not** gated.
+
+That boundary is deliberate. The cost of nagging someone who asked a question is higher than the cost of missing a completion claim, so the initial gate stays narrow.
+
+### The follow-up
+
+One per Root Request, enforced by the Kernel rather than the feature — a runtime rebuild must not be able to reset it. The follow-up arrives as an extension input in the same Root Request, which starts a new run that may itself be assessed once. If that run is still unsupported, nothing further happens: **unbounded automatic continuation is 0**.
+
+The message is generic and never replays the claim quote, because claim text is user- and tool-derived and echoing it back as an instruction would amplify prompt injection. It never asks a question — the agent just continues.
+
+Proposals go through central arbitration like any other; the feature has no direct path to Pi.
+
+### Limits
+
+`completion-gate` does not detect completion semantically, does not notice arbitrary shell mutation such as `sed -i`, does not infer truth from output text, does not retry indefinitely, and never prompts for approval.
+
+Nothing it computes is persisted: epochs, path digests, verification classifications, verdict facts, and the follow-up budget are all Root-local and ephemeral. Its verdict fact carries claim ids and outcomes, never claim text or raw evidence.
+
+### Evidence status
+
+Proven deterministically against a real Pi runtime — supported stays silent, missing/stale/failed/unrecognized evidence each produce exactly one follow-up, and a second unsupported run in the same Root Request produces none. That is **runtime-correctness evidence, not a formal effectiveness benchmark**. No paired real-model benchmark has been run, and the [`BENCHMARK.md`](BENCHMARK.md) thresholds remain unclaimed.
 
 ## retry-loop-breaker
 
-The first built-in feature. It exists to stop the agent burning a task on the same failing move.
+The other built-in feature. It exists to stop the agent burning a task on the same failing move.
 
 Within one Root Request it watches executed tool results. When the exact same invocation fails twice in a row with the exact same error, it steers the agent once to change approach; if the agent then tries that same invocation again unchanged, it blocks it before the tool runs.
 
@@ -436,14 +512,13 @@ The planned initial built-in feature IDs are:
 - `auto-budget`
 - `auto-handoff`
 
-The feature set is open-ended. These are planned initial built-ins, not an exhaustive enum. `retry-loop-breaker` is implemented and shipping; the rest are not implemented yet.
+The feature set is open-ended. These are planned initial built-ins, not an exhaustive enum. `retry-loop-breaker` and `completion-gate` are implemented and shipping; the rest are not implemented yet.
 
 ## Not in this stage
 
-The Kernel control plane, `retry-loop-breaker`, and the bounded assessment capability are in place. Still deliberately omitted:
+The Kernel control plane, `retry-loop-breaker`, the bounded assessment capability, and `completion-gate` are in place. Still deliberately omitted:
 
-- completion gating, and any production feature that consumes an assessment — so an ordinary installation still makes no model call of its own;
-- judging whether a claim is supported or a task is actually complete;
+- semantic completion detection, and detection of arbitrary shell mutation such as `sed -i`;
 - automatic state/progress behavior;
 - context recovery;
 - automatic handoff;

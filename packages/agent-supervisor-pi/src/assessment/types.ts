@@ -1,5 +1,6 @@
 import { SUPERVISOR_KERNEL_ASSESSMENT_CAPABILITY } from '../feature.js';
 import type { ResolvedSupervisorFeature, SupervisorPlan } from '../registry.js';
+import type { SupervisorVerificationKind } from './verification.js';
 
 /** Maximum UTF-16 code units retained from a Root Request task, from its beginning. */
 export const SUPERVISOR_ASSESSMENT_TASK_TEXT_MAX_UTF16_CODE_UNITS = 8_000;
@@ -24,6 +25,8 @@ export interface SupervisorAssessmentEvidence {
   readonly isError: boolean;
   readonly inputDigest: string | null;
   readonly resultDigest: string | null;
+  readonly mutationEpoch: number;
+  readonly verificationKind: SupervisorVerificationKind | null;
   readonly text: string;
 }
 

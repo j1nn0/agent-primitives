@@ -25,7 +25,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@j1nn0/agent-retry-guard": "workspace:^"
+    "@j1nn0/agent-retry-guard": "workspace:^",
+    "@j1nn0/agent-evidence": "workspace:^"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"

@@ -252,6 +252,7 @@ export async function createIsolatedSession({
   expectedExtensionPath,
   expectedExtensionPaths,
   customTools = [],
+  tools,
   sessionManager: suppliedSessionManager,
   settingsManager: suppliedSettingsManager,
   sessionStartEvent,
@@ -267,6 +268,12 @@ export async function createIsolatedSession({
     !additionalExtensionPaths.every((path) => typeof path === 'string')
   ) {
     throw new Error('supervisor-harness extension paths must be an array of strings');
+  }
+  if (
+    tools !== undefined &&
+    (!Array.isArray(tools) || !tools.every((toolName) => typeof toolName === 'string'))
+  ) {
+    throw new Error('supervisor-harness tools must be an array of strings');
   }
 
   const expectedPaths =
@@ -334,7 +341,8 @@ export async function createIsolatedSession({
     settingsManager,
     sessionManager,
     resourceLoader,
-    noTools: 'builtin',
+    noTools: tools === undefined ? 'builtin' : undefined,
+    tools,
     customTools,
     sessionStartEvent,
   });

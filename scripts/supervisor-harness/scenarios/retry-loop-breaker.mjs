@@ -23,6 +23,10 @@ const DIFFERENT_FAILURE_Y = 'retry-loop-breaker harness error Y';
 const BLOCK_MESSAGE =
   'Agent Supervisor: this exact tool invocation already failed twice with the same result. Change strategy before retrying it unchanged.';
 const FEATURE_ID = 'retry-loop-breaker';
+// The production profile intentionally gained completion-gate as an assessment consumer.
+const AGENT_CALL_KIND = 'AGENT';
+const AUXILIARY_ASSESSMENT_CALL_KIND = 'AUXILIARY_ASSESSMENT';
+const NO_CLAIM_ASSESSMENT_RESPONSE = JSON.stringify({ schemaVersion: 1, claims: [] });
 
 function notifyText(messages) {
   return messages
@@ -126,6 +130,16 @@ function parseStatus(output, label) {
   };
 }
 
+function featureIsActive(output, featureId) {
+  const line = output
+    .split('\n')
+    .find((entry) => entry.startsWith(`- ${featureId}:`));
+  return (
+    line !== undefined &&
+    /requested=autonomous, effective=autonomous, runtime=autonomous, status=active\b/u.test(line)
+  );
+}
+
 async function runCommand(harness, command) {
   const messageStart = harness.uiMessages.length;
   const callsBefore = harness.faux.state.callCount;
@@ -187,28 +201,82 @@ function sameInput(executions, expectedValue) {
   );
 }
 
-function attemptResponses(attempts, completionText) {
+function isAuxiliaryAssessmentContext(context) {
+  return (
+    typeof context?.systemPrompt === 'string' &&
+    context.systemPrompt.startsWith('You are a bounded claim/evidence extractor.') &&
+    Array.isArray(context?.messages) &&
+    context.messages.length === 1 &&
+    context.messages[0]?.role === 'user' &&
+    typeof context.messages[0]?.content === 'string'
+  );
+}
+
+function scriptedResponse(message, expectedKind, callKinds) {
+  return (context) => {
+    const actualKind = isAuxiliaryAssessmentContext(context)
+      ? AUXILIARY_ASSESSMENT_CALL_KIND
+      : AGENT_CALL_KIND;
+    callKinds.push(actualKind);
+    if (actualKind !== expectedKind) {
+      throw new Error(
+        `retry-loop-breaker expected ${expectedKind} faux response but received ${actualKind}`,
+      );
+    }
+    return message;
+  };
+}
+
+function attemptResponses(attempts, completionText, callKinds) {
   return [
     ...attempts.map(({ id, input }) =>
-      fauxAssistantMessage(fauxToolCall(TARGET_TOOL_NAME, input, { id })),
+      scriptedResponse(
+        fauxAssistantMessage(fauxToolCall(TARGET_TOOL_NAME, input, { id })),
+        AGENT_CALL_KIND,
+        callKinds,
+      ),
     ),
-    fauxAssistantMessage(fauxText(completionText)),
+    scriptedResponse(
+      fauxAssistantMessage(fauxText(completionText)),
+      AGENT_CALL_KIND,
+      callKinds,
+    ),
+    scriptedResponse(
+      fauxAssistantMessage(fauxText(NO_CLAIM_ASSESSMENT_RESPONSE)),
+      AUXILIARY_ASSESSMENT_CALL_KIND,
+      callKinds,
+    ),
   ];
 }
 
 async function runAttempts(harness, prompt, attempts, completionText) {
   const messageStart = harness.session.messages.length;
   const callsBefore = harness.faux.state.callCount;
+  const callKinds = [];
   const events = await runScriptedTurn(
     harness,
     prompt,
-    attemptResponses(attempts, completionText),
+    attemptResponses(attempts, completionText, callKinds),
   );
   const modelCalls = harness.faux.state.callCount - callsBefore;
   harness.assertNoPendingFauxResponses();
-  if (modelCalls !== attempts.length + 1) {
+  const agentModelCalls = callKinds.filter((kind) => kind === AGENT_CALL_KIND).length;
+  const auxiliaryCalls = callKinds.filter(
+    (kind) => kind === AUXILIARY_ASSESSMENT_CALL_KIND,
+  ).length;
+  const expectedCallKinds = [
+    ...Array(attempts.length + 1).fill(AGENT_CALL_KIND),
+    AUXILIARY_ASSESSMENT_CALL_KIND,
+  ];
+  if (
+    modelCalls !== attempts.length + 2 ||
+    callKinds.length !== modelCalls ||
+    agentModelCalls !== attempts.length + 1 ||
+    auxiliaryCalls !== 1 ||
+    JSON.stringify(callKinds) !== JSON.stringify(expectedCallKinds)
+  ) {
     throw new Error(
-      `retry-loop-breaker scripted request consumed ${modelCalls} model calls for ${attempts.length} attempts`,
+      `retry-loop-breaker scripted request consumed ${modelCalls} model calls for ${attempts.length} attempts (${agentModelCalls} AGENT, ${auxiliaryCalls} AUXILIARY ASSESSMENT)`,
     );
   }
   const results = targetResultsSince(harness.session, messageStart);
@@ -217,7 +285,15 @@ async function runAttempts(harness, prompt, attempts, completionText) {
       `retry-loop-breaker scripted request produced ${results.length} target results for ${attempts.length} attempts`,
     );
   }
-  return { events, messageStart, modelCalls, results };
+  return {
+    events,
+    messageStart,
+    modelCalls,
+    agentModelCalls,
+    auxiliaryCalls,
+    callKinds,
+    results,
+  };
 }
 
 function activeAutonomous(status) {
@@ -225,7 +301,9 @@ function activeAutonomous(status) {
     status.globalConfig === 'valid' &&
     status.requestedGlobalMode === 'autonomous' &&
     status.effectiveGlobalMode === 'autonomous' &&
-    status.registeredFeatures === 1 &&
+    status.registeredFeatures === 2 &&
+    featureIsActive(status.output, FEATURE_ID) &&
+    featureIsActive(status.output, 'completion-gate') &&
     status.feature.line.includes('default=autonomous') &&
     status.feature.requestedMode === 'autonomous' &&
     status.feature.effectiveMode === 'autonomous' &&
@@ -313,11 +391,14 @@ async function runPartB(check, cleanup) {
     'B: calls 3 through 6 were blocked with the Supervisor block reason',
   );
   check(
-    executions.length === 2 && run.modelCalls === 7,
-    'B: blocked calls never re-entered the target or consumed an unexpected model turn',
+    executions.length === 2 &&
+      run.modelCalls === 8 &&
+      run.agentModelCalls === 7 &&
+      run.auxiliaryCalls === 1,
+    'B: blocked calls never re-entered the target; seven AGENT calls and one AUXILIARY ASSESSMENT call were consumed',
   );
   console.log(
-    `  TRACE retry-loop-breaker B: attempted=${results.length}, executions=${executions.length}, blocks=${blocks}, modelCalls=${run.modelCalls}`,
+    `  TRACE retry-loop-breaker B: attempted=${results.length}, executions=${executions.length}, blocks=${blocks}, modelCalls=${run.modelCalls}, agentModelCalls=${run.agentModelCalls}, auxiliaryCalls=${run.auxiliaryCalls}`,
   );
 }
 
@@ -363,11 +444,13 @@ async function runPartC(check, cleanup) {
     'C: all six failing attempts executed and none was Supervisor-blocked',
   );
   check(
-    run.modelCalls === 7,
-    'C: the six-attempt off-mode request consumed exactly one scripted response per model turn',
+    run.modelCalls === 8 &&
+      run.agentModelCalls === 7 &&
+      run.auxiliaryCalls === 1,
+    'C: the six-attempt off-mode request consumed seven AGENT calls and one AUXILIARY ASSESSMENT call',
   );
   console.log(
-    `  TRACE retry-loop-breaker C: attempted=${run.results.length}, executions=${executions.length}, blocks=${blocks}, modelCalls=${run.modelCalls}`,
+    `  TRACE retry-loop-breaker C: attempted=${run.results.length}, executions=${executions.length}, blocks=${blocks}, modelCalls=${run.modelCalls}, agentModelCalls=${run.agentModelCalls}, auxiliaryCalls=${run.auxiliaryCalls}`,
   );
 }
 
@@ -413,11 +496,13 @@ async function runPartD(check, cleanup) {
     'D: observe mode allowed all six failing executions with no externally visible block',
   );
   check(
-    run.modelCalls === 7,
-    'D: the six-attempt observe-mode request consumed exactly one scripted response per model turn',
+    run.modelCalls === 8 &&
+      run.agentModelCalls === 7 &&
+      run.auxiliaryCalls === 1,
+    'D: the six-attempt observe-mode request consumed seven AGENT calls and one AUXILIARY ASSESSMENT call',
   );
   console.log(
-    `  TRACE retry-loop-breaker D: attempted=${run.results.length}, executions=${executions.length}, blocks=${blocks}, modelCalls=${run.modelCalls}`,
+    `  TRACE retry-loop-breaker D: attempted=${run.results.length}, executions=${executions.length}, blocks=${blocks}, modelCalls=${run.modelCalls}, agentModelCalls=${run.agentModelCalls}, auxiliaryCalls=${run.auxiliaryCalls}`,
   );
 }
 
@@ -457,11 +542,13 @@ async function runPartE(check, cleanup) {
     'E: the different actual invocation disarmed A while every target result remained an execution failure',
   );
   check(
-    run.modelCalls === 5,
-    'E: the one-Root-Request strategy-change script consumed all five scripted model turns',
+    run.modelCalls === 6 &&
+      run.agentModelCalls === 5 &&
+      run.auxiliaryCalls === 1,
+    'E: the one-Root-Request script consumed five AGENT calls and one AUXILIARY ASSESSMENT call',
   );
   console.log(
-    `  TRACE retry-loop-breaker E: attempted=${run.results.length}, executions=${executions.length}, blocks=${blocks}, modelCalls=${run.modelCalls}`,
+    `  TRACE retry-loop-breaker E: attempted=${run.results.length}, executions=${executions.length}, blocks=${blocks}, modelCalls=${run.modelCalls}, agentModelCalls=${run.agentModelCalls}, auxiliaryCalls=${run.auxiliaryCalls}`,
   );
 }
 
@@ -511,11 +598,16 @@ async function runPartF(check, cleanup) {
     'F: the second real user input allocated and settled a new Root 2',
   );
   check(
-    rootOne.modelCalls === 3 && rootTwo.modelCalls === 2,
-    'F: both Root Requests consumed exactly their scripted model turns',
+    rootOne.modelCalls === 4 &&
+      rootOne.agentModelCalls === 3 &&
+      rootOne.auxiliaryCalls === 1 &&
+      rootTwo.modelCalls === 3 &&
+      rootTwo.agentModelCalls === 2 &&
+      rootTwo.auxiliaryCalls === 1,
+    'F: Root 1 consumed three AGENT calls plus one AUXILIARY ASSESSMENT call and Root 2 consumed two plus one',
   );
   console.log(
-    `  TRACE retry-loop-breaker F: root1Executions=${rootOne.results.length}, root2Executions=${rootTwo.results.length}, totalExecutions=${executions.length}, blocks=${rootOneBlocks + rootTwoBlocks}, modelCalls=${rootOne.modelCalls + rootTwo.modelCalls}`,
+    `  TRACE retry-loop-breaker F: root1Executions=${rootOne.results.length}, root2Executions=${rootTwo.results.length}, totalExecutions=${executions.length}, blocks=${rootOneBlocks + rootTwoBlocks}, modelCalls=${rootOne.modelCalls + rootTwo.modelCalls}, agentModelCalls=${rootOne.agentModelCalls + rootTwo.agentModelCalls}, auxiliaryCalls=${rootOne.auxiliaryCalls + rootTwo.auxiliaryCalls}`,
   );
 }
 
@@ -558,11 +650,13 @@ async function runPartG(check, cleanup) {
     'G: the target implementation produced genuinely different error output for the same input',
   );
   check(
-    run.modelCalls === 4,
-    'G: the distinct-result script consumed all four scripted model turns',
+    run.modelCalls === 5 &&
+      run.agentModelCalls === 4 &&
+      run.auxiliaryCalls === 1,
+    'G: the distinct-result script consumed four AGENT calls and one AUXILIARY ASSESSMENT call',
   );
   console.log(
-    `  TRACE retry-loop-breaker G: attempted=${run.results.length}, executions=${executions.length}, blocks=${blocks}, modelCalls=${run.modelCalls}, errors=${executionTexts.join('|')}`,
+    `  TRACE retry-loop-breaker G: attempted=${run.results.length}, executions=${executions.length}, blocks=${blocks}, modelCalls=${run.modelCalls}, agentModelCalls=${run.agentModelCalls}, auxiliaryCalls=${run.auxiliaryCalls}, errors=${executionTexts.join('|')}`,
   );
 }
 

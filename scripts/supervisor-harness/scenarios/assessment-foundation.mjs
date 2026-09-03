@@ -9,7 +9,6 @@ import {
   fauxToolCall,
 } from '@earendil-works/pi-ai/providers/faux';
 import {
-  SUPERVISOR_EXTENSION_PATH,
   createCheck,
   createCleanupRegistry,
   createIsolatedSession,
@@ -21,12 +20,18 @@ const ASSESSMENT_EXTENSION_PATH = resolve(
   import.meta.dirname,
   '../fixtures/assessment-extension.mjs',
 );
+const CONSUMER_FREE_EXTENSION_PATH = resolve(
+  import.meta.dirname,
+  '../fixtures/consumer-free-supervisor-extension.mjs',
+);
 const ASSESSMENT_TRACE_ENV = 'SUPERVISOR_HARNESS_ASSESSMENT_TRACE_PATH';
 const SIBLING_TRACE_ENV = 'SUPERVISOR_HARNESS_ASSESSMENT_SIBLING_TRACE_PATH';
 const ASSESSMENT_KIND = 'kernel:completion-assessment';
 const OBSERVER_ID = 'assessment-observer';
 const LIFECYCLE_OBSERVER_ID = 'assessment-lifecycle-observer';
 const SIBLING_ID = 'assessment-sibling';
+const CONSUMER_FREE_TRACE_ENV = 'SUPERVISOR_HARNESS_CONSUMER_FREE_TRACE_PATH';
+const CONSUMER_FREE_OBSERVER_ID = 'consumer-free-observer';
 const TARGET_TOOL_NAME = 'supervisor_harness_assessment_foundation_target';
 const EVIDENCE_ID = 'e1';
 const EVIDENCE_TEXT = 'assessment evidence marker: target-output-7f3d';
@@ -269,36 +274,44 @@ function assessmentFacts(trace) {
 }
 
 async function runPartA(check, cleanup) {
-  console.log('  PART A — production stays lazy');
+  console.log('  PART A — consumer-free Supervisor stays lazy');
+  // The production profile intentionally gained completion-gate as an assessment consumer; use an explicit consumer-free factory to retain the Kernel lazy contract.
   const isolation = makeIsolation();
   cleanup.registerCleanup(isolation.cleanup);
+  const tracePath = join(isolation.base, 'assessment-foundation-A-consumer-free.jsonl');
+  const previousTracePath = process.env[CONSUMER_FREE_TRACE_ENV];
+  process.env[CONSUMER_FREE_TRACE_ENV] = tracePath;
+  cleanup.registerCleanup(() => {
+    restoreEnvironmentVariable(CONSUMER_FREE_TRACE_ENV, previousTracePath);
+  });
   const harness = await createIsolatedSession({
     isolation,
     storage: 'memory',
-    additionalExtensionPaths: [SUPERVISOR_EXTENSION_PATH],
-    expectedExtensionPath: SUPERVISOR_EXTENSION_PATH,
+    additionalExtensionPaths: [CONSUMER_FREE_EXTENSION_PATH],
+    expectedExtensionPath: CONSUMER_FREE_EXTENSION_PATH,
   });
   cleanup.registerCleanup(harness.cleanup);
 
   const extension = harness.extensionsResult.extensions[0];
   check(
     harness.extensionsResult.extensions.length === 1 &&
-      extension?.resolvedPath === SUPERVISOR_EXTENSION_PATH &&
+      extension?.resolvedPath === CONSUMER_FREE_EXTENSION_PATH &&
       harness.extensionsResult.errors.length === 0,
-    'A: loaded only the production Supervisor extension without errors',
+    'A: loaded the explicit consumer-free Supervisor factory without errors',
   );
   check(
     extension?.commands.size === 1 && extension.commands.has('agent-supervisor') && extension.tools.size === 0,
-    'A: production Supervisor registered only its public command and no tools',
+    'A: consumer-free Supervisor registered only its public command and no tools',
   );
 
   const initialStatus = await captureStatus(harness, 'part A initial status');
   check(
     initialStatus.text.includes('Registered features: 1') &&
-      featureIsActive(initialStatus.text, 'retry-loop-breaker') &&
+      featureIsActive(initialStatus.text, CONSUMER_FREE_OBSERVER_ID) &&
       initialStatus.text.includes('Assessment: idle') &&
-      !initialStatus.text.includes(`- ${OBSERVER_ID}:`),
-    'A: retry-loop-breaker is active, assessment is idle, and no assessment consumer is present',
+      !initialStatus.text.includes('- retry-loop-breaker:') &&
+      !initialStatus.text.includes('- completion-gate:'),
+    'A: the consumer-free Supervisor has no assessment-requiring feature and starts idle',
   );
 
   const callsBefore = harness.faux.state.callCount;
@@ -311,7 +324,7 @@ async function runPartA(check, cleanup) {
   harness.assertNoPendingFauxResponses();
   check(
     modelCalls === 1 && harness.faux.state.callCount === callsBefore + 1,
-    'A: the normal scripted turn consumed exactly one faux model call and no auxiliary call',
+    'A: the consumer-free scripted turn consumed exactly one AGENT call and no auxiliary call',
   );
   check(
     countEvents(events, 'agent_start') === 1 &&
@@ -324,12 +337,18 @@ async function runPartA(check, cleanup) {
   const finalAssessmentStatus = finalStatus.text
     .split('\n')
     .find((line) => line.startsWith('Assessment:'));
+  const trace = readJsonl(tracePath);
+  check(
+    JSON.stringify(trace.map((entry) => entry?.observationKind)) ===
+      JSON.stringify(['agent-settled']),
+    'A: the consumer-free Supervisor emitted agent-settled but no assessment-ready',
+  );
   check(
     finalAssessmentStatus === 'Assessment: idle' && modelCalls === 1,
-    'A: production assessment stayed idle with no auxiliary call, so no assessment-ready was emitted',
+    'A: the consumer-free Supervisor stayed idle after one AGENT call with zero auxiliary calls',
   );
   console.log(
-    `  TRACE assessment-foundation A: modelCalls=${modelCalls}, auxiliaryCalls=0, observationOrder=none`,
+    `  TRACE assessment-foundation A: modelCalls=${modelCalls}, auxiliaryCalls=0, observationOrder=${formatObservationOrder(trace)}`,
   );
   harness.assertNoAuthCredentials();
 }
