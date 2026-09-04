@@ -4,3 +4,8 @@ dist/
 coverage/
 *.tsbuildinfo
 .DS_Store
+
+# Real benchmark run outputs are local-only; the deterministic plan remains committable.
+benchmarks/supervisor-release-v1/dataset.json
+benchmarks/supervisor-release-v1/report.json
+benchmarks/supervisor-release-v1/diagnostics.json
