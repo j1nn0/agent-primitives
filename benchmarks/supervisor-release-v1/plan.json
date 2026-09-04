@@ -1,0 +1,608 @@
+{
+  "schemaVersion": 1,
+  "benchmarkId": "supervisor-post-s4-v1",
+  "sourceSha": "28f9987a4d59b618b209e0b974ce8c82efc8d6da",
+  "policyId": "supervisor-release-v1",
+  "expectedPairs": [
+    {
+      "pairId": "pair-misleading-probe-error-case-a-deepseek",
+      "scenarioClass": "ambiguous-tool-failure",
+      "scenarioId": "misleading-probe-error",
+      "caseId": "case-a",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-misleading-probe-error-case-a-openai",
+      "scenarioClass": "ambiguous-tool-failure",
+      "scenarioId": "misleading-probe-error",
+      "caseId": "case-a",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-misleading-probe-error-case-b-deepseek",
+      "scenarioClass": "ambiguous-tool-failure",
+      "scenarioId": "misleading-probe-error",
+      "caseId": "case-b",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-misleading-probe-error-case-b-openai",
+      "scenarioClass": "ambiguous-tool-failure",
+      "scenarioId": "misleading-probe-error",
+      "caseId": "case-b",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-misleading-probe-error-case-c-deepseek",
+      "scenarioClass": "ambiguous-tool-failure",
+      "scenarioId": "misleading-probe-error",
+      "caseId": "case-c",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-misleading-probe-error-case-c-openai",
+      "scenarioClass": "ambiguous-tool-failure",
+      "scenarioId": "misleading-probe-error",
+      "caseId": "case-c",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-compaction-carryover-case-a-deepseek",
+      "scenarioClass": "context-compaction",
+      "scenarioId": "compaction-carryover",
+      "caseId": "case-a",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-compaction-carryover-case-a-openai",
+      "scenarioClass": "context-compaction",
+      "scenarioId": "compaction-carryover",
+      "caseId": "case-a",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-compaction-carryover-case-b-deepseek",
+      "scenarioClass": "context-compaction",
+      "scenarioId": "compaction-carryover",
+      "caseId": "case-b",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-compaction-carryover-case-b-openai",
+      "scenarioClass": "context-compaction",
+      "scenarioId": "compaction-carryover",
+      "caseId": "case-b",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-compaction-carryover-case-c-deepseek",
+      "scenarioClass": "context-compaction",
+      "scenarioId": "compaction-carryover",
+      "caseId": "case-c",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-compaction-carryover-case-c-openai",
+      "scenarioClass": "context-compaction",
+      "scenarioId": "compaction-carryover",
+      "caseId": "case-c",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-failing-check-must-pass-case-a-deepseek",
+      "scenarioClass": "failed-verification-false-completion",
+      "scenarioId": "failing-check-must-pass",
+      "caseId": "case-a",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-failing-check-must-pass-case-a-openai",
+      "scenarioClass": "failed-verification-false-completion",
+      "scenarioId": "failing-check-must-pass",
+      "caseId": "case-a",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-failing-check-must-pass-case-b-deepseek",
+      "scenarioClass": "failed-verification-false-completion",
+      "scenarioId": "failing-check-must-pass",
+      "caseId": "case-b",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-failing-check-must-pass-case-b-openai",
+      "scenarioClass": "failed-verification-false-completion",
+      "scenarioId": "failing-check-must-pass",
+      "caseId": "case-b",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-failing-check-must-pass-case-c-deepseek",
+      "scenarioClass": "failed-verification-false-completion",
+      "scenarioId": "failing-check-must-pass",
+      "caseId": "case-c",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-failing-check-must-pass-case-c-openai",
+      "scenarioClass": "failed-verification-false-completion",
+      "scenarioId": "failing-check-must-pass",
+      "caseId": "case-c",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-healthy-task-case-a-deepseek",
+      "scenarioClass": "healthy-success-silence",
+      "scenarioId": "healthy-task",
+      "caseId": "case-a",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-healthy-task-case-a-openai",
+      "scenarioClass": "healthy-success-silence",
+      "scenarioId": "healthy-task",
+      "caseId": "case-a",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-healthy-task-case-b-deepseek",
+      "scenarioClass": "healthy-success-silence",
+      "scenarioId": "healthy-task",
+      "caseId": "case-b",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-healthy-task-case-b-openai",
+      "scenarioClass": "healthy-success-silence",
+      "scenarioId": "healthy-task",
+      "caseId": "case-b",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-healthy-task-case-c-deepseek",
+      "scenarioClass": "healthy-success-silence",
+      "scenarioId": "healthy-task",
+      "caseId": "case-c",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-healthy-task-case-c-openai",
+      "scenarioClass": "healthy-success-silence",
+      "scenarioId": "healthy-task",
+      "caseId": "case-c",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-three-step-module-case-a-deepseek",
+      "scenarioClass": "multi-step-coding",
+      "scenarioId": "three-step-module",
+      "caseId": "case-a",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-three-step-module-case-a-openai",
+      "scenarioClass": "multi-step-coding",
+      "scenarioId": "three-step-module",
+      "caseId": "case-a",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-three-step-module-case-b-deepseek",
+      "scenarioClass": "multi-step-coding",
+      "scenarioId": "three-step-module",
+      "caseId": "case-b",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-three-step-module-case-b-openai",
+      "scenarioClass": "multi-step-coding",
+      "scenarioId": "three-step-module",
+      "caseId": "case-b",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-three-step-module-case-c-deepseek",
+      "scenarioClass": "multi-step-coding",
+      "scenarioId": "three-step-module",
+      "caseId": "case-c",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-three-step-module-case-c-openai",
+      "scenarioClass": "multi-step-coding",
+      "scenarioId": "three-step-module",
+      "caseId": "case-c",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-verify-after-last-change-case-a-deepseek",
+      "scenarioClass": "mutation-after-last-verification",
+      "scenarioId": "verify-after-last-change",
+      "caseId": "case-a",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-verify-after-last-change-case-a-openai",
+      "scenarioClass": "mutation-after-last-verification",
+      "scenarioId": "verify-after-last-change",
+      "caseId": "case-a",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-verify-after-last-change-case-b-deepseek",
+      "scenarioClass": "mutation-after-last-verification",
+      "scenarioId": "verify-after-last-change",
+      "caseId": "case-b",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-verify-after-last-change-case-b-openai",
+      "scenarioClass": "mutation-after-last-verification",
+      "scenarioId": "verify-after-last-change",
+      "caseId": "case-b",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-verify-after-last-change-case-c-deepseek",
+      "scenarioClass": "mutation-after-last-verification",
+      "scenarioId": "verify-after-last-change",
+      "caseId": "case-c",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-verify-after-last-change-case-c-openai",
+      "scenarioClass": "mutation-after-last-verification",
+      "scenarioId": "verify-after-last-change",
+      "caseId": "case-c",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-verify-before-claim-case-a-deepseek",
+      "scenarioClass": "premature-completion-no-verification",
+      "scenarioId": "verify-before-claim",
+      "caseId": "case-a",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-verify-before-claim-case-a-openai",
+      "scenarioClass": "premature-completion-no-verification",
+      "scenarioId": "verify-before-claim",
+      "caseId": "case-a",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-verify-before-claim-case-b-deepseek",
+      "scenarioClass": "premature-completion-no-verification",
+      "scenarioId": "verify-before-claim",
+      "caseId": "case-b",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-verify-before-claim-case-b-openai",
+      "scenarioClass": "premature-completion-no-verification",
+      "scenarioId": "verify-before-claim",
+      "caseId": "case-b",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-verify-before-claim-case-c-deepseek",
+      "scenarioClass": "premature-completion-no-verification",
+      "scenarioId": "verify-before-claim",
+      "caseId": "case-c",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-verify-before-claim-case-c-openai",
+      "scenarioClass": "premature-completion-no-verification",
+      "scenarioId": "verify-before-claim",
+      "caseId": "case-c",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-probe-endpoint-case-a-deepseek",
+      "scenarioClass": "repeated-failing-invocation",
+      "scenarioId": "probe-endpoint",
+      "caseId": "case-a",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-probe-endpoint-case-a-openai",
+      "scenarioClass": "repeated-failing-invocation",
+      "scenarioId": "probe-endpoint",
+      "caseId": "case-a",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-probe-endpoint-case-b-deepseek",
+      "scenarioClass": "repeated-failing-invocation",
+      "scenarioId": "probe-endpoint",
+      "caseId": "case-b",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-probe-endpoint-case-b-openai",
+      "scenarioClass": "repeated-failing-invocation",
+      "scenarioId": "probe-endpoint",
+      "caseId": "case-b",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-probe-endpoint-case-c-deepseek",
+      "scenarioClass": "repeated-failing-invocation",
+      "scenarioId": "probe-endpoint",
+      "caseId": "case-c",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-probe-endpoint-case-c-openai",
+      "scenarioClass": "repeated-failing-invocation",
+      "scenarioId": "probe-endpoint",
+      "caseId": "case-c",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-spec-driven-impl-case-a-deepseek",
+      "scenarioClass": "research-and-implementation",
+      "scenarioId": "spec-driven-impl",
+      "caseId": "case-a",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-spec-driven-impl-case-a-openai",
+      "scenarioClass": "research-and-implementation",
+      "scenarioId": "spec-driven-impl",
+      "caseId": "case-a",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-spec-driven-impl-case-b-deepseek",
+      "scenarioClass": "research-and-implementation",
+      "scenarioId": "spec-driven-impl",
+      "caseId": "case-b",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-spec-driven-impl-case-b-openai",
+      "scenarioClass": "research-and-implementation",
+      "scenarioId": "spec-driven-impl",
+      "caseId": "case-b",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-spec-driven-impl-case-c-deepseek",
+      "scenarioClass": "research-and-implementation",
+      "scenarioId": "spec-driven-impl",
+      "caseId": "case-c",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-spec-driven-impl-case-c-openai",
+      "scenarioClass": "research-and-implementation",
+      "scenarioId": "spec-driven-impl",
+      "caseId": "case-c",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-resume-carryover-case-a-deepseek",
+      "scenarioClass": "session-resume",
+      "scenarioId": "resume-carryover",
+      "caseId": "case-a",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-resume-carryover-case-a-openai",
+      "scenarioClass": "session-resume",
+      "scenarioId": "resume-carryover",
+      "caseId": "case-a",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-resume-carryover-case-b-deepseek",
+      "scenarioClass": "session-resume",
+      "scenarioId": "resume-carryover",
+      "caseId": "case-b",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-resume-carryover-case-b-openai",
+      "scenarioClass": "session-resume",
+      "scenarioId": "resume-carryover",
+      "caseId": "case-b",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-resume-carryover-case-c-deepseek",
+      "scenarioClass": "session-resume",
+      "scenarioId": "resume-carryover",
+      "caseId": "case-c",
+      "modelFamily": "deepseek",
+      "modelId": "opencode-go/deepseek-v4-flash",
+      "executionProfile": "pi0844-max-supervisor-first",
+      "repetition": 1
+    },
+    {
+      "pairId": "pair-resume-carryover-case-c-openai",
+      "scenarioClass": "session-resume",
+      "scenarioId": "resume-carryover",
+      "caseId": "case-c",
+      "modelFamily": "openai",
+      "modelId": "openai-codex/gpt-5.6-luna",
+      "executionProfile": "pi0844-max-baseline-first",
+      "repetition": 1
+    }
+  ]
+}
